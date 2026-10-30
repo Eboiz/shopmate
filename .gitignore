@@ -30,8 +30,19 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files: hold real keys, never push
+.env
+.env.local
+.env.development
+.env.development.local
+.env.production
+.env.production.local
+.env.test
+.env.test.local
+# catch-all for any other .env file
 .env*
+# template with empty values, safe to push
+!.env.example
 
 # vercel
 .vercel
