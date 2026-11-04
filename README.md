@@ -25,6 +25,7 @@ Staff accounts are created in Supabase Dashboard > Authentication > Users (email
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | Generate route types, then `tsc --noEmit` |
 | `pnpm test` | Unit tests (Vitest, `src/**/*.test.ts`) |
+| `pnpm test:e2e` | End-to-end tests (Playwright, `e2e/`). Run `pnpm exec playwright install chromium` once. Set `E2E_BASE_URL` to test a preview deployment |
 | `pnpm db:start` / `pnpm db:stop` | Local Supabase in Docker (prints local URL and keys) |
 | `pnpm db:reset` | Recreate the local database from `supabase/migrations/` |
 | `pnpm db:test` | Database tests (pgTAP, `supabase/tests/`): constraints and Row Level Security |
