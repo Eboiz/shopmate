@@ -1,3 +1,6 @@
+import { redirect } from "next/navigation";
+import { ADMIN_NAV } from "@/lib/admin-nav";
+
 export default function AdminHome() {
-  return <h1 className="text-xl font-semibold">Trang quản lý</h1>;
+  redirect(ADMIN_NAV[0].href);
 }
