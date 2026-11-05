@@ -90,10 +90,15 @@ async function uploadImages(d: DemoData) {
     if (!found) console.warn(`! ${code}: no photo in supabase/seed/demo/images/${code}.jpg`);
     return found;
   });
-  await Promise.all(codes.map(async (code) => {
+  // 5 at a time, one retry: 30 parallel uploads to the hosted project sometimes
+  // dropped one with "fetch failed" (1 run in 6 on 05/11).
+  const upload = async (code: string) => {
     const file = readFileSync(new URL(`images/${code}.jpg`, demoDir));
-    ok(await bucket.upload(`${code}.jpg`, file, { contentType: "image/jpeg", upsert: true }), `photo ${code}.jpg`);
-  }));
+    const put = () => bucket.upload(`${code}.jpg`, file, { contentType: "image/jpeg", upsert: true });
+    const first = await put();
+    ok(first.error ? await put() : first, `photo ${code}.jpg`);
+  };
+  for (let i = 0; i < codes.length; i += 5) await Promise.all(codes.slice(i, i + 5).map(upload));
   return new Map(codes.map((code) => [code, bucket.getPublicUrl(`${code}.jpg`).data.publicUrl]));
 }
 
