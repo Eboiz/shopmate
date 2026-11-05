@@ -13,7 +13,7 @@ export default defineConfig({
   webServer: baseURL
     ? undefined
     : {
-        command: "pnpm dev",
+        command: "corepack pnpm dev",
         url: "http://localhost:3000/login",
         reuseExistingServer: true,
       },
