@@ -14,7 +14,7 @@ cp .env.example .env.local   # fill in the Supabase URL and publishable key
 pnpm dev                     # http://localhost:3000
 ```
 
-Staff accounts are created in Supabase Dashboard > Authentication > Users (email + password). There is no sign-up page.
+There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accounts (see [Demo shop](#demo-shop-pb-02)); other staff accounts are created in Supabase Dashboard > Authentication > Users.
 
 ## Commands
 
@@ -30,8 +30,9 @@ Staff accounts are created in Supabase Dashboard > Authentication > Users (email
 | `pnpm db:reset` | Recreate the local database from `supabase/migrations/` |
 | `pnpm db:test` | Database tests (pgTAP, `supabase/tests/`): constraints and Row Level Security |
 | `pnpm db:types` | Regenerate `src/contract/database.types.ts` from the local database |
+| `pnpm db:seed` | Load the demo shop, the eval shop and the demo accounts into local Supabase (see [Demo shop](#demo-shop-pb-02)) |
 
-CI (`.github/workflows/ci.yml`) runs lint, typecheck and tests on every pull request. Vercel builds a preview URL for every pull request.
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and `pnpm db:seed --check` on every pull request. Vercel builds a preview URL for every pull request.
 
 ## Shared contract (PB-00)
 
@@ -44,11 +45,27 @@ Tables, types, tool shapes, the reply shape and `sendToConversation` are defined
 
 New tables and functions get **no** rights for `anon` or `authenticated` by default. A migration that adds one must `enable row level security`, then `grant` what signed-in users need and add the policies (see `supabase/migrations/20261103120100_pb00_rls.sql`), and add a case to `supabase/tests/`.
 
-Code that imports `server-only` (the admin client, `sendToConversation`) runs in Vitest as is (aliased in `vitest.config.ts`). Plain Node scripts that import it, such as seed or eval runners, need `node --conditions=react-server`.
+Code that imports `server-only` or the `@/` alias (the admin client, `sendToConversation`) runs in Vitest and Next as is, but not in plain Node scripts: Node knows neither the alias nor extensionless imports. A script such as `scripts/seed.ts` runs with `node` directly (Node 24 strips the types) and imports only relative paths ending in `.ts`, like `src/lib/seed/sheet.ts`.
 
 Staff users who sent messages or confirmed orders can't be deleted (their rows point at them); disable them in Supabase Auth instead.
 
 Migrations reach the shared Supabase project only after they are merged to `main`. Test unmerged migrations on local Supabase (`pnpm db:start`, needs Docker).
+
+## Demo shop (PB-02)
+
+`supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
+
+```bash
+pnpm db:start
+pnpm db:seed                                   # local Supabase
+pnpm db:seed --target=shared --confirm=<ref>   # the team's project; <ref> is the subdomain of NEXT_PUBLIC_SUPABASE_URL
+pnpm db:seed --check                           # only check the CSV files
+```
+
+- It writes two shops with the same data: `may-boutique` (demo) and `may-boutique-eval` (PB-10 eval runs, so their draft orders never mix with the demo). It also creates the accounts in `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` and `DEMO_STAFF_EMAIL` / `DEMO_STAFF_PASSWORD` (`.env.local`) as owner and staff of the demo shop.
+- Wrong data stops the seed before anything is written, with the sheet, row and column of each error.
+- It can run any number of times: rows are upserted, never deleted. Each run resets names, prices, descriptions, photos and stock to the CSV, so on the shared project it also undoes edits made in the app and stock taken by confirmed orders. Rows that are in the database but not in the CSV are reported, not removed. It never moves an existing account that belongs to another shop.
+- It ends by signing in as the demo owner and staff and checking that the demo shop can't read or change the eval shop.
 
 ## Environment variables
 
