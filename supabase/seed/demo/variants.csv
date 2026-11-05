@@ -1,0 +1,274 @@
+ma_sp,size,mau,ton_kho
+SP01,S,Be,7
+SP01,S,Trắng,12
+SP01,S,Xanh rêu,2
+SP01,M,Be,7
+SP01,M,Trắng,12
+SP01,M,Xanh rêu,2
+SP01,L,Be,7
+SP01,L,Trắng,12
+SP01,L,Xanh rêu,2
+SP01,XL,Be,7
+SP01,XL,Trắng,12
+SP01,XL,Xanh rêu,2
+SP02,S,Hồng phấn,14
+SP02,S,Xanh navy,4
+SP02,M,Hồng phấn,9
+SP02,M,Xanh navy,14
+SP02,L,Hồng phấn,4
+SP02,L,Xanh navy,9
+SP03,XS,Đen,6
+SP03,XS,Xám,11
+SP03,S,Đen,1
+SP03,S,Xám,6
+SP03,M,Đen,11
+SP03,M,Xám,1
+SP03,L,Đen,6
+SP03,L,Xám,11
+SP03,XL,Đen,1
+SP03,XL,Xám,6
+SP04,S,Trắng,13
+SP04,S,Vàng nghệ,0
+SP04,S,Xanh ngọc,8
+SP04,M,Trắng,13
+SP04,M,Vàng nghệ,0
+SP04,M,Xanh ngọc,8
+SP04,L,Trắng,13
+SP04,L,Vàng nghệ,0
+SP04,L,Xanh ngọc,8
+SP05,S,Trắng,5
+SP05,S,Hồng phấn,10
+SP05,M,Trắng,0
+SP05,M,Hồng phấn,5
+SP05,L,Trắng,10
+SP05,L,Hồng phấn,0
+SP06,XS,Trắng,12
+SP06,XS,Đen,2
+SP06,XS,Xám,7
+SP06,S,Trắng,12
+SP06,S,Đen,2
+SP06,S,Xám,7
+SP06,M,Trắng,12
+SP06,M,Đen,2
+SP06,M,Xám,7
+SP06,L,Trắng,12
+SP06,L,Đen,2
+SP06,L,Xám,7
+SP06,XL,Trắng,12
+SP06,XL,Đen,2
+SP06,XL,Xám,7
+SP07,S,Đen,4
+SP07,S,Kem,9
+SP07,M,Đen,14
+SP07,M,Kem,4
+SP07,L,Đen,9
+SP07,L,Kem,14
+SP08,S,Trắng,11
+SP08,S,Đen,1
+SP08,M,Trắng,6
+SP08,M,Đen,11
+SP08,L,Trắng,1
+SP08,L,Đen,6
+SP08,XL,Trắng,11
+SP08,XL,Đen,1
+SP09,S,Trắng,0
+SP09,S,Xanh navy,8
+SP09,S,Hồng phấn,13
+SP09,M,Trắng,0
+SP09,M,Xanh navy,8
+SP09,M,Hồng phấn,13
+SP09,L,Trắng,0
+SP09,L,Xanh navy,8
+SP09,L,Hồng phấn,13
+SP09,XL,Trắng,0
+SP09,XL,Xanh navy,8
+SP09,XL,Hồng phấn,13
+SP10,XS,Trắng,10
+SP10,XS,Xanh nhạt,0
+SP10,S,Trắng,5
+SP10,S,Xanh nhạt,10
+SP10,M,Trắng,0
+SP10,M,Xanh nhạt,5
+SP10,L,Trắng,10
+SP10,L,Xanh nhạt,0
+SP10,XL,Trắng,5
+SP10,XL,Xanh nhạt,10
+SP11,S,Xanh nhạt,2
+SP11,S,Hồng phấn,7
+SP11,M,Xanh nhạt,12
+SP11,M,Hồng phấn,2
+SP11,L,Xanh nhạt,7
+SP11,L,Hồng phấn,12
+SP11,XL,Xanh nhạt,2
+SP11,XL,Hồng phấn,7
+SP12,S,Be,9
+SP12,S,Trắng,14
+SP12,S,Xanh rêu,4
+SP12,M,Be,9
+SP12,M,Trắng,14
+SP12,M,Xanh rêu,4
+SP12,L,Be,9
+SP12,L,Trắng,14
+SP12,L,Xanh rêu,4
+SP13,S,Trắng,1
+SP13,S,Đen,6
+SP13,S,Đỏ đô,11
+SP13,M,Trắng,1
+SP13,M,Đen,6
+SP13,M,Đỏ đô,11
+SP13,L,Trắng,1
+SP13,L,Đen,6
+SP13,L,Đỏ đô,11
+SP13,XL,Trắng,1
+SP13,XL,Đen,6
+SP13,XL,Đỏ đô,11
+SP14,S,Trắng,8
+SP14,S,Vàng nghệ,13
+SP14,M,Trắng,0
+SP14,M,Vàng nghệ,8
+SP14,L,Trắng,13
+SP14,L,Vàng nghệ,0
+SP15,S,Kem,0
+SP15,S,Nâu,5
+SP15,S,Xám,10
+SP15,M,Kem,0
+SP15,M,Nâu,5
+SP15,M,Xám,10
+SP15,L,Kem,0
+SP15,L,Nâu,5
+SP15,L,Xám,10
+SP15,XL,Kem,0
+SP15,XL,Nâu,5
+SP15,XL,Xám,10
+SP16,26,Xanh nhạt,7
+SP16,26,Xanh đậm,12
+SP16,27,Xanh nhạt,2
+SP16,27,Xanh đậm,7
+SP16,28,Xanh nhạt,12
+SP16,28,Xanh đậm,2
+SP16,29,Xanh nhạt,7
+SP16,29,Xanh đậm,12
+SP16,30,Xanh nhạt,2
+SP16,30,Xanh đậm,7
+SP17,26,Xanh đậm,14
+SP17,26,Đen,4
+SP17,27,Xanh đậm,9
+SP17,27,Đen,14
+SP17,28,Xanh đậm,4
+SP17,28,Đen,9
+SP17,29,Xanh đậm,14
+SP17,29,Đen,4
+SP18,27,Xanh nhạt,6
+SP18,27,Trắng,11
+SP18,28,Xanh nhạt,1
+SP18,28,Trắng,6
+SP18,29,Xanh nhạt,11
+SP18,29,Trắng,1
+SP18,30,Xanh nhạt,6
+SP18,30,Trắng,11
+SP19,XS,Đen,13
+SP19,XS,Be,0
+SP19,XS,Xám,8
+SP19,S,Đen,13
+SP19,S,Be,0
+SP19,S,Xám,8
+SP19,M,Đen,13
+SP19,M,Be,0
+SP19,M,Xám,8
+SP19,L,Đen,13
+SP19,L,Be,0
+SP19,L,Xám,8
+SP19,XL,Đen,13
+SP19,XL,Be,0
+SP19,XL,Xám,8
+SP20,S,Đen,5
+SP20,S,Be,10
+SP20,M,Đen,0
+SP20,M,Be,5
+SP20,L,Đen,10
+SP20,L,Be,0
+SP21,26,Xanh nhạt,12
+SP21,26,Trắng,2
+SP21,27,Xanh nhạt,7
+SP21,27,Trắng,12
+SP21,28,Xanh nhạt,2
+SP21,28,Trắng,7
+SP21,29,Xanh nhạt,12
+SP21,29,Trắng,2
+SP22,S,Be,4
+SP22,S,Xanh rêu,9
+SP22,S,Trắng,14
+SP22,M,Be,4
+SP22,M,Xanh rêu,9
+SP22,M,Trắng,14
+SP22,L,Be,4
+SP22,L,Xanh rêu,9
+SP22,L,Trắng,14
+SP23,S,Đen,11
+SP23,S,Be,1
+SP23,S,Nâu,6
+SP23,M,Đen,11
+SP23,M,Be,1
+SP23,M,Nâu,6
+SP23,L,Đen,11
+SP23,L,Be,1
+SP23,L,Nâu,6
+SP23,XL,Đen,11
+SP23,XL,Be,1
+SP23,XL,Nâu,6
+SP24,S,Kem,0
+SP24,S,Đen,8
+SP24,M,Kem,13
+SP24,M,Đen,0
+SP24,L,Kem,8
+SP24,L,Đen,13
+SP25,26,Xanh nhạt,10
+SP25,26,Đen,0
+SP25,27,Xanh nhạt,5
+SP25,27,Đen,10
+SP25,28,Xanh nhạt,0
+SP25,28,Đen,5
+SP25,29,Xanh nhạt,10
+SP25,29,Đen,0
+SP26,S,Kem,2
+SP26,S,Xám,7
+SP26,S,Nâu,12
+SP26,M,Kem,2
+SP26,M,Xám,7
+SP26,M,Nâu,12
+SP26,L,Kem,2
+SP26,L,Xám,7
+SP26,L,Nâu,12
+SP27,S,Đen,9
+SP27,S,Be,14
+SP27,M,Đen,4
+SP27,M,Be,9
+SP27,L,Đen,14
+SP27,L,Be,4
+SP27,XL,Đen,9
+SP27,XL,Be,14
+SP28,S,Xanh nhạt,1
+SP28,S,Xanh đậm,6
+SP28,M,Xanh nhạt,11
+SP28,M,Xanh đậm,1
+SP28,L,Xanh nhạt,6
+SP28,L,Xanh đậm,11
+SP28,XL,Xanh nhạt,1
+SP28,XL,Xanh đậm,6
+SP29,S,Trắng,8
+SP29,S,Hồng phấn,13
+SP29,S,Xanh ngọc,0
+SP29,M,Trắng,8
+SP29,M,Hồng phấn,13
+SP29,M,Xanh ngọc,0
+SP29,L,Trắng,8
+SP29,L,Hồng phấn,13
+SP29,L,Xanh ngọc,0
+SP30,S,Đen,0
+SP30,S,Nâu,5
+SP30,M,Đen,10
+SP30,M,Nâu,0
+SP30,L,Đen,5
+SP30,L,Nâu,10
+SP30,XL,Đen,0
+SP30,XL,Nâu,5

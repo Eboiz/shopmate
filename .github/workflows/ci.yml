@@ -23,3 +23,5 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      # Runs the seed script with plain Node, which also catches imports Vitest and tsc accept but Node can't run.
+      - run: pnpm db:seed --check

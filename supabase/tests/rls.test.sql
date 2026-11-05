@@ -2,7 +2,7 @@
 -- no profile, and anon. Run with `pnpm db:test` against local Supabase.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(38);
+select plan(39);
 
 -- Fixture (as postgres).
 insert into auth.users (id, email) values
@@ -58,6 +58,10 @@ select throws_ok(
   $$insert into public.products (shop_id, code, name, price)
     values ('a0000000-0000-0000-0000-000000000001', 'X', 'Planted', 1000)$$,
   '42501', null, 'owner B cannot add a product to shop A'
+);
+select is_empty(
+  $$delete from public.products where id = 'a0000000-0000-0000-0000-0000000000a2' returning id$$,
+  'owner B cannot delete a product of shop A'
 );
 select is_empty(
   $$update public.conversations set mode = 'staff' where id = 'a0000000-0000-0000-0000-0000000000f1' returning id$$,
