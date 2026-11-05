@@ -17,9 +17,10 @@ describe("updatePriceSchema", () => {
   it("accepts a whole number greater than 0", () => {
     expect(price("350000").data?.price).toBe(350000);
     expect(price(" 1 ").data?.price).toBe(1);
+    expect(price("99999999").data?.price).toBe(99999999);
   });
 
-  it.each(["0", "-1", "", "  ", "350k", "350.000", "12.5", "1e3", "99999999999999999"])(
+  it.each(["0", "-1", "", "  ", "350k", "350.000", "12.5", "1e3", "100000000", "99999999999999999"])(
     "rejects %j",
     (value) => {
       expect(price(value).success).toBe(false);

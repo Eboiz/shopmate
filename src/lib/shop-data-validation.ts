@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { policyKindSchema, type PolicyKind } from "@/contract";
 
 // Parses form text instead of using z.coerce, which would turn an empty field into 0.
 const wholeNumber = (message: string) =>
@@ -11,19 +12,23 @@ const wholeNumber = (message: string) =>
 
 const id = z.string().min(1);
 
-export const POLICY_LABELS = {
+export const POLICY_LABELS: Record<PolicyKind, string> = {
   doi_tra: "Đổi trả",
   giao_hang: "Giao hàng",
   khuyen_mai: "Khuyến mãi",
-} as const;
+};
 
-export type PolicyType = keyof typeof POLICY_LABELS;
+export const POLICY_KINDS = policyKindSchema.options;
 
 const PRICE_ERROR = "Giá phải là số nguyên lớn hơn 0, ví dụ 350000";
+// Same cap as products.price in the database (PB-00).
+export const MAX_PRICE = 99_999_999;
 
 export const updatePriceSchema = z.object({
   productId: id,
-  price: wholeNumber(PRICE_ERROR).refine((price) => price > 0, PRICE_ERROR),
+  price: wholeNumber(PRICE_ERROR)
+    .refine((price) => price > 0, PRICE_ERROR)
+    .refine((price) => price <= MAX_PRICE, "Giá phải nhỏ hơn 100.000.000 đồng"),
 });
 
 export const updateStockSchema = z.object({
@@ -34,7 +39,7 @@ export const updateStockSchema = z.object({
 // Empty content is allowed: it means the shop has no such policy, so the AI hands
 // that question to staff (PB-02).
 export const updatePolicySchema = z.object({
-  type: z.enum(["doi_tra", "giao_hang", "khuyen_mai"]),
+  type: policyKindSchema,
   content: z.string().trim(),
 });
 
