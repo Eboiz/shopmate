@@ -1,0 +1,80 @@
+import { after, type NextRequest } from "next/server";
+import { parseMessengerEvents, sendTypingOn, verifyMessengerSignature, type MessengerEvent } from "@/lib/channels/messenger";
+import { receiveChannelMessage } from "@/lib/channels/receive";
+import { createAdminClient } from "@/lib/supabase/admin";
+
+// Messenger webhook (PB-15). Meta app > Messenger > Webhooks points here:
+// GET verifies the callback URL, POST delivers messages.
+
+export function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  const token = process.env.META_VERIFY_TOKEN;
+  if (token && params.get("hub.mode") === "subscribe" && params.get("hub.verify_token") === token) {
+    return new Response(params.get("hub.challenge") ?? "", { status: 200 });
+  }
+  return new Response(null, { status: 403 });
+}
+
+export async function POST(request: NextRequest) {
+  const secret = process.env.META_APP_SECRET;
+  if (!secret) {
+    console.error("messenger: META_APP_SECRET is not set");
+    return new Response(null, { status: 500 });
+  }
+  const body = new Uint8Array(await request.arrayBuffer());
+  if (!verifyMessengerSignature(body, request.headers.get("x-hub-signature-256"), secret)) {
+    return new Response(null, { status: 401 });
+  }
+  let payload: { object?: unknown };
+  try {
+    payload = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    return new Response(null, { status: 400 });
+  }
+  if (payload?.object !== "page") return new Response(null, { status: 404 });
+
+  // Answer Meta right away; Meta resends a delivery that isn't acknowledged quickly.
+  const events = parseMessengerEvents(payload);
+  if (events.length > 0) after(() => handleEvents(events));
+  return new Response("EVENT_RECEIVED", { status: 200 });
+}
+
+async function handleEvents(events: MessengerEvent[]) {
+  const pageIds = [...new Set(events.map((e) => e.pageId))];
+  const { data: accounts, error } = await createAdminClient()
+    .from("channel_accounts")
+    .select("id, shop_id, external_account_id, access_token")
+    .eq("channel", "messenger")
+    .in("external_account_id", pageIds);
+  if (error) {
+    console.error("messenger: channel account lookup failed", error.message);
+    return;
+  }
+
+  // One at a time, so a shopper's messages are handled in the order sent.
+  for (const event of events) {
+    const account = accounts.find((a) => a.external_account_id === event.pageId);
+    if (!account) {
+      console.warn(`messenger: unknown page ${event.pageId}, message ignored`);
+      continue;
+    }
+    if (event.type === "sticker") {
+      console.info(`messenger: sticker from ${event.senderId} ignored`);
+      continue;
+    }
+    const incoming = {
+      externalId: event.senderId,
+      messageId: event.mid,
+      ...(event.type === "text" ? { text: event.text } : { imageUrls: event.imageUrls }),
+    };
+    try {
+      await receiveChannelMessage(
+        { id: account.id, shopId: account.shop_id, channel: "messenger" },
+        incoming,
+        () => sendTypingOn(account.access_token, event.senderId),
+      );
+    } catch (error) {
+      console.error(`messenger: message ${event.mid} failed`, error);
+    }
+  }
+}

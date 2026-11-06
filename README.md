@@ -60,12 +60,30 @@ pnpm db:start
 pnpm db:seed                                   # local Supabase
 pnpm db:seed --target=shared --confirm=<ref>   # the team's project; <ref> is the subdomain of NEXT_PUBLIC_SUPABASE_URL
 pnpm db:seed --check                           # only check the CSV files
+pnpm db:seed --only=channels                   # only the chat channel accounts (PB-15), safe on the shared project
 ```
 
 - It writes two shops with the same data: `may-boutique` (demo) and `may-boutique-eval` (PB-10 eval runs, so their draft orders never mix with the demo). It also creates the accounts in `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` and `DEMO_STAFF_EMAIL` / `DEMO_STAFF_PASSWORD` (`.env.local`) as owner and staff of the demo shop.
 - Wrong data stops the seed before anything is written, with the sheet, row and column of each error.
 - It can run any number of times: rows are upserted, never deleted. Each run resets names, prices, descriptions, photos and stock to the CSV, so on the shared project it also undoes edits made in the app and stock taken by confirmed orders. Rows that are in the database but not in the CSV are reported, not removed. It never moves an existing account that belongs to another shop.
 - It ends by signing in as the demo owner and staff and checking that the demo shop can't read or change the eval shop.
+
+## Messenger channel (PB-15)
+
+Shoppers message the demo shop's Facebook Page; the webhook `/api/webhooks/messenger` answers with the same engine and reply shape as web chat. Before Meta App Review, only people with a role on the Meta app (admins, developers, testers) can get answers.
+
+**Code:** `src/app/api/webhooks/messenger/route.ts` (signature check, Page lookup, `after()`), `src/lib/channels/messenger.ts` (payload parsing, Send API: text, then a carousel of product cards, quick replies on the last message), `src/lib/channels/receive.ts` (shared by every external channel: dedupe by message id, find or create the shopper and conversation, store the message, call the engine while the conversation is in `ai` mode). A photo hands the conversation to staff; stickers are ignored. If the engine fails, the conversation is handed to staff with a short notice to the shopper.
+
+**Set it up again:**
+
+1. Create a Facebook Page and a Meta app (developers.facebook.com, use case "Engage with customers on Messenger from Meta", no business portfolio, stay in Development mode).
+2. App > Messenger API Settings > Generate access tokens: connect the Page, then **Generate** the Page token. Note the Page ID shown next to it (not the id in the Page's profile URL).
+3. App settings > Basic: copy the App secret.
+4. `.env.local`: `META_APP_SECRET`, `META_VERIFY_TOKEN` (any random string, e.g. `node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"`), `MESSENGER_PAGE_ID`, `MESSENGER_PAGE_ACCESS_TOKEN`.
+5. Store the Page in the database: `pnpm db:seed --only=channels` (local) or `pnpm db:seed --only=channels --target=shared --confirm=<ref>`. This only upserts the `channel_accounts` row; it doesn't touch products, stock, photos or accounts.
+6. Vercel (Production and Preview): add `META_APP_SECRET` and `META_VERIFY_TOKEN`. The Page token is read from the database, not from Vercel.
+7. App > Messenger API Settings > Configure webhooks: Callback URL `https://<deployment>/api/webhooks/messenger`, Verify token = `META_VERIFY_TOKEN`, **Verify and save**. Then next to the Page, **Add subscriptions**: `messages`, `messaging_postbacks`.
+8. App roles > Roles > Add people > Tester for each teammate; they accept at developers.facebook.com/requests.
 
 ## Environment variables
 

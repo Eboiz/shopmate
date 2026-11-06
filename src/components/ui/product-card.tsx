@@ -1,6 +1,6 @@
 import Image from "next/image";
 import type { ReactNode } from "react";
-import { formatPrice } from "@/lib/format";
+import { formatPrice, formatSizesInStock } from "@/lib/format";
 
 // Replace with the `products[]` item type once PB-00 merges.
 type ProductCardProps = {
@@ -45,9 +45,7 @@ export function ProductCard({
         )}
         {sizesInStock && (
           <p className="text-sm text-zinc-500">
-            {sizesInStock.length > 0
-              ? `Size còn hàng: ${sizesInStock.join(", ")}`
-              : "Hết hàng"}
+            {formatSizesInStock(sizesInStock)}
           </p>
         )}
         {action && <div className="mt-auto pt-2">{action}</div>}
