@@ -140,6 +140,7 @@ jobs:
       - name: Plan (Claude Opus)
         if: steps.changes.outputs.ran == 'true'
         continue-on-error: true
+        timeout-minutes: 15
         env:
           ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -148,10 +149,11 @@ jobs:
           npx -y @anthropic-ai/claude-code@latest -p "$(sed "s/PLAN_FILE/$PLAN_FILE/g" .github/e2e-agent/plan.md)" \
             --model claude-opus-5-5 \
             --allowedTools "Read(./**),Glob,Grep,Write(./e2e/plans/**)" \
-            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/**)"
+            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/.ssh/**),Read(~/.config/**),Read(//home/runner/work/_temp/**),Read(//home/runner/actions-runner/**),Read(~/.claude/**),Read(~/.claude.json)"
       - name: Write and heal tests (Claude Sonnet + Playwright test agents)
         if: steps.changes.outputs.ran == 'true'
         continue-on-error: true
+        timeout-minutes: 30
         env:
           ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -163,7 +165,7 @@ jobs:
             --model claude-sonnet-5-5 \
             --mcp-config .mcp.json \
             --allowedTools "Read(./**),Glob,Grep,Edit(./e2e/**),Write(./e2e/**),Task,mcp__playwright-test" \
-            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/**)"
+            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/.ssh/**),Read(~/.config/**),Read(//home/runner/work/_temp/**),Read(//home/runner/actions-runner/**),Read(~/.claude/**),Read(~/.claude.json)"
       - name: Keep only changes under e2e/
         if: steps.changes.outputs.ran == 'true'
         run: |
@@ -192,7 +194,8 @@ jobs:
         env:
           KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          files="e2e.patch e2e-results.json $(ls agent-out/summary.md 2>/dev/null)"
+          files="e2e.patch e2e-results.json"
+          if [ -f agent-out/summary.md ]; then files="$files agent-out/summary.md"; fi
           leak=false
           grep -qE '(sk-ant-|as_eyJ)[A-Za-z0-9_.-]{8,}' $files && leak=true
           if [ -n "$KEY" ]; then
