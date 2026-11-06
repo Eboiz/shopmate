@@ -1,4 +1,4 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import Anthropic from "@anthropic-ai/sdk";
 import type { ModelClient } from "./engine";
 
 // Streams every request so TTFT can be measured: onFirstToken fires at the first
@@ -20,4 +20,11 @@ export function createAnthropicModel(client: Anthropic): ModelClient {
       return stream.finalMessage();
     },
   };
+}
+
+// The model used when nothing is injected. ANTHROPIC_API_URL points at a gateway
+// (the SDK itself only reads ANTHROPIC_BASE_URL); empty means api.anthropic.com.
+export function createDefaultModel(env: Record<string, string | undefined> = process.env): ModelClient {
+  const baseURL = env.ANTHROPIC_API_URL?.trim().replace(/\/+$/, "").replace(/\/v1\/messages$/, "");
+  return createAnthropicModel(new Anthropic(baseURL ? { baseURL } : {}));
 }

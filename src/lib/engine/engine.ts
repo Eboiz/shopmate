@@ -12,7 +12,7 @@ import {
 } from "@/contract";
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createAnthropicModel } from "./anthropic-model";
+import { createDefaultModel } from "./anthropic-model";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnMetrics } from "./metrics";
@@ -102,7 +102,7 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
   const db = deps.db ?? createAdminClient();
   return {
     db,
-    model: deps.model ?? createAnthropicModel(new Anthropic()),
+    model: deps.model ?? createDefaultModel(),
     store: deps.store ?? createSupabaseStore(db),
     handlers: deps.handlers ?? toolHandlers,
     now: deps.now ?? Date.now,

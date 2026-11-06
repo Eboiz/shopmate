@@ -1,7 +1,5 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import { engineInputSchema, type EngineInput } from "@/contract";
-import { createAnthropicModel } from "@/lib/engine/anthropic-model";
 import { runEngine } from "@/lib/engine/engine";
 import { createLangfuseSink } from "@/lib/engine/langfuse";
 import type { TurnMetrics } from "@/lib/engine/metrics";
@@ -60,10 +58,6 @@ export async function POST(request: Request) {
     const parsed = engineInputSchema.parse(input);
     const result = await runEngine(parsed, {
       db,
-      // ANTHROPIC_API_URL points at a gateway (see .env.test.local); the SDK itself only reads ANTHROPIC_BASE_URL.
-      model: createAnthropicModel(
-        new Anthropic({ baseURL: process.env.ANTHROPIC_API_URL?.replace(/\/+$/, "").replace(/\/v1\/messages$/, "") || undefined }),
-      ),
       staffShopId: body.mode === "staff_draft" ? shop.id : undefined,
       onMetrics: (m) => {
         metrics = m;

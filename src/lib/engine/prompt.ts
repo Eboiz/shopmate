@@ -1,9 +1,9 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { EngineMode } from "@/contract";
 
-// v0 is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
+// v0.x is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
 // change: it is stored with each turn (ai_turns.prompt_version) to compare runs.
-export const PROMPT_VERSION = "v0";
+export const PROMPT_VERSION = "v0.1";
 
 type Product = { id: string; name: string };
 
@@ -23,7 +23,19 @@ export function buildStablePrompt(mode: EngineMode): string {
     "  quickReplies: tối đa 10 gợi ý trả lời nhanh, mỗi cái tối đa 20 ký tự.",
   ];
   if (mode === "staff_draft") {
-    lines.push("- Bạn soạn nháp cho nhân viên, không tạo đơn, không chuyển nhân viên.");
+    lines.push(
+      "- Không hứa hẹn và không tự giảm giá hay tặng quà.",
+      "- Chính sách (đổi trả, giao hàng, khuyến mãi) chỉ lấy từ get_policy; shop chưa viết thì nói rõ là chưa có thông tin để nhân viên tự trả lời.",
+      "- recommend_size trả out_of_range hoặc no_chart thì nói rõ chưa tư vấn được size, không đoán.",
+      "- Bạn soạn nháp cho nhân viên, không tạo đơn, không chuyển nhân viên.",
+    );
+  } else {
+    lines.push(
+      "- Không hứa hẹn và không tự giảm giá, tặng quà hay đổi điều kiện của shop.",
+      "- Chính sách (đổi trả, giao hàng, khuyến mãi) chỉ lấy từ get_policy; shop chưa viết thì gọi handoff_to_staff với reason policy_not_covered, không tự nghĩ ra.",
+      "- recommend_size trả out_of_range hoặc no_chart thì nói rõ cho khách là chưa tư vấn được size, rồi gọi handoff_to_staff (size_out_of_range hoặc not_covered_by_data).",
+      "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",
+    );
   }
   return lines.join("\n");
 }

@@ -20,6 +20,13 @@ describe("prompt", () => {
     expect(buildStablePrompt("staff_draft")).not.toBe(buildStablePrompt("customer"));
   });
 
+  it("customer prompt has the four handoff and no-promise rules; staff_draft has no handoff", () => {
+    const customer = buildStablePrompt("customer");
+    expect(PROMPT_VERSION).toBe("v0.1");
+    for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human"]) expect(customer).toContain(needle);
+    expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
+  });
+
   it("stable prompt does not depend on the product", () => {
     const blocks = [productA, productB, null].map((product) => buildSystemPrompt({ mode: "customer", product }));
     for (const b of blocks) {

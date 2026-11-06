@@ -1,7 +1,8 @@
 import "server-only";
 import { after } from "next/server";
 import type { EngineInput, EngineOutput } from "@/contract";
-import { runEngine as runEngineTurn } from "./engine";
+import { requireStaff } from "@/lib/auth";
+import { runEngine as runEngineTurn, type EngineResult } from "./engine";
 
 // The one function channels call (PB-15 Messenger, the web chat, ...): same name
 // and place as the placeholder PB-15 shipped, so the channel code does not change.
@@ -12,7 +13,18 @@ import { runEngine as runEngineTurn } from "./engine";
 // to staff, the reply is HANDOFF_TEXT: the channel sends it as a system message,
 // so nothing else needs to be sent here.
 export async function runEngine(input: EngineInput): Promise<EngineOutput> {
-  const { output, turnLogged } = await runEngineTurn(input);
+  return finish(await runEngineTurn(input));
+}
+
+// The reply assistant (PB-20). The input carries no shop; it comes from the
+// signed-in staff member's profile (requireStaff), never from the request.
+// Redirects to the login page when nobody is signed in.
+export async function runStaffDraft(input: Extract<EngineInput, { mode: "staff_draft" }>): Promise<EngineOutput> {
+  const { shopId } = await requireStaff();
+  return finish(await runEngineTurn(input, { staffShopId: shopId }));
+}
+
+function finish({ output, turnLogged }: EngineResult): EngineOutput {
   try {
     after(turnLogged);
   } catch {
