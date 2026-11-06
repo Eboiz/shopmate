@@ -123,4 +123,55 @@ test.describe("with the local database", () => {
     const instagram = JSON.stringify({ object: "instagram", entry: [] });
     expect((await postMessenger(request, instagram, signMessenger(instagram))).status()).toBe(404);
   });
+
+  test("a text that needs staff hands off with exactly one system notice", async ({ request }) => {
+    const psid = uid("psid");
+    const question = "Váy suông linen size nào vừa 1m58 50kg?";
+    const res = await postMessenger(request, messengerBody([messengerText(psid, uid("mid"), question)]));
+    expect(res.status()).toBe(200);
+
+    const conversation = await waitForConversation("messenger", psid, (c) => c.messages.some((m) => answered(m.sender)));
+    expect(conversation.shopId).toBe(await shopIdBySlug("may-boutique"));
+
+    const shopperMessages = conversation.messages.filter((m) => m.sender === "shopper");
+    expect(shopperMessages).toHaveLength(1);
+    expect(shopperMessages[0].text).toBe(question);
+
+    const systemMessages = conversation.messages.filter((m) => m.sender === "system");
+    expect(systemMessages).toHaveLength(1);
+    expect(systemMessages.map((m) => m.text)).toEqual(["Cảm ơn bạn! Nhân viên shop sẽ trả lời bạn ngay."]);
+
+    expect(conversation.messages.filter((m) => m.sender === "ai")).toHaveLength(0);
+    expect(conversation.mode).toBe("needs_human");
+  });
+
+  test("two messages arriving at the same time get exactly one handoff notice", async ({ request }) => {
+    const psid = uid("psid");
+    const a = messengerBody([messengerText(psid, uid("mid"), "tin 1")]);
+    const b = messengerBody([messengerText(psid, uid("mid"), "tin 2")]);
+
+    const resA = await postMessenger(request, a);
+    const resB = await postMessenger(request, b);
+    expect(resA.status()).toBe(200);
+    expect(resB.status()).toBe(200);
+
+    // The notice is stored after the second message, so wait for it as well.
+    await waitForConversation(
+      "messenger",
+      psid,
+      (c) => c.messages.filter((m) => m.sender === "shopper").length === 2 && c.messages.some((m) => m.sender === "system"),
+    );
+    const conversation = await conversationOf("messenger", psid);
+    expect(conversation).not.toBeNull();
+
+    const shopperMessages = conversation!.messages.filter((m) => m.sender === "shopper");
+    expect(shopperMessages.map((m) => m.text)).toEqual(["tin 1", "tin 2"]);
+
+    const systemMessages = conversation!.messages.filter((m) => m.sender === "system");
+    expect(systemMessages).toHaveLength(1);
+    expect(systemMessages[0].text).toBe("Cảm ơn bạn! Nhân viên shop sẽ trả lời bạn ngay.");
+
+    expect(conversation!.messages.filter((m) => m.sender === "ai")).toHaveLength(0);
+    expect(conversation!.mode).toBe("needs_human");
+  });
 });
