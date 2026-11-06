@@ -1,4 +1,9 @@
+import { existsSync } from "node:fs";
 import { defineConfig } from "@playwright/test";
+
+// The demo accounts (DEMO_STAFF_EMAIL, ...) live in .env.local, like for `pnpm db:seed`.
+// Variables already set (CI secrets) win over the file.
+if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 
 // Set E2E_BASE_URL to test a preview deployment. Without it, a local dev server is started.
 const baseURL = process.env.E2E_BASE_URL;

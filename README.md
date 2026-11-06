@@ -51,6 +51,20 @@ Staff users who sent messages or confirmed orders can't be deleted (their rows p
 
 Migrations reach the shared Supabase project only after they are merged to `main`. Test unmerged migrations on local Supabase (`pnpm db:start`, needs Docker).
 
+## Main flow test (PB-19)
+
+`e2e/main-flow.spec.ts` plays the demo: a shopper on `/s/may-boutique` asks for a size, orders "Váy suông linen" Trắng / M in the chat, the demo staff account confirms the order on `/admin/orders`, and the stock shown on `/admin/products` goes down by one.
+
+```bash
+pnpm exec playwright install chromium                    # once
+E2E_BASE_URL=https://<preview-url> pnpm test:e2e --repeat-each=3   # before each Sprint Review and the demo
+```
+
+- It signs in with `DEMO_STAFF_EMAIL` / `DEMO_STAFF_PASSWORD`, read from `.env.local` or from the environment (GitHub Actions secrets in CI).
+- It talks to the real AI, so it checks facts (a size is named, the order exists, stock is one lower), not exact sentences.
+- Until the chat API (PB-03, PB-04, PB-11) and the orders API (PB-12) are deployed, the main flow is reported as **skipped** with what is missing. Skipped is not passed.
+- Each run takes one item of stock. `pnpm db:seed` resets it.
+
 ## Demo shop (PB-02)
 
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
