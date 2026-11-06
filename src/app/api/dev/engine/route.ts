@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { engineInputSchema, type EngineInput } from "@/contract";
 import { createAnthropicModel } from "@/lib/engine/anthropic-model";
 import { runEngine } from "@/lib/engine/engine";
+import { createLangfuseSink } from "@/lib/engine/langfuse";
 import type { TurnMetrics } from "@/lib/engine/metrics";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -54,6 +55,7 @@ export async function POST(request: Request) {
   }
 
   let metrics: TurnMetrics | null = null;
+  const langfuse = createLangfuseSink(); // passing onMetrics replaces the engine's default sink, so add it back
   try {
     const parsed = engineInputSchema.parse(input);
     const result = await runEngine(parsed, {
@@ -66,6 +68,7 @@ export async function POST(request: Request) {
       onMetrics: (m) => {
         metrics = m;
         console.info(JSON.stringify(m));
+        return langfuse?.(m);
       },
     });
     // Dev: wait for the ai_turns write (and Langfuse) so the next look at the DB is current.

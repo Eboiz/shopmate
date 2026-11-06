@@ -108,10 +108,10 @@ describe("sampleFromMetrics", () => {
       latencyMs: 300,
       ttftMs: 120,
       modelCalls: [
-        { ms: 1, ttftMs: null, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, stopReason: "tool_use" },
-        { ms: 1, ttftMs: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, stopReason: "end_turn" },
+        { startMs: 0, ms: 1, ttftMs: null, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, stopReason: "tool_use" },
+        { startMs: 1, ms: 1, ttftMs: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, stopReason: "end_turn" },
       ],
-      toolCalls: [{ name: "get_stock", ms: 5, outcome: "ok" }],
+      toolCalls: [{ name: "get_stock", startMs: 0, ms: 5, outcome: "ok" }],
       duplicateToolCalls: 0,
       inputTokens: 2,
       outputTokens: 2,

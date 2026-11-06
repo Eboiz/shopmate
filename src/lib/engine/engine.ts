@@ -174,6 +174,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       { onFirstToken: () => (firstTokenAt ??= now()) },
     );
     modelCalls.push({
+      startMs: c0 - t0,
       ms: now() - c0,
       ttftMs: firstTokenAt === null ? null : firstTokenAt - c0,
       inputTokens: res.usage.input_tokens,
@@ -207,17 +208,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     calls += uses.length;
 
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
-    const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number }> => {
+    const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
       const s0 = now();
       const run = await executeTool(u.name, u.input, ctx, mode, deps.handlers, deps.db);
-      return { run, ms: now() - s0 };
+      return { run, ms: now() - s0, startMs: s0 - t0 };
     });
 
     // runs are in tool_use order.
     uses.forEach((u, i) => {
-      const { run, ms } = runs[i];
+      const { run, ms, startMs } = runs[i];
       if (run.log) logs.push(run.log);
-      toolMetrics.push({ name: u.name, ms, outcome: toolOutcome(run) });
+      toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
     });
 
@@ -269,6 +270,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     model: deps.modelName,
     mode,
     shopId: ctx.shopId,
+    conversationId: ctx.conversationId,
     latencyMs,
     ttftMs: finalFirstTokenAt === null ? null : finalFirstTokenAt - t0,
     modelCalls,

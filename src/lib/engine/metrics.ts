@@ -20,7 +20,11 @@ export type TurnMetrics = {
   // Start of runEngine until the first text token of the last model response;
   // null when the model didn't write the reply (handoff, truncated).
   ttftMs: number | null;
+  // Opaque id of the conversation (null in staff_draft); groups turns into a Langfuse session.
+  conversationId?: string | null;
+  // startMs: when the call began, in ms after the start of runEngine.
   modelCalls: Array<{
+    startMs: number;
     ms: number;
     ttftMs: number | null;
     inputTokens: number;
@@ -30,7 +34,7 @@ export type TurnMetrics = {
     stopReason: string | null;
   }>;
   // name is a string: the model may call a tool that doesn't exist.
-  toolCalls: Array<{ name: string; ms: number; outcome: ToolOutcome }>;
+  toolCalls: Array<{ name: string; startMs: number; ms: number; outcome: ToolOutcome }>;
   // Calls repeating the same name and input (keys sorted) within the turn.
   duplicateToolCalls: number;
   // Totals, equal to what is written to ai_turns.

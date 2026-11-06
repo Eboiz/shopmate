@@ -536,10 +536,10 @@ describe("runEngine", () => {
         duplicateToolCalls: 0,
       });
       expect(m.modelCalls).toEqual([
-        { ms: 150, ttftMs: 40, inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, cacheCreationTokens: 0, stopReason: "tool_use" },
-        { ms: 100, ttftMs: 30, inputTokens: 20, outputTokens: 7, cacheReadTokens: 50, cacheCreationTokens: 30, stopReason: "end_turn" },
+        { startMs: 0, ms: 150, ttftMs: 40, inputTokens: 10, outputTokens: 5, cacheReadTokens: 100, cacheCreationTokens: 0, stopReason: "tool_use" },
+        { startMs: 150, ms: 100, ttftMs: 30, inputTokens: 20, outputTokens: 7, cacheReadTokens: 50, cacheCreationTokens: 30, stopReason: "end_turn" },
       ]);
-      expect(m.toolCalls).toEqual([{ name: "get_policy", ms: 0, outcome: "ok" }]);
+      expect(m.toolCalls).toEqual([{ name: "get_policy", startMs: 150, ms: 0, outcome: "ok" }]);
       await result.turnLogged;
       expect(store.insertTurn.mock.calls[0][0]).toMatchObject({
         ttft_ms: 180,
