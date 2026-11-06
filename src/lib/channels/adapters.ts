@@ -1,5 +1,6 @@
 import type { Channel, Reply } from "@/contract";
 import { sendMessenger } from "./messenger";
+import { sendTelegram } from "./telegram";
 
 // Where a reply goes: the shopper's id on the channel, and the shop's account on
 // that channel (null for web chat).
@@ -25,7 +26,7 @@ export const adapters: Record<Channel, ChannelAdapter> = {
   // is nothing to push.
   web: async () => {},
   messenger: sendMessenger,
-  telegram: notImplemented("PB-21"),
+  telegram: sendTelegram,
   instagram: notImplemented("PB-23"),
   whatsapp: notImplemented("PB-27"),
 };

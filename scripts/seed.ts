@@ -4,7 +4,8 @@
 //   pnpm db:seed                                   local Supabase (`pnpm db:start`)
 //   pnpm db:seed --target=shared --confirm=<ref>   the team's Supabase project
 //   pnpm db:seed --check                           only read and check the CSV files
-//   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15)
+//   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15, PB-21)
+//     [--telegram-webhook=<base URL>]             also point the Telegram bot's webhook there
 //
 // Safe to run again: rows are upserted on their natural keys and nothing is ever
 // deleted. Each run resets name, price and stock to the CSV, so on the shared
@@ -19,7 +20,8 @@ import { readDemoData, SHEET_COLUMNS, type DemoData, type SheetName } from "../s
 const root = new URL("../", import.meta.url);
 const demoDir = new URL("supabase/seed/demo/", root);
 const { values: args } = parseArgs({
-  options: { check: { type: "boolean" }, target: { type: "string" }, confirm: { type: "string" }, only: { type: "string" } },
+  options: { check: { type: "boolean" }, target: { type: "string" }, confirm: { type: "string" }, only: { type: "string" },
+    "telegram-webhook": { type: "string" } },
 });
 
 function fail(message: string): never {
@@ -207,28 +209,69 @@ async function seedAccount(shop_id: string, a: Account) {
   );
 }
 
-// 5b. The demo shop's Facebook Page (PB-15). The token comes from .env.local and
-// never enters the repo; the webhook finds the shop from this row.
+// 5b. The demo shop's chat channels: its Facebook Page (PB-15) and Telegram bot
+// (PB-21). Tokens come from .env.local and never enter the repo; each webhook finds
+// the shop from these rows. A channel whose variables are missing is skipped.
+const optionalEnv = (name: string) => process.env[name]?.trim() || undefined;
+const messengerEnv = () => {
+  const pageId = optionalEnv("MESSENGER_PAGE_ID");
+  const token = optionalEnv("MESSENGER_PAGE_ACCESS_TOKEN");
+  return pageId && token ? { pageId, token } : null;
+};
+const telegramEnv = () => {
+  const token = optionalEnv("TELEGRAM_BOT_TOKEN");
+  const secret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
+  return token && secret ? { token, secret } : null;
+};
+
+async function seedChannelAccount(
+  shop_id: string,
+  channel: "messenger" | "telegram",
+  external_account_id: string,
+  access_token: string,
+  webhook_secret: string | null = null,
+) {
+  // Never move an account that another shop already uses.
+  const existing = await db.from("channel_accounts").select("shop_id")
+    .eq("channel", channel).eq("external_account_id", external_account_id).maybeSingle();
+  ok(existing, `${channel} channel account read`);
+  if (existing.data && existing.data.shop_id !== shop_id) fail(`${channel} ${external_account_id} belongs to another shop`);
+  return must(
+    await db.from("channel_accounts")
+      .upsert({ shop_id, channel, external_account_id, access_token, webhook_secret }, { onConflict: "channel,external_account_id" })
+      .select("id").single(),
+    `${channel} channel account`,
+  );
+}
+
 async function seedChannels(shop_id: string, slug: string) {
-  const pageId = process.env.MESSENGER_PAGE_ID?.trim();
-  const token = process.env.MESSENGER_PAGE_ACCESS_TOKEN?.trim();
-  if (!pageId || !token) {
-    console.warn("! MESSENGER_PAGE_ID or MESSENGER_PAGE_ACCESS_TOKEN not set in .env.local: no Messenger channel");
+  const messenger = messengerEnv();
+  if (messenger) {
+    await seedChannelAccount(shop_id, "messenger", messenger.pageId, messenger.token);
+    console.log(`✓ messenger: Page ${messenger.pageId} → ${slug}`);
+  } else console.warn("! MESSENGER_PAGE_ID or MESSENGER_PAGE_ACCESS_TOKEN not set in .env.local: no Messenger channel");
+
+  const telegram = telegramEnv();
+  if (!telegram) {
+    console.warn("! TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET not set in .env.local: no Telegram channel");
     return;
   }
-  // Never move a Page that another shop already uses.
-  const existing = await db.from("channel_accounts").select("shop_id")
-    .eq("channel", "messenger").eq("external_account_id", pageId).maybeSingle();
-  ok(existing, "messenger channel account read");
-  if (existing.data && existing.data.shop_id !== shop_id) fail(`Page ${pageId} belongs to another shop`);
-  ok(
-    await db.from("channel_accounts").upsert(
-      { shop_id, channel: "messenger", external_account_id: pageId, access_token: token },
-      { onConflict: "channel,external_account_id" },
-    ),
-    "messenger channel account",
-  );
-  console.log(`✓ messenger: Page ${pageId} → ${slug}`);
+  // The bot id is the number before ":" in its token. Never print the token itself.
+  const botId = telegram.token.match(/^(\d+):[\w-]+$/)?.[1] ?? fail("TELEGRAM_BOT_TOKEN is not a bot token (<id>:<secret>)");
+  const row = await seedChannelAccount(shop_id, "telegram", botId, telegram.token, telegram.secret);
+  console.log(`✓ telegram: bot ${botId} → ${slug}`);
+
+  const base = args["telegram-webhook"];
+  if (base === undefined) return;
+  const url = `${base.replace(/\/$/, "")}/api/webhooks/telegram/${row.id}`;
+  const response = await fetch(`https://api.telegram.org/bot${telegram.token}/setWebhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, secret_token: telegram.secret, allowed_updates: ["message"] }),
+  });
+  const result = (await response.json()) as { ok: boolean; description?: string };
+  if (!result.ok) fail(`setWebhook: ${result.description}`);
+  console.log(`✓ telegram: webhook → ${url}`);
 }
 
 // The full seed, or with --only=channels just the channel accounts.
@@ -335,8 +378,8 @@ if (args.only === undefined) {
   // --only=channels touches nothing but channel_accounts: no prices, stock, photos or
   // passwords, so it is safe on the shared project while the team tests there. It
   // ends without process.exit: exiting while fetch sockets are open crashes Node on Windows.
-  for (const name of ["MESSENGER_PAGE_ID", "MESSENGER_PAGE_ACCESS_TOKEN"]) {
-    if (!process.env[name]?.trim()) fail(`${name} is not set in .env.local`);
+  if (!messengerEnv() && !telegramEnv()) {
+    fail("no channel to seed: set MESSENGER_PAGE_ID + MESSENGER_PAGE_ACCESS_TOKEN or TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_SECRET in .env.local");
   }
   const shop = must(
     await db.from("shops").select("id").eq("slug", data.shop.slug).maybeSingle(),
