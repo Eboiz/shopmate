@@ -84,6 +84,8 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 - More than 5 tool calls in one turn hands the conversation to staff (`too_many_tool_calls`). A conversation not in mode `ai` is refused with `conversation_not_found`; routes must still gate before calling.
 - The reply is returned before the turn is written to `ai_turns`: `result.turnLogged` resolves with the row id or `null` and never rejects. On Vercel, pass it to `after()`.
 
+`pnpm test:int` includes `src/lib/engine/engine.int.test.ts`: the engine end to end on the two-shop fixture with a scripted model, plus a live Claude smoke test that runs only when `ANTHROPIC_API_KEY` is in `.env.test.local` (it costs real money; CI never runs it) and prints latency, TTFT, tokens and call counts.
+
 ### Engine metrics
 
 Each turn prints one JSON line with `event: "engine_turn"` (`deps.onMetrics`, `console.info` by default). It holds measurements only, never message text, tool input or output, or customer details:
