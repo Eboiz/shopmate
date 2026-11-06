@@ -16,7 +16,8 @@
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
     "db:types": "node scripts/db-types.mjs",
-    "db:seed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/seed.ts"
+    "db:seed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/seed.ts",
+    "engine:metrics": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/engine-metrics.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",

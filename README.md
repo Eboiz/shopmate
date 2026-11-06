@@ -31,6 +31,7 @@ There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accoun
 | `pnpm db:reset` | Recreate the local database from `supabase/migrations/` |
 | `pnpm db:test` | Database tests (pgTAP, `supabase/tests/`): constraints and Row Level Security |
 | `pnpm db:types` | Regenerate `src/contract/database.types.ts` from the local database |
+| `pnpm engine:metrics` | Engine latency, TTFT, tool success and token summary from `ai_turns` (see [Reading the metrics](#reading-the-metrics)) |
 | `pnpm db:seed` | Load the demo shop, the eval shop and the demo accounts into local Supabase (see [Demo shop](#demo-shop-pb-02)) |
 
 CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and `pnpm db:seed --check` on every pull request, and a separate `integration` job that starts local Supabase and runs `pnpm db:test` and `pnpm test:int`. Vercel builds a preview URL for every pull request.
@@ -100,6 +101,16 @@ Each turn prints one JSON line with `event: "engine_turn"` (`deps.onMetrics`, `c
 | `inputTokens`, `outputTokens` | Totals over all model calls, as written to `ai_turns` |
 | `handoffReason`, `truncated` | Why the turn ended without a model reply, if it did |
 | `promptVersion`, `model`, `mode`, `shopId` | To compare runs |
+
+### Reading the metrics
+
+```bash
+pnpm engine:metrics                                  # every turn in ai_turns
+pnpm engine:metrics --shop <uuid> --since 24h        # one shop, last 24 hours (or 7d)
+pnpm engine:metrics --model claude-sonnet-5-5 --prompt v0   # compare models or prompt versions
+```
+
+Read only. It uses `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the environment or `.env.local`, and prints, per mode and separately for turns with no tool call and with at least one: latency and TTFT P50/P90/P99 (nearest rank), tool call success rate with the `invalid_input` and not-found rates, tokens, model and tool calls per finished turn (turns without a handoff), and handoff rate by reason. Everything comes from `ai_turns`; no log collection needed.
 
 `ai_turns` stores `latency_ms`, `ttft_ms`, `input_tokens`, `output_tokens`, `model_calls`, `tool_calls`, `model` and `prompt_version`. Known limits: per-call timings, cache tokens and `duplicateToolCalls` are only in the log line; `unknown_tool` calls are not in `ai_turns.tool_calls`; the engine has no tuned prompt yet (`v0`, PB-10).
 
