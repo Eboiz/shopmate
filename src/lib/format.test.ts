@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatPrice } from "./format";
+import { formatPrice, formatSizesInStock } from "./format";
+
+describe("formatSizesInStock", () => {
+  it("lists the sizes in stock, or says the product is sold out", () => {
+    expect(formatSizesInStock(["S", "M"])).toBe("Size còn hàng: S, M");
+    expect(formatSizesInStock([])).toBe("Hết hàng");
+  });
+});
 
 describe("formatPrice", () => {
   it("groups thousands with dots and adds the đồng sign", () => {
