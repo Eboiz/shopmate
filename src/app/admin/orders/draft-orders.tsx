@@ -10,7 +10,6 @@ import {
   listDraftOrders,
   type DraftOrder,
   type OrderDecision,
-  type OrdersMode,
 } from "./orders-data";
 
 type OrdersState =
@@ -25,15 +24,15 @@ const orderDate = new Intl.DateTimeFormat("vi-VN", {
   timeZone: "Asia/Ho_Chi_Minh",
 });
 
-export function DraftOrders({ mode }: { mode: OrdersMode }) {
+export function DraftOrders() {
   const [state, setState] = useState<OrdersState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const [notice, setNotice] = useState<{ outcome: ProcessedOrder; customer: string }>();
+  const [notice, setNotice] = useState<{ outcome: ProcessedOrder; customer: string; notificationSent?: boolean }>();
 
   useEffect(() => {
     let ignore = false;
 
-    void listDraftOrders(mode).then(
+    void listDraftOrders().then(
       (orders) => {
         if (!ignore) setState({ status: "ready", orders });
       },
@@ -45,14 +44,14 @@ export function DraftOrders({ mode }: { mode: OrdersMode }) {
     return () => {
       ignore = true;
     };
-  }, [attempt, mode]);
+  }, [attempt]);
 
-  function removeProcessedOrder(order: DraftOrder, outcome: ProcessedOrder) {
+  function removeProcessedOrder(order: DraftOrder, outcome: ProcessedOrder, notificationSent?: boolean) {
     setState((current) => {
       if (current.status !== "ready") return current;
       return { status: "ready", orders: current.orders.filter(({ id }) => id !== order.id) };
     });
-    setNotice({ outcome, customer: order.customer.name });
+    setNotice({ outcome, customer: order.customer.name, notificationSent });
   }
 
   if (state.status === "loading") {
@@ -92,13 +91,16 @@ export function DraftOrders({ mode }: { mode: OrdersMode }) {
           </p>
         )}
       </div>
+      {notice?.notificationSent === false && (
+        <ErrorMessage>Đơn đã được xử lý. Chưa gửi được thông báo tự động, vui lòng nhắn trực tiếp cho khách.</ErrorMessage>
+      )}
       {state.orders.length === 0 ? (
         <EmptyState title="Không có đơn nháp" description="Đơn mới cần xử lý sẽ xuất hiện tại đây." />
       ) : (
         <ul aria-label="Đơn nháp" className="space-y-3">
           {state.orders.map((order) => (
             <li key={order.id}>
-              <DraftOrderCard order={order} mode={mode} onProcessed={removeProcessedOrder} />
+              <DraftOrderCard order={order} onProcessed={removeProcessedOrder} />
             </li>
           ))}
         </ul>
@@ -109,12 +111,10 @@ export function DraftOrders({ mode }: { mode: OrdersMode }) {
 
 function DraftOrderCard({
   order,
-  mode,
   onProcessed,
 }: {
   order: DraftOrder;
-  mode: OrdersMode;
-  onProcessed: (order: DraftOrder, outcome: ProcessedOrder) => void;
+  onProcessed: (order: DraftOrder, outcome: ProcessedOrder, notificationSent?: boolean) => void;
 }) {
   const [pending, setPending] = useState<OrderDecision | null>(null);
   const [error, setError] = useState<string>();
@@ -126,9 +126,9 @@ function DraftOrderCard({
     setError(undefined);
 
     try {
-      const result = await decideDraftOrder(order.id, decision, mode);
+      const result = await decideDraftOrder(order.id, decision);
       if (result.ok) {
-        onProcessed(order, decision);
+        onProcessed(order, decision, result.notificationSent);
       } else if (result.code === "not_draft") {
         onProcessed(order, result.code);
       } else {
