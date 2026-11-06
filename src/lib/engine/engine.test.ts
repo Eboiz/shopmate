@@ -181,6 +181,15 @@ describe("runEngine", () => {
       expect(store.setNeedsHuman).toHaveBeenCalledTimes(1);
     });
 
+    it("hands off measurements outside the tool's accepted range", async () => {
+      const { run, store, handlers } = setup([reply("Size XL")]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "Cao 300cm, nặng 80kg thì chọn size nào?" }] }));
+      expect(result.handoffReason).toBe("size_out_of_range");
+      expect(result.output.reply.text).toBe(SIZE_OUT_OF_RANGE_HANDOFF_TEXT);
+      expect(store.setNeedsHuman).toHaveBeenCalledTimes(1);
+      expect(handlers.recommend_size).not.toHaveBeenCalled();
+    });
+
     it("quotes exactly the declared policy and hands off when it is absent", async () => {
       const a = setup([reply("Đổi trong 30 ngày")]);
       const answer = await a.run(customerInput({ history: [{ sender: "shopper", text: "Shop đổi trả trong bao lâu?" }] }));

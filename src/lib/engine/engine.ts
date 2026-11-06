@@ -318,11 +318,19 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             verifiedText = "Shop chưa có thông tin về chính sách này. Mình đã chuyển câu hỏi cho nhân viên shop nhé.";
           }
         } else verifiedText = "Mình chưa kiểm tra được chính sách của shop lúc này. Bạn vui lòng thử lại sau nhé.";
+      } else {
+        handoff = "policy_not_covered";
+        await deps.store.setNeedsHuman(ctx);
+        verifiedText = "Shop chưa có thông tin về chính sách này. Mình đã chuyển câu hỏi cho nhân viên shop nhé.";
       }
     } else if (intent === "size") {
       const { heightCm, weightKg } = shopperMeasurements(input.history);
       if (heightCm === null || weightKg === null) {
         verifiedText = `Để tư vấn size, bạn cho mình ${heightCm === null ? "chiều cao" : ""}${heightCm === null && weightKg === null ? " và " : ""}${weightKg === null ? "cân nặng" : ""} nhé.`;
+      } else if (heightCm < 50 || heightCm > 250 || weightKg < 20 || weightKg > 250) {
+        handoff = "size_out_of_range";
+        await deps.store.setNeedsHuman(ctx);
+        verifiedText = handoffText(handoff, "out_of_range");
       } else if (!tc.product && adviceState.foundProducts?.length !== 1) {
         verifiedText = PRODUCT_CLARIFICATION;
       } else {

@@ -11,7 +11,7 @@ export function latestShopperText(history: HistoryMessage[]): string {
 export function adviceIntent(history: HistoryMessage[]): "size" | "stock" | "policy" | null {
   const text = fold(latestShopperText(history));
   if (/\b(size nao|size gi|tu van size|chon size|mac size|vua size|bang size|co nao|chon co|mac co)\b/.test(text)) return "size";
-  if (/\b(doi tra|doi hang|tra hang|bao hanh|giao hang|ship|van chuyen|mien phi|giam gia|khuyen mai|voucher)\b/.test(text)) return "policy";
+  if (/\b(doi tra|doi hang|tra hang|doi trong|chinh sach doi|bao hanh|giao hang|ship|van chuyen|mien phi|giam gia|khuyen mai|voucher)\b/.test(text)) return "policy";
   if (/\b(con hang|con khong|het hang|het chua|ton kho|gia|bao nhieu|mau nao|co size|con size)\b/.test(text)) return "stock";
   return null;
 }
@@ -20,7 +20,7 @@ export function policyKindFor(history: HistoryMessage[]): "doi_tra" | "giao_hang
   const text = fold(latestShopperText(history));
   if (/\b(giao hang|ship|van chuyen|mien phi)\b/.test(text)) return "giao_hang";
   if (/\b(giam gia|khuyen mai|voucher)\b/.test(text)) return "khuyen_mai";
-  if (/\b(doi tra|doi hang|tra hang|bao hanh)\b/.test(text)) return "doi_tra";
+  if (/\b(doi tra|doi hang|tra hang|doi trong|chinh sach doi)\b/.test(text)) return "doi_tra";
   return null;
 }
 
