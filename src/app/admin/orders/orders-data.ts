@@ -16,7 +16,7 @@ const draftOrderSchema = z.object({
   total: vndSchema,
 });
 const ordersResponseSchema = z.object({ orders: z.array(draftOrderSchema) });
-const decisionSuccessSchema = z.object({ ok: z.literal(true), notificationSent: z.boolean() });
+const decisionSuccessSchema = z.object({ ok: z.literal(true), notificationSent: z.boolean().optional() });
 const decisionConflictSchema = z.object({ code: z.enum(["insufficient_stock", "not_draft"]) });
 
 export type DraftOrder = z.infer<typeof draftOrderSchema>;
@@ -24,8 +24,9 @@ export type OrderDecision = Extract<OrderStatus, "confirmed" | "cancelled">;
 
 const ordersEndpoint = "/api/admin/orders";
 
-export async function listDraftOrders(): Promise<DraftOrder[]> {
+export async function listDraftOrders(): Promise<DraftOrder[] | null> {
   const response = await fetch(`${ordersEndpoint}?status=draft`, { cache: "no-store" });
+  if (response.status === 404 || response.status === 501) return null;
   if (!response.ok) throw new Error(`Could not load draft orders (${response.status})`);
   return ordersResponseSchema.parse(await response.json()).orders;
 }

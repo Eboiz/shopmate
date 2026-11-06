@@ -15,6 +15,7 @@ import {
 type OrdersState =
   | { status: "loading" }
   | { status: "error" }
+  | { status: "unavailable" }
   | { status: "ready"; orders: DraftOrder[] };
 type ProcessedOrder = OrderDecision | "not_draft";
 
@@ -34,7 +35,7 @@ export function DraftOrders() {
 
     void listDraftOrders().then(
       (orders) => {
-        if (!ignore) setState({ status: "ready", orders });
+        if (!ignore) setState(orders ? { status: "ready", orders } : { status: "unavailable" });
       },
       () => {
         if (!ignore) setState({ status: "error" });
@@ -60,6 +61,10 @@ export function DraftOrders() {
         Đang tải đơn nháp…
       </p>
     );
+  }
+
+  if (state.status === "unavailable") {
+    return <EmptyState title="Chưa kết nối dữ liệu đơn hàng" description="Đơn nháp sẽ xuất hiện khi API đơn hàng được triển khai." />;
   }
 
   if (state.status === "error") {
