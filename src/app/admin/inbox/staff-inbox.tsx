@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { TextArea } from "@/components/ui/text-area";
-import { createDemoInbox, type InboxConversation } from "./inbox-data";
-import { listLiveConversations } from "./inbox-live";
+import {
+  historyLimit, listInboxMessages, listLiveConversations, setLiveInboxMode, subscribeInbox,
+  type InboxConversation, type InboxMessage,
+} from "./inbox-live";
 
 const channelLabels: Record<Channel, string> = {
   web: "Web chat",
@@ -43,51 +45,66 @@ type InboxState =
   | { status: "error" }
   | { status: "ready"; conversations: InboxConversation[] };
 
-function compareConversations(first: InboxConversation, second: InboxConversation) {
-  const priority = Number(second.mode === "needs_human") - Number(first.mode === "needs_human");
-  return priority || Date.parse(second.lastMessageAt) - Date.parse(first.lastMessageAt);
-}
+type SendMessageAction = (conversationId: string, text: string, requestId: string) => Promise<
+  { ok: true } | { ok: false; messageId: string | null }
+>;
 
 function ModeBadge({ mode }: { mode: ConversationMode }) {
   const color = mode === "needs_human" ? "bg-amber-100 text-amber-900" : "bg-zinc-100 text-zinc-800";
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{modeLabels[mode]}</span>;
 }
 
-export function StaffInbox({ demo }: { demo: boolean }) {
-  const [demoInbox] = useState(() => demo ? createDemoInbox() : null);
-  const source = demoInbox?.source;
+export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMessageAction }) {
   const [state, setState] = useState<InboxState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const onMessage = useEffectEvent((conversationId?: string) => {
+    if (selectedId && (!conversationId || conversationId === selectedId)) {
+      setHistoryVersion((version) => version + 1);
+    }
+  });
 
   useEffect(() => {
     let active = true;
-    let receivedUpdate = false;
-    const unsubscribe = source?.subscribe((conversations) => {
-      if (!active) return;
-      receivedUpdate = true;
-      setState({ status: "ready", conversations });
-    });
+    let requestId = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    const request = source ? source.listConversations() : listLiveConversations();
-    void request.then(
-      (conversations) => {
-        if (active && !receivedUpdate) setState({ status: "ready", conversations });
-      },
+    function refresh() {
+      const id = ++requestId;
+      void listLiveConversations().then(
+        (conversations) => {
+          if (active && id === requestId) setState({ status: "ready", conversations });
+        },
+        () => {
+          if (active && id === requestId) setState((current) => current.status === "ready" ? current : { status: "error" });
+        },
+      );
+    }
+
+    refresh();
+    const unsubscribe = subscribeInbox(
       () => {
-        if (active && !receivedUpdate) setState({ status: "error" });
+        if (!active || timer) return;
+        timer = setTimeout(() => {
+          timer = undefined;
+          refresh();
+        }, 80);
       },
+      (conversationId) => { if (active) onMessage(conversationId); },
     );
 
     return () => {
       active = false;
-      unsubscribe?.();
+      clearTimeout(timer);
+      unsubscribe();
     };
-  }, [attempt, source]);
+  }, [attempt]);
 
   function reload() {
-    setState({ status: "loading" });
+    if (state.status === "error") setState({ status: "loading" });
     setAttempt((current) => current + 1);
+    setHistoryVersion((version) => version + 1);
   }
 
   if (state.status === "loading") return <p role="status">Đang tải hộp thư…</p>;
@@ -104,19 +121,19 @@ export function StaffInbox({ demo }: { demo: boolean }) {
   }
 
   const selected = state.conversations.find(({ id }) => id === selectedId);
-  const conversations = [...state.conversations].sort(compareConversations);
+  const conversations = state.conversations;
 
   return (
     <>
-      {!demo && (
-        <Button variant="secondary" className="mb-3" onClick={reload}>Làm mới</Button>
-      )}
+      <Button variant="secondary" className="mb-3" onClick={reload}>Làm mới</Button>
       {conversations.length ? (
         <InboxConversations
           conversations={conversations}
           selected={selected}
           onSelect={setSelectedId}
-          demoInbox={demoInbox}
+          historyVersion={historyVersion}
+          reload={reload}
+          sendMessageAction={sendMessageAction}
         />
       ) : (
         <EmptyState title="Chưa có cuộc trò chuyện" description="Tin nhắn của khách sẽ xuất hiện tại đây." />
@@ -125,11 +142,13 @@ export function StaffInbox({ demo }: { demo: boolean }) {
   );
 }
 
-function InboxConversations({ conversations, selected, onSelect, demoInbox }: {
+function InboxConversations({ conversations, selected, onSelect, historyVersion, reload, sendMessageAction }: {
   conversations: InboxConversation[];
   selected?: InboxConversation;
   onSelect: (id: string | null) => void;
-  demoInbox: ReturnType<typeof createDemoInbox> | null;
+  historyVersion: number;
+  reload: () => void;
+  sendMessageAction?: SendMessageAction;
 }) {
   return (
     <div className="gap-4 md:grid md:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
@@ -154,7 +173,7 @@ function InboxConversations({ conversations, selected, onSelect, demoInbox }: {
                   <ModeBadge mode={conversation.mode} />
                 </span>
                 <span className="block truncate text-sm">
-                  {conversation.messages.at(-1)?.text || "Chưa có tin nhắn"}
+                  {conversation.latestMessage || "Chưa có nội dung văn bản"}
                 </span>
               </button>
             </li>
@@ -166,7 +185,9 @@ function InboxConversations({ conversations, selected, onSelect, demoInbox }: {
         <ConversationPanel
           key={selected.id}
           conversation={selected}
-          demoInbox={demoInbox}
+          historyVersion={historyVersion}
+          reload={reload}
+          sendMessageAction={sendMessageAction}
           onBack={() => onSelect(null)}
         />
       ) : (
@@ -178,18 +199,33 @@ function InboxConversations({ conversations, selected, onSelect, demoInbox }: {
   );
 }
 
-function ConversationPanel({ conversation, demoInbox, onBack }: {
+function ConversationPanel({ conversation, historyVersion, reload, onBack, sendMessageAction }: {
   conversation: InboxConversation;
-  demoInbox: ReturnType<typeof createDemoInbox> | null;
+  historyVersion: number;
+  reload: () => void;
   onBack: () => void;
+  sendMessageAction?: SendMessageAction;
 }) {
-  const source = demoInbox?.source;
   const [reply, setReply] = useState("");
   const [pending, setPending] = useState<"mode" | "send" | null>(null);
   const [error, setError] = useState<string>();
+  const [messages, setMessages] = useState<InboxMessage[] | null>(null);
+  const [historyError, setHistoryError] = useState(false);
+  const sendAttempt = useRef<{ text: string; id: string } | null>(null);
   const messageLog = useRef<HTMLDivElement>(null);
-  const newestMessageId = conversation.messages.at(-1)?.id;
+  const newestMessageId = messages?.at(-1)?.id;
+  const conversationId = conversation.id;
   const isStaff = conversation.mode === "staff";
+
+  useEffect(() => {
+    let active = true;
+    void listInboxMessages(conversationId).then((result) => {
+      if (!active) return;
+      setMessages(result);
+      setHistoryError(false);
+    }, () => { if (active) setHistoryError(true); });
+    return () => { active = false; };
+  }, [conversationId, historyVersion]);
 
   useEffect(() => {
     const log = messageLog.current;
@@ -204,10 +240,32 @@ function ConversationPanel({ conversation, demoInbox, onBack }: {
     try {
       await request();
     } catch {
-      setError(action === "mode" ? "Không đổi được trạng thái hội thoại." : "Không gửi được tin nhắn.");
+      setError(action === "mode" ? "Không đổi được trạng thái hội thoại." : "Chưa xác nhận được kết quả gửi. Thử lại sẽ dùng cùng mã tin nhắn.");
     } finally {
       setPending(null);
     }
+  }
+
+  async function changeMode() {
+    if (!await setLiveInboxMode(conversationId, isStaff ? "ai" : "staff")) {
+      setError("Không đổi được trạng thái hội thoại.");
+      return;
+    }
+    reload();
+  }
+
+  async function sendReply(text: string) {
+    if (!sendMessageAction) return;
+    if (sendAttempt.current?.text !== text) sendAttempt.current = { text, id: crypto.randomUUID() };
+    const result = await sendMessageAction(conversationId, text, sendAttempt.current.id);
+    if (!result.ok && !result.messageId) {
+      setError("Chưa gửi được tin nhắn. Bạn có thể thử lại.");
+      return;
+    }
+    setReply("");
+    sendAttempt.current = null;
+    if (!result.ok) setError("Tin nhắn đã lưu trong hộp thư. Chưa xác nhận được tin đã đến khách.");
+    reload();
   }
 
   return (
@@ -223,68 +281,57 @@ function ConversationPanel({ conversation, demoInbox, onBack }: {
               <ModeBadge mode={conversation.mode} />
             </div>
           </div>
-          {source && (
-            <Button
-              variant={isStaff ? "secondary" : "primary"}
-              disabled={pending !== null}
-              onClick={() => void runAction("mode", () => source.setMode(conversation.id, isStaff ? "ai" : "staff"))}
-            >
-              {pending === "mode" ? "Đang cập nhật…" : isStaff ? "Trả lại cho AI" : "Tiếp quản"}
-            </Button>
-          )}
+          <Button variant={isStaff ? "secondary" : "primary"} disabled={pending !== null}
+            onClick={() => void runAction("mode", changeMode)}>
+            {pending === "mode" ? "Đang cập nhật…" : isStaff ? "Trả lại cho AI" : "Tiếp quản"}
+          </Button>
         </header>
 
+        {historyError && <ErrorMessage>Không tải được lịch sử. Bấm Làm mới để thử lại.</ErrorMessage>}
+        {messages?.length === historyLimit && <p className="text-xs">Hiển thị {historyLimit} tin gần nhất.</p>}
         <div ref={messageLog} role="log" aria-label="Tin nhắn" className="max-h-80 min-h-24 overflow-y-auto border-y border-zinc-200 py-3 md:max-h-[26rem]">
-          {conversation.messages.length ? (
+          {messages?.length ? (
             <ol className="space-y-3">
-              {conversation.messages.map((message) => (
+              {messages.map((message) => (
                 <li key={message.id} className={message.sender === "staff" ? "flex justify-end" : "flex"}>
                   <div className="max-w-[85%] rounded-lg border border-zinc-200 px-3 py-2 text-sm">
                     <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs">
                       <strong>{senderLabels[message.sender]}</strong>
-                      <time dateTime={message.createdAt}>{inboxDate.format(new Date(message.createdAt))}</time>
+                      <time dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
                     </p>
-                    <p className="whitespace-pre-wrap wrap-anywhere">{message.text}</p>
+                    <p className="whitespace-pre-wrap wrap-anywhere">{message.text || "Tin nhắn không có nội dung văn bản"}</p>
                   </div>
                 </li>
               ))}
             </ol>
-          ) : (
+          ) : messages ? (
             <p className="text-sm">Chưa có tin nhắn trong cuộc trò chuyện này.</p>
-          )}
+          ) : !historyError && <p role="status" className="text-sm">Đang tải tin nhắn…</p>}
         </div>
 
         {error && <ErrorMessage>{error}</ErrorMessage>}
-        {source && (isStaff ? (
+        {isStaff && sendMessageAction && (
           <form className="space-y-2" onSubmit={(event) => {
             event.preventDefault();
             const text = reply.trim();
             if (!text) return;
-            void runAction("send", async () => {
-              await source.sendMessage(conversation.id, text);
-              setReply("");
-            });
+            void runAction("send", () => sendReply(text));
           }}>
-            <TextArea label="Tin nhắn cho khách" rows={2} value={reply} disabled={pending !== null} onChange={(event) => setReply(event.target.value)} />
+            <TextArea label="Tin nhắn cho khách" rows={2} maxLength={1000} value={reply} disabled={pending !== null} onChange={(event) => setReply(event.target.value)} />
             <Button type="submit" disabled={pending !== null || !reply.trim()}>
               {pending === "send" ? "Đang gửi…" : "Gửi tin nhắn"}
             </Button>
           </form>
-        ) : (
+        )}
+        {isStaff && !sendMessageAction && (
+          <p className="text-sm">Tính năng gửi tin nhắn đang chờ tích hợp.</p>
+        )}
+        {!isStaff && (
           <p className="text-sm">
-            {conversation.mode === "needs_human" ? "AI đang chờ nhân viên tiếp quản." : "Tiếp quản để gửi tin nhắn cho khách."}
+            {conversation.mode === "needs_human" ? "AI đang chờ nhân viên tiếp quản." : "AI đang xử lý hội thoại."}
           </p>
-        ))}
+        )}
       </div>
-
-      {demoInbox && (
-        <div className="flex flex-wrap gap-2 text-sm" aria-label="Thao tác với dữ liệu mẫu">
-          <Button variant="secondary" disabled={pending !== null} onClick={() => demoInbox.simulateCustomerMessage(conversation.id)}>Mô phỏng tin mới</Button>
-          {conversation.mode === "ai" && (
-            <Button variant="secondary" disabled={pending !== null} onClick={() => demoInbox.simulateHandoff(conversation.id)}>Mô phỏng yêu cầu tiếp quản</Button>
-          )}
-        </div>
-      )}
     </section>
   );
 }
