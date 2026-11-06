@@ -1,0 +1,265 @@
+name: E2E nightly
+
+# Every night at 02:00 Vietnam time (19:00 UTC), with nobody watching:
+#   local             the whole Playwright suite on a throwaway Supabase seeded with the demo shop
+#   production-smoke  read-only @smoke tests against production
+#   agent             only when src/ or supabase/ changed in the last 24 hours: Claude Opus plans
+#                     tests from the diff and the backlog's acceptance criteria, Claude Sonnet
+#                     writes and heals them with Playwright's test agents, then the suite runs again
+#   report            writes docs/e2e-reports/<date>.md, commits it with the new tests on a branch
+#                     and opens a PR. It never merges: a person reads it in the morning.
+# A PR that changes the tests or this setup also runs the local job.
+on:
+  schedule:
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - "playwright.config.ts"
+      - ".github/workflows/e2e-nightly.yml"
+      - ".github/actions/**"
+      - ".github/e2e-agent/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+# Test values for the throwaway stack only (the repository is public).
+env:
+  CI: "true"
+  DEMO_OWNER_EMAIL: owner@shopmate.test
+  DEMO_OWNER_PASSWORD: e2e-owner-password
+  DEMO_STAFF_EMAIL: staff@shopmate.test
+  DEMO_STAFF_PASSWORD: e2e-staff-password
+  META_APP_SECRET: e2e-app-secret
+  META_VERIFY_TOKEN: e2e-verify-token
+  MESSENGER_PAGE_ID: "100000000000001"
+  MESSENGER_PAGE_ACCESS_TOKEN: e2e-page-token
+  TELEGRAM_BOT_TOKEN: "100000001:e2e-bot-token"
+  TELEGRAM_WEBHOOK_SECRET: e2e_telegram_secret
+
+jobs:
+  local:
+    runs-on: ubuntu-24.04 # Playwright 1.56 has no browsers for ubuntu 26.04 (ubuntu-latest)
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/local-stack
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-local
+          path: |
+            e2e-results.json
+            playwright-report/
+          retention-days: 14
+
+  production-smoke:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      E2E_BASE_URL: https://shopmate-beige.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e --grep @smoke
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-smoke
+          path: e2e-results.json
+          retention-days: 14
+
+  agent:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      ran: ${{ steps.changes.outputs.ran }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+      - name: What changed in the last 24 hours
+        id: changes
+        run: |
+          git log --since='24 hours ago' -p --stat -- src supabase > recent-changes.diff
+          if [ -s recent-changes.diff ]; then echo "ran=true" >> "$GITHUB_OUTPUT"; fi
+      # Acceptance criteria of the backlog items named in those commits (PB-xx), read
+      # with a read-only token for the private backlog repository.
+      - name: Requirements from the backlog
+        if: steps.changes.outputs.ran == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DOCUMENTS_READ_TOKEN }}
+        run: |
+          ids=$(git log --since='24 hours ago' --format='%s %b' | grep -oiE 'pb-[0-9]{2}' | tr a-z A-Z | sort -u)
+          : > requirements.md
+          for id in $ids; do
+            n=$((10#${id#PB-}))
+            case $n in 0) n=25;; 25) n=26;; 26) n=27;; 27) n=28;; esac
+            gh issue view "$n" -R Eboiz/Documents --json title,body --jq '"## " + .title + "\n\n" + .body + "\n"' >> requirements.md || true
+          done
+          [ -s requirements.md ] || echo "Không tìm thấy mã PB nào trong commit 24 giờ qua." > requirements.md
+      - if: steps.changes.outputs.ran == 'true'
+        uses: ./.github/actions/local-stack
+      - if: steps.changes.outputs.ran == 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      # Playwright's planner/generator/healer for Claude Code. The MCP server, which runs
+      # the app and the tests, is started without the API key or the gateway URL.
+      - name: Set up Playwright test agents
+        if: steps.changes.outputs.ran == 'true'
+        run: |
+          pnpm exec playwright init-agents --loop=claude
+          node -e '
+            const fs = require("fs");
+            const c = JSON.parse(fs.readFileSync(".mcp.json", "utf8"));
+            const s = c.mcpServers["playwright-test"];
+            c.mcpServers["playwright-test"] = { command: "env", args: ["-u", "ANTHROPIC_API_KEY", "-u", "ANTHROPIC_BASE_URL", s.command, ...s.args] };
+            fs.writeFileSync(".mcp.json", JSON.stringify(c, null, 2));'
+          mkdir -p e2e/plans
+          echo "PLAN_FILE=$(date -u +%F).md" >> "$GITHUB_ENV"
+          echo "SUMMARY_FILE=$(date -u +%F)-summary.md" >> "$GITHUB_ENV"
+      - name: Plan (Claude Opus)
+        if: steps.changes.outputs.ran == 'true'
+        continue-on-error: true
+        env:
+          ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          npx -y @anthropic-ai/claude-code@latest -p "$(sed "s/PLAN_FILE/$PLAN_FILE/g" .github/e2e-agent/plan.md)" \
+            --model claude-opus-5-5 \
+            --allowedTools "Read(./**),Glob,Grep,Write(./e2e/plans/**)" \
+            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/**)"
+      - name: Write and heal tests (Claude Sonnet + Playwright test agents)
+        if: steps.changes.outputs.ran == 'true'
+        continue-on-error: true
+        env:
+          ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_DEFAULT_SONNET_MODEL: claude-sonnet-5-5
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+        run: |
+          [ -s "e2e/plans/$PLAN_FILE" ] || { echo "No plan; skipping."; exit 0; }
+          npx -y @anthropic-ai/claude-code@latest -p "$(sed "s/PLAN_FILE/$PLAN_FILE/g; s/SUMMARY_FILE/$SUMMARY_FILE/g" .github/e2e-agent/generate.md)" \
+            --model claude-sonnet-5-5 \
+            --mcp-config .mcp.json \
+            --allowedTools "Read(./**),Glob,Grep,Edit(./e2e/**),Write(./e2e/**),Task,mcp__playwright-test" \
+            --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/**)"
+      - name: Keep only changes under e2e/
+        if: steps.changes.outputs.ran == 'true'
+        run: |
+          rm -rf .claude .mcp.json recent-changes.diff requirements.md
+          git checkout -- . ':(exclude)e2e'
+          git clean -fdq -- . ':(exclude)e2e' ':(exclude)node_modules' ':(exclude).next'
+      - name: Run the whole suite again (no key in the environment)
+        if: steps.changes.outputs.ran == 'true'
+        continue-on-error: true
+        run: pnpm exec playwright test
+      # Plans are written from the private backlog and artifacts of a public repository
+      # are downloadable: they are deleted here and never leave this machine. The agent's
+      # Vietnamese summary (test titles, app bugs found) does go in the PR.
+      - name: Package e2e/ changes and results
+        if: steps.changes.outputs.ran == 'true'
+        run: |
+          mkdir -p agent-out
+          cp "e2e/plans/$SUMMARY_FILE" agent-out/summary.md 2>/dev/null || true
+          rm -rf e2e/plans
+          git add -N e2e
+          git diff -- e2e > e2e.patch
+          [ -f e2e-results.json ] || echo '{}' > e2e-results.json
+      # The repository is public: nothing that may contain the key leaves this job.
+      - name: Refuse output that contains the API key
+        if: steps.changes.outputs.ran == 'true'
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          files="e2e.patch e2e-results.json $(ls agent-out/summary.md 2>/dev/null)"
+          leak=false
+          grep -qE '(sk-ant-|as_eyJ)[A-Za-z0-9_.-]{8,}' $files && leak=true
+          if [ -n "$KEY" ]; then
+            grep -qF "$KEY" $files && leak=true
+            for pad in "" "x" "xx"; do
+              enc=$(printf '%s%s' "$pad" "$KEY" | base64 -w0 | cut -c5-40)
+              grep -qF "$enc" $files && leak=true
+            done
+          fi
+          if [ "$leak" = true ]; then echo "::error::Agent output contains the API key. Rotate the key."; exit 1; fi
+      - if: steps.changes.outputs.ran == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-agent
+          path: |
+            e2e.patch
+            e2e-results.json
+            agent-out/summary.md
+          retention-days: 14
+
+  report:
+    needs: [local, production-smoke, agent]
+    if: ${{ always() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          path: ${{ runner.temp }}/in
+      - name: Write the report, commit it with the new tests, open a PR (never merged here)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AGENT_RESULT: ${{ needs.agent.result }}
+          AGENT_RAN: ${{ needs.agent.outputs.ran }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          in="$RUNNER_TEMP/in"
+          day=$(TZ=Asia/Ho_Chi_Minh date +%F)
+          patch="$in/e2e-agent/e2e.patch"
+          if [ -s "$patch" ]; then
+            if grep -E '^(\+\+\+|---) [ab]/' "$patch" | grep -vE '^(\+\+\+|---) [ab]/e2e/' | grep -q . \
+              || grep -qE '^(new file mode|new mode|old mode) 120000' "$patch" || grep -q '^GIT binary patch' "$patch"; then
+              echo "::error::The patch touches files outside e2e/, adds a symlink or a binary; not applied."; patch=""
+            else
+              git -c core.symlinks=false apply --include='e2e/*' "$patch"
+            fi
+          fi
+          suite="$in/e2e-agent/e2e-results.json"; [ -s "$suite" ] && [ "$(cat "$suite")" != "{}" ] || suite="$in/e2e-local/e2e-results.json"
+          agent=skipped; [ "$AGENT_RAN" = "true" ] && agent=ran; [ "$AGENT_RESULT" = "failure" ] && agent=failed
+          node .github/e2e-agent/write-report.mjs --date "$day" --suite "$suite" --smoke "$in/e2e-smoke/e2e-results.json" \
+            --summary "$in/e2e-agent/agent-out/summary.md" --agent "$agent" --run "$RUN_URL" \
+            --out "docs/e2e-reports/$day.md"
+          branch="e2e-nightly/$day"
+          git switch -c "$branch"
+          git config user.name "shopmate-e2e-nightly"
+          git config user.email "e2e-nightly@users.noreply.github.com"
+          git add docs/e2e-reports e2e
+          git commit -m "E2E: báo cáo đêm $day"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$branch"
+          gh pr create --base main --head "$branch" --title "E2E: báo cáo đêm $day" --body-file "docs/e2e-reports/$day.md"
