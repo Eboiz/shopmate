@@ -6,7 +6,8 @@
 |---|---|---|---|
 | `E2E nightly` / `local` | every day 02:00 Vietnam time, or by hand (Actions tab) | a throwaway Supabase with every migration and the demo shop seeded, `pnpm build && pnpm start` | all |
 | `E2E nightly` / `production-smoke` | same time | `https://shopmate-beige.vercel.app` | only `@smoke` (read-only) |
-| `E2E test agent` | after each nightly run | throwaway stack | writes new tests, opens a PR |
+| `E2E nightly` / `agent` | same time, only if `src/` or `supabase/` changed in the last 24 hours | throwaway stack | plans and writes new tests |
+| `E2E nightly` / `report` | after the jobs above | — | writes `docs/e2e-reports/<date>.md`, opens a PR with it and the new tests; never merges |
 
 CI on every PR runs unit tests (`pnpm test`) and database tests (`pnpm db:test`), not these.
 
@@ -34,4 +35,10 @@ Never set `E2E_SUPABASE_*` to the team's shared project: these tests write conve
 
 ## The test agent
 
-`.github/workflows/e2e-agent.yml` runs Claude Code headless with `.github/e2e-agent-prompt.md`, after the scheduled nightly run on `main`. It needs the repository secret `ANTHROPIC_API_KEY` (use a separate key with a spending limit). Three jobs on three machines: `agent` has the key, no shell and no write token, reads only the workspace, writes only `e2e/`, and its output is scanned for the key before it leaves; `run-tests` never sees the key and runs the suite; `open-pr` is the only job that can write and runs none of that code. Because the workflow token opens it, GitHub does not start CI on that PR by itself: push any commit to the branch (or close and reopen it) to run CI before merging.
+The `agent` job of `.github/workflows/e2e-nightly.yml` uses Playwright's own test agents (`playwright init-agents --loop=claude`) with Claude Code, through the team's Anthropic-compatible gateway:
+
+1. **Plan, Claude Opus** (`.github/e2e-agent/plan.md`): reads the last 24 hours of `src/` and `supabase/` changes, the acceptance criteria of the backlog items they name (PB-xx), and the existing tests; writes at most 10 cases (happy, edge, worst) to `e2e/plans/<date>.md`. No browser, no shell.
+2. **Write and heal, Claude Sonnet** (`.github/e2e-agent/generate.md`): the generator and healer subagents write the tests against the running throwaway app and fix test-side failures. A real app bug stays as `test.fail()` with a comment; assertions are never loosened.
+3. The whole suite runs again without the key; the `report` job writes `docs/e2e-reports/<date>.md` and opens a PR. A person reviews and merges it in the morning.
+
+Secrets: `ANTHROPIC_API_KEY` (gateway key, with a spending limit) and `DOCUMENTS_READ_TOKEN` (fine-grained, Issues: Read on `Eboiz/Documents`). Safeguards: the agent has no shell, reads only the workspace and writes only `e2e/`; the MCP server that runs the app and the tests starts without the key; the patch and results are scanned for the key before leaving the job; the job that opens the PR has the only write token and applies changes under `e2e/` only. The PR is opened by the workflow token, so GitHub does not start CI on it by itself: push any commit to the branch (or close and reopen it) to run CI before merging.

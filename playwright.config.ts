@@ -9,7 +9,10 @@ const port = process.env.E2E_PORT ?? "3000";
 export default defineConfig({
   testDir: "./e2e",
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+  // In CI the JSON results feed the nightly report (docs/e2e-reports/).
+  reporter: process.env.CI
+    ? [["list"], ["html", { open: "never" }], ["json", { outputFile: "e2e-results.json" }]]
+    : "list",
   use: {
     baseURL: baseURL ?? `http://localhost:${port}`,
     viewport: { width: 375, height: 812 },
