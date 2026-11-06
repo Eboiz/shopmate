@@ -1,4 +1,5 @@
 import type { Channel, Reply } from "@/contract";
+import { sendMessenger } from "./messenger";
 
 // Where a reply goes: the shopper's id on the channel, and the shop's account on
 // that channel (null for web chat).
@@ -23,7 +24,7 @@ export const adapters: Record<Channel, ChannelAdapter> = {
   // Web chat reads the stored message through the server API (PB-04), so there
   // is nothing to push.
   web: async () => {},
-  messenger: notImplemented("PB-15"),
+  messenger: sendMessenger,
   telegram: notImplemented("PB-21"),
   instagram: notImplemented("PB-23"),
   whatsapp: notImplemented("PB-27"),
