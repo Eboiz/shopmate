@@ -1,19 +1,20 @@
 name: E2E test agent
 
-# After each nightly E2E run, a Claude Code agent reads what merged into main in the
-# last 24 hours and writes Playwright tests for the new behavior (turning the fixme
-# cases in e2e/backlog.spec.ts into real tests when their story has merged). It runs
-# the suite on a throwaway stack and opens a PR for a person to review. It never
-# edits app code and never merges.
+# After each scheduled nightly E2E run on main, a Claude Code agent reads what merged
+# in the last 24 hours and writes Playwright tests for the new behavior (turning the
+# fixme cases in e2e/backlog.spec.ts into real tests when their story has merged).
+# A person reviews the PR; nothing is merged automatically.
+#
+# Trust boundaries: the agent job has a read-only token and no git credentials, the
+# agent can only read the repo and edit files (no shell), and the tests it wrote are
+# run in a later step without the API key. Only the patch of e2e/ leaves that job;
+# the job that opens the PR never runs the agent or the tests.
 on:
   workflow_run:
     workflows: [E2E nightly]
     types: [completed]
+    branches: [main]
   workflow_dispatch:
-
-permissions:
-  contents: write
-  pull-requests: write
 
 concurrency:
   group: e2e-agent
@@ -21,8 +22,13 @@ concurrency:
 
 jobs:
   write-tests:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+    outputs:
+      changed: ${{ steps.patch.outputs.changed }}
     env:
       CI: "true"
       DEMO_OWNER_EMAIL: owner@shopmate.test
@@ -38,41 +44,104 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 50
+          persist-credentials: false
       - name: Skip when nothing merged in the last 24 hours
         id: changes
         run: |
-          if [ -z "$(git log --since='24 hours ago' --format=%h origin/main -- src supabase)" ]; then
+          if [ -z "$(git log --since='24 hours ago' --format=%h -- src supabase)" ]; then
             echo "none=true" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.changes.outputs.none != 'true'
         uses: ./.github/actions/local-stack
       - if: steps.changes.outputs.none != 'true'
         run: pnpm exec playwright install --with-deps chromium
+      - name: Recent commits for the agent to read
+        if: steps.changes.outputs.none != 'true'
+        run: git log --since='24 hours ago' --stat -p -- src supabase > "$RUNNER_TEMP/recent-changes.diff"
+      # The API key exists only in this step, and the agent has no shell here.
       - name: Write tests with Claude Code
         if: steps.changes.outputs.none != 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RECENT_CHANGES: ${{ runner.temp }}/recent-changes.diff
         run: |
-          git switch -c "e2e-agent/$(date -u +%Y%m%d)"
           npx -y @anthropic-ai/claude-code@latest -p "$(cat .github/e2e-agent-prompt.md)" \
             --model claude-sonnet-5-5 \
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(pnpm exec playwright test:*),Bash(pnpm typecheck),Bash(pnpm lint)"
-      - name: Open a PR if the agent changed tests
+            --allowedTools "Read,Glob,Grep,Edit,Write"
+      # The public repo must never receive the key, whatever the agent was tricked into writing.
+      - name: Refuse output that contains an API key
         if: steps.changes.outputs.none != 'true'
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if grep -rqE 'sk-ant-[A-Za-z0-9_-]{8,}' e2e e2e-agent-summary.md 2>/dev/null \
+            || { [ -n "$KEY" ] && grep -rqF "$KEY" e2e e2e-agent-summary.md 2>/dev/null; }; then
+            echo "Agent output contains an API key; stopping." && exit 1
+          fi
+      - name: Keep only changes under e2e/
+        if: steps.changes.outputs.none != 'true'
+        run: |
+          git checkout -- . ':(exclude)e2e' 2>/dev/null || true
+          git clean -fdq -- . ':(exclude)e2e' ':(exclude)e2e-agent-summary.md' ':(exclude)node_modules' ':(exclude).next'
+      # Runs the new tests without the API key in the environment.
+      - name: Run the suite on the throwaway stack
+        if: steps.changes.outputs.none != 'true'
+        continue-on-error: true
+        run: pnpm exec playwright test --reporter=list > "$RUNNER_TEMP/e2e-result.txt" 2>&1
+      - name: Package the patch
+        id: patch
+        if: steps.changes.outputs.none != 'true'
+        run: |
+          git add -N e2e
+          git diff -- e2e > e2e.patch
+          if [ -s e2e.patch ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+          { cat e2e-agent-summary.md 2>/dev/null || echo "Agent viết test e2e cho các thay đổi đã merge trong 24 giờ qua."
+            echo; echo "## Kết quả chạy trên stack tạm"; echo '```'; tail -40 "$RUNNER_TEMP/e2e-result.txt"; echo '```'
+            echo; echo "PR do workflow mở nên GitHub không tự chạy CI: push một commit bất kỳ lên nhánh này (hoặc đóng rồi mở lại) để chạy CI trước khi merge."
+          } > pr-body.md
+      - if: steps.patch.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-agent-patch
+          path: |
+            e2e.patch
+            pr-body.md
+          retention-days: 7
+
+  open-pr:
+    needs: write-tests
+    if: needs.write-tests.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: e2e-agent-patch
+          path: ${{ runner.temp }}/agent
+      - name: Apply the patch (e2e/ only) and open a PR
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ -n "$(git status --porcelain -- src supabase scripts)" ]; then
-            echo "The agent changed app code; discarding." && git checkout -- src supabase scripts
+          patch="$RUNNER_TEMP/agent/e2e.patch"
+          if grep -E '^(\+\+\+|---) [ab]/' "$patch" | grep -vE '^(\+\+\+|---) [ab]/e2e/' | grep -q .; then
+            echo "The patch touches files outside e2e/; refusing." && exit 1
           fi
-          [ -z "$(git status --porcelain -- e2e)" ] && echo "No new tests." && exit 0
+          git apply --include='e2e/*' "$patch"
+          branch="e2e-agent/$(date -u +%Y%m%d)"
+          git switch -c "$branch"
           git config user.name "shopmate-e2e-agent"
           git config user.email "e2e-agent@users.noreply.github.com"
           git add e2e
           git commit -m "E2E: test tự động cho thay đổi ngày $(date -u +%d/%m/%Y)"
-          git push -u origin HEAD
-          gh pr create --base main --title "E2E: test tự động ngày $(date -u +%d/%m/%Y)" \
-            --body-file e2e-agent-summary.md 2>/dev/null \
-            || gh pr create --base main --title "E2E: test tự động ngày $(date -u +%d/%m/%Y)" \
-              --body "Agent viết test e2e cho các thay đổi đã merge trong 24 giờ qua. Người review kiểm tra test có đúng hành vi mong muốn không trước khi merge."
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "E2E: test tự động ngày $(date -u +%d/%m/%Y)" \
+            --body-file "$RUNNER_TEMP/agent/pr-body.md"

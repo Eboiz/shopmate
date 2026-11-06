@@ -34,4 +34,4 @@ Never set `E2E_SUPABASE_*` to the team's shared project: these tests write conve
 
 ## The test agent
 
-`.github/workflows/e2e-agent.yml` runs Claude Code headless with `.github/e2e-agent-prompt.md`. It needs the repository secret `ANTHROPIC_API_KEY`. It may only edit `e2e/`; anything else it touches is discarded. Its PR is opened with the workflow token, so GitHub does not start CI on it by itself: push any commit to the PR branch (or close and reopen it) to run CI before merging.
+`.github/workflows/e2e-agent.yml` runs Claude Code headless with `.github/e2e-agent-prompt.md`, after the scheduled nightly run on `main`. It needs the repository secret `ANTHROPIC_API_KEY`. The agent job has a read-only token and no git credentials, and the agent may only read files and edit them (no shell); its tests then run in a separate step without the key, and only the patch of `e2e/` is passed to a second job that opens the PR. Because the workflow token opens it, GitHub does not start CI on that PR by itself: push any commit to the branch (or close and reopen it) to run CI before merging.
