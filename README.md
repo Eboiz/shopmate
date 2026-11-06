@@ -25,6 +25,7 @@ There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accoun
 | `pnpm lint` | ESLint |
 | `pnpm typecheck` | Generate route types, then `tsc --noEmit` |
 | `pnpm test` | Unit tests (Vitest, `src/**/*.test.ts`) |
+| `pnpm test:int` | Integration tests (`src/**/*.int.test.ts`) against local Supabase. Needs `pnpm db:start` and a `.env.test.local` with the local `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_SECRET_KEY` printed by `db:start` (all three: the admin client checks both public values too). Refuses to run unless the URL is `127.0.0.1` or `localhost`, because the fixture deletes and recreates its shops |
 | `pnpm test:e2e` | End-to-end tests (Playwright, `e2e/`). Run `pnpm exec playwright install chromium` once. Set `E2E_BASE_URL` to test a preview deployment |
 | `pnpm db:start` / `pnpm db:stop` | Local Supabase in Docker (prints local URL and keys) |
 | `pnpm db:reset` | Recreate the local database from `supabase/migrations/` |
@@ -32,7 +33,7 @@ There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accoun
 | `pnpm db:types` | Regenerate `src/contract/database.types.ts` from the local database |
 | `pnpm db:seed` | Load the demo shop, the eval shop and the demo accounts into local Supabase (see [Demo shop](#demo-shop-pb-02)) |
 
-CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and `pnpm db:seed --check` on every pull request. Vercel builds a preview URL for every pull request.
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and `pnpm db:seed --check` on every pull request, and a separate `integration` job that starts local Supabase and runs `pnpm db:test` and `pnpm test:int`. Vercel builds a preview URL for every pull request.
 
 ## Shared contract (PB-00)
 

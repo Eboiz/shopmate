@@ -347,7 +347,24 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            [_ in never]: never
+            "engine_search_products":
+{ Args: { "p_limit": number,"p_query": string,"p_shop_id": string }; Returns: {
+              "category": string | null,
+"code": string,
+"created_at": string,
+"description": string | null,
+"id": string,
+"image_url": string | null,
+"name": string,
+"price": number,
+"shop_id": string
+            }[]
+                          SetofOptions: {
+        from: "*"
+        to: "products"
+        isOneToOne: false
+        isSetofReturn: true
+      } }
           }
           Enums: {
             "channel": "web"|"messenger"|"instagram"|"telegram"|"whatsapp","conversation_mode": "ai"|"needs_human"|"staff","engine_mode": "customer"|"staff_draft","handoff_reason": "complaint"|"asked_for_human"|"not_covered_by_data"|"product_not_found"|"misunderstood_twice"|"size_out_of_range"|"policy_not_covered"|"postcheck_failed"|"too_many_tool_calls","message_sender": "shopper"|"ai"|"staff"|"system","order_status": "draft"|"confirmed"|"cancelled","policy_kind": "doi_tra"|"giao_hang"|"khuyen_mai","profile_role": "owner"|"staff"

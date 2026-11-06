@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",
+    "test:int": "vitest run --config vitest.int.config.ts",
     "test:e2e": "playwright test",
     "db:start": "supabase start",
     "db:stop": "supabase stop",

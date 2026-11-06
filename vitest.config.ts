@@ -1,5 +1,5 @@
 import path from "node:path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
@@ -9,5 +9,9 @@ export default defineConfig({
       "server-only": path.resolve(__dirname, "node_modules/server-only/empty.js"),
     },
   },
-  test: { include: ["src/**/*.test.ts"] },
+  test: {
+    include: ["src/**/*.test.ts"],
+    // Integration tests need local Supabase: `pnpm test:int`.
+    exclude: ["src/**/*.int.test.ts", ...configDefaults.exclude],
+  },
 });

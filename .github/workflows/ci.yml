@@ -25,3 +25,27 @@ jobs:
       - run: pnpm test
       # Runs the seed script with plain Node, which also catches imports Vitest and tsc accept but Node can't run.
       - run: pnpm db:seed --check
+
+  # Database tests and integration tests against local Supabase in Docker.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec supabase start
+      # Local keys only (printed by `supabase status`); they never leave the runner.
+      - name: Export local Supabase env
+        run: |
+          eval "$(pnpm exec supabase status -o env 2>/dev/null)"
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$PUBLISHABLE_KEY"
+            echo "SUPABASE_SECRET_KEY=$SECRET_KEY"
+          } >> "$GITHUB_ENV"
+      - run: pnpm db:test
+      - run: pnpm test:int
