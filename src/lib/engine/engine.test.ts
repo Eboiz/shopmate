@@ -119,6 +119,82 @@ afterEach(() => {
 });
 
 describe("runEngine", () => {
+  describe("PB-05, PB-06 and PB-09 verified answers", () => {
+    it("uses current stock and price even when the model invents another number", async () => {
+      const store = fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: { id: PRODUCT, name: "Váy suông linen" } });
+      const { handlers, run } = setup([reply("Còn 99 chiếc, giá 1đ")], { store });
+      handlers.get_stock.mockResolvedValue({ ...stockOut, variants: [
+        { variantId: VARIANT, size: "M", color: "be", stock: 2 },
+        { variantId: "a0000000-0000-4000-8000-000000000022", size: "L", color: "be", stock: 0 },
+      ] });
+      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "Váy be size L còn không, giá bao nhiêu?" }] }));
+      expect(result.output.reply.text).toContain("size L đã hết hàng");
+      expect(result.output.reply.text).toContain("size M (2 chiếc)");
+      expect(result.output.reply.text).toContain("350.000đ");
+      expect(result.output.reply.text).not.toContain("99 chiếc");
+      expect(handlers.get_stock).toHaveBeenCalledWith({ productId: PRODUCT }, expect.anything(), expect.anything());
+    });
+
+    it("asks once about an unknown product and then hands off", async () => {
+      const { run, store } = setup([
+        toolCalls(toolUse("search_products", { query: "váy lạ" })), reply("Có hàng"),
+        toolCalls(toolUse("search_products", { query: "váy khác" })), reply("Có hàng"),
+      ]);
+      const first = await run(customerInput({ history: [{ sender: "shopper", text: "Váy lạ giá bao nhiêu?" }] }));
+      expect(first.output.reply.text).toContain("tên hoặc mã sản phẩm");
+      const second = await run(customerInput({ history: [
+        { sender: "shopper", text: "Váy lạ giá bao nhiêu?" },
+        { sender: "ai", text: first.output.reply.text },
+        { sender: "shopper", text: "Váy khác" },
+      ] }));
+      expect(second.handoffReason).toBe("product_not_found");
+      expect(store.setNeedsHuman).toHaveBeenCalledTimes(1);
+    });
+
+    it("gets size from the chart and explains the larger size", async () => {
+      const store = fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: { id: PRODUCT, name: "Váy suông linen" } });
+      const { run, handlers } = setup([reply("Bạn mặc size S")], { store });
+      handlers.recommend_size.mockResolvedValue({ status: "ok", size: "XL", sizeByHeight: "L", sizeByWeight: "XL" });
+      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "Cao 1m65, nặng 58 cân thì chọn size nào?" }] }));
+      expect(handlers.recommend_size).toHaveBeenCalledWith({ productId: PRODUCT, heightCm: 165, weightKg: 58 }, expect.anything(), expect.anything());
+      expect(result.output.reply.text).toContain("size XL (size lớn hơn)");
+      expect(result.output.reply.text).not.toContain("size S");
+    });
+
+    it("asks for missing measurements before choosing a size", async () => {
+      const { run, handlers } = setup([reply("Size M")]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "Mình cao 165cm, tư vấn size?" }] }));
+      expect(result.output.reply.text).toContain("cân nặng");
+      expect(handlers.recommend_size).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["out_of_range", "size_out_of_range", SIZE_OUT_OF_RANGE_HANDOFF_TEXT],
+      ["no_chart", "not_covered_by_data", NO_SIZE_CHART_HANDOFF_TEXT],
+    ] as const)("hands off a size result of %s", async (status, reason, expectedText) => {
+      const store = fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: { id: PRODUCT, name: "Váy suông linen" } });
+      const { run, handlers } = setup([reply("Size M")], { store });
+      handlers.recommend_size.mockResolvedValue({ status });
+      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "Cao 1m90, 100kg nên chọn size nào?" }] }));
+      expect(result.handoffReason).toBe(reason);
+      expect(result.output.reply.text).toBe(expectedText);
+      expect(store.setNeedsHuman).toHaveBeenCalledTimes(1);
+    });
+
+    it("quotes exactly the declared policy and hands off when it is absent", async () => {
+      const a = setup([reply("Đổi trong 30 ngày")]);
+      const answer = await a.run(customerInput({ history: [{ sender: "shopper", text: "Shop đổi trả trong bao lâu?" }] }));
+      expect(answer.output.reply.text).toBe("Đổi trong 7 ngày");
+
+      const b = setup([reply("Ship miễn phí")]);
+      b.handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: null });
+      const missing = await b.run(customerInput({ history: [{ sender: "shopper", text: "Shop ship miễn phí không?" }] }));
+      expect(missing.handoffReason).toBe("policy_not_covered");
+      expect(b.store.setNeedsHuman).toHaveBeenCalledTimes(1);
+      expect(missing.output.reply.text).not.toContain("miễn phí");
+    });
+  });
+
   it("answers without tools", async () => {
     const { store, run } = setup([reply("Chào bạn", [PRODUCT])]);
     const result = await run(customerInput());
@@ -428,7 +504,7 @@ describe("runEngine", () => {
       const { onMetrics, run } = setup([reply("Dạ size M ạ")]);
       await run(customerInput());
       const detail = onMetrics.mock.calls[0][1]!;
-      expect(detail.system).toContain("Prompt v0.1");
+      expect(detail.system).toContain(`Prompt ${PROMPT_VERSION}`);
       expect(detail.calls).toEqual([]);
     });
 

@@ -3,7 +3,7 @@ import type { EngineMode } from "@/contract";
 
 // v0.x is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
 // change: it is stored with each turn (ai_turns.prompt_version) to compare runs.
-export const PROMPT_VERSION = "v0.1";
+export const PROMPT_VERSION = "v0.3";
 
 type Product = { id: string; name: string };
 
@@ -17,6 +17,10 @@ export function buildStablePrompt(mode: EngineMode): string {
     "- Không tự tính tiền: luôn gọi quote_order để có giá từng món và tổng tiền.",
     "- Chỉ gợi ý món phối mà get_pairings trả về; không bịa món gợi ý.",
     "- Muốn tư vấn size thì cần chiều cao và cân nặng của khách; nếu thiếu thì hỏi lại, không tự đặt số.",
+    "- Khi hỏi giá hoặc tồn kho, tìm đúng sản phẩm bằng search_products rồi gọi get_stock. Nếu size hoặc màu hết hàng, chỉ gợi ý biến thể còn hàng của cùng sản phẩm.",
+    "- Chấp nhận tên sản phẩm tiếng Việt không dấu. Nếu chưa tìm thấy sản phẩm, hỏi rõ tên hoặc mã một lần; vẫn không tìm thấy thì chuyển nhân viên.",
+    "- Chỉ đọc size mà recommend_size trả về. Hiểu chiều cao 1m65, 165cm, 165 và cân nặng 58kg, 58 ký, 58 cân. Nếu chiều cao và cân nặng chỉ ra hai size khác nhau, giải thích và chọn size lớn hơn.",
+    "- Với chính sách, chỉ nói đúng nội dung get_policy trả về. Không tự hứa miễn phí ship hay giảm giá.",
     "- Câu trả lời cuối cùng là một JSON object {text, productIds, quickReplies}:",
     "  text: câu trả lời cho khách, tối đa 1000 ký tự;",
     "  productIds: id các sản phẩm muốn hiện thẻ, tối đa 10 id, chỉ dùng id có trong kết quả tool;",

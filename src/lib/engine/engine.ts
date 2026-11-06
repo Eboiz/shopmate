@@ -9,6 +9,7 @@ import {
   type Reply,
   type ToolCallLog,
   type ToolContext,
+  type ToolOutput,
 } from "@/contract";
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -19,6 +20,10 @@ import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } f
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { createLangfuseSink } from "./langfuse";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import {
+  adviceIntent, latestShopperText, policyKindFor, PRODUCT_CLARIFICATION,
+  PRODUCT_HANDOFF, shopperMeasurements, sizeReply, stockReply,
+} from "./product-advice";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
 import { EngineError, type Db, type ToolHandlers } from "./types";
@@ -187,6 +192,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let sizeStatus: SizeStatus = null;
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
+  const adviceState: {
+    foundProducts: ToolOutput<"search_products">["products"] | null;
+    stock: ToolOutput<"get_stock"> | null;
+    size: ToolOutput<"recommend_size"> | null;
+    policy: ToolOutput<"get_policy"> | null;
+  } = { foundProducts: null, stock: null, size: null, policy: null };
 
   for (;;) {
     const c0 = now();
@@ -252,6 +263,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
       if (u.name === "recommend_size" && !run.isError) sizeStatus = sizeStatusOf(run.content);
+      if (!run.isError && u.name === "search_products") adviceState.foundProducts = tools.search_products.output.parse(run.log?.output).products;
+      if (!run.isError && u.name === "get_stock") adviceState.stock = tools.get_stock.output.parse(run.log?.output);
+      if (!run.isError && u.name === "recommend_size") adviceState.size = tools.recommend_size.output.parse(run.log?.output);
+      if (!run.isError && u.name === "get_policy") adviceState.policy = tools.get_policy.output.parse(run.log?.output);
     });
 
     const handedOff = uses.find((u, i) => u.name === "handoff_to_staff" && !runs[i].run.isError);
@@ -274,8 +289,77 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     );
   }
 
+  // Verify factual answers against shop data even if the model forgot a tool or
+  // wrote a plausible but unsupported number. These calls use the same tool gate
+  // and are logged like model tool calls.
+  const previousAssistant = [...input.history].reverse().find((message) => message.sender === "ai")?.text;
+  const intent = adviceIntent(input.history) ?? (previousAssistant === PRODUCT_CLARIFICATION ? "stock" : null);
+  const verifiedTool = async <T extends "get_stock" | "recommend_size" | "get_policy">(name: T, toolInput: object) => {
+    const started = now();
+    const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
+    toolMetrics.push({ name, startMs: started - t0, ms: now() - started, outcome: toolOutcome(run) });
+    if (run.log) logs.push(run.log);
+    return run.isError ? null : run.log?.output;
+  };
+  let verifiedText: string | null = null;
+  if (mode === "customer" && !handoff && !truncated && modelReply && intent) {
+    if (intent === "policy") {
+      const kind = policyKindFor(input.history);
+      if (kind) {
+        if (!adviceState.policy || adviceState.policy.kind !== kind) {
+          const output = await verifiedTool("get_policy", { kind });
+          if (output) adviceState.policy = tools.get_policy.output.parse(output);
+        }
+        if (adviceState.policy?.kind === kind) {
+          if (adviceState.policy.content) verifiedText = adviceState.policy.content;
+          else {
+            handoff = "policy_not_covered";
+            await deps.store.setNeedsHuman(ctx);
+            verifiedText = "Shop chưa có thông tin về chính sách này. Mình đã chuyển câu hỏi cho nhân viên shop nhé.";
+          }
+        } else verifiedText = "Mình chưa kiểm tra được chính sách của shop lúc này. Bạn vui lòng thử lại sau nhé.";
+      }
+    } else if (intent === "size") {
+      const { heightCm, weightKg } = shopperMeasurements(input.history);
+      if (heightCm === null || weightKg === null) {
+        verifiedText = `Để tư vấn size, bạn cho mình ${heightCm === null ? "chiều cao" : ""}${heightCm === null && weightKg === null ? " và " : ""}${weightKg === null ? "cân nặng" : ""} nhé.`;
+      } else if (!tc.product && adviceState.foundProducts?.length !== 1) {
+        verifiedText = PRODUCT_CLARIFICATION;
+      } else {
+        const productId = tc.product?.id ?? adviceState.foundProducts![0].productId;
+        // A model-supplied result may use the wrong measurements or product.
+        const output = await verifiedTool("recommend_size", { productId, heightCm, weightKg });
+        if (output) adviceState.size = tools.recommend_size.output.parse(output);
+        if (adviceState.size?.status === "ok") verifiedText = sizeReply(adviceState.size);
+        else if (adviceState.size) {
+          sizeStatus = adviceState.size.status;
+          handoff = adviceState.size.status === "out_of_range" ? "size_out_of_range" : "not_covered_by_data";
+          await deps.store.setNeedsHuman(ctx);
+          verifiedText = handoffText(handoff, sizeStatus);
+        } else verifiedText = "Mình chưa kiểm tra được bảng size lúc này. Bạn vui lòng thử lại sau nhé.";
+      }
+    } else {
+      const productId = tc.product?.id ?? (adviceState.foundProducts?.length === 1 ? adviceState.foundProducts[0].productId : null);
+      if (!productId) {
+        if (previousAssistant === PRODUCT_CLARIFICATION) {
+          handoff = "product_not_found";
+          await deps.store.setNeedsHuman(ctx);
+          verifiedText = PRODUCT_HANDOFF;
+        } else verifiedText = PRODUCT_CLARIFICATION;
+      } else {
+        // Request all variants so a sold-out color/size can offer real alternatives.
+        const output = await verifiedTool("get_stock", { productId });
+        if (output) adviceState.stock = tools.get_stock.output.parse(output);
+        if (adviceState.stock) verifiedText = stockReply(adviceState.stock, latestShopperText(input.history));
+        else verifiedText = "Mình chưa kiểm tra được giá và tồn kho lúc này. Bạn vui lòng thử lại sau nhé.";
+      }
+    }
+  }
+
   let reply: Reply;
-  if (handoff && mode === "customer") {
+  if (verifiedText !== null) {
+    reply = { text: verifiedText, products: [], quickReplies: [] };
+  } else if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
     if (handoff === "too_many_tool_calls") await deps.store.setNeedsHuman(ctx);
