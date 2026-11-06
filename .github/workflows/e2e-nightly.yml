@@ -90,7 +90,7 @@ jobs:
   agent:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     outputs:
       ran: ${{ steps.changes.outputs.ran }}
     steps:
@@ -140,7 +140,7 @@ jobs:
       - name: Plan (Claude Opus)
         if: steps.changes.outputs.ran == 'true'
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 20
         env:
           ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -148,12 +148,12 @@ jobs:
         run: |
           npx -y @anthropic-ai/claude-code@latest -p "$(sed "s/PLAN_FILE/$PLAN_FILE/g" .github/e2e-agent/plan.md)" \
             --model claude-opus-5-5 \
-            --allowedTools "Read(./**),Glob,Grep,Write(./e2e/plans/**)" \
+            --allowedTools "Read(./**),Glob,Grep,Edit(./e2e/plans/**)" \
             --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/.ssh/**),Read(~/.config/**),Read(//home/runner/work/_temp/**),Read(//home/runner/actions-runner/**),Read(~/.claude/**),Read(~/.claude.json)"
       - name: Write and heal tests (Claude Sonnet + Playwright test agents)
         if: steps.changes.outputs.ran == 'true'
         continue-on-error: true
-        timeout-minutes: 30
+        timeout-minutes: 40
         env:
           ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -164,7 +164,7 @@ jobs:
           npx -y @anthropic-ai/claude-code@latest -p "$(sed "s/PLAN_FILE/$PLAN_FILE/g; s/SUMMARY_FILE/$SUMMARY_FILE/g" .github/e2e-agent/generate.md)" \
             --model claude-sonnet-5-5 \
             --mcp-config .mcp.json \
-            --allowedTools "Read(./**),Glob,Grep,Edit(./e2e/**),Write(./e2e/**),Task,mcp__playwright-test" \
+            --allowedTools "Read(./**),Glob,Grep,Edit(./e2e/**),Task,mcp__playwright-test" \
             --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/.ssh/**),Read(~/.config/**),Read(//home/runner/work/_temp/**),Read(//home/runner/actions-runner/**),Read(~/.claude/**),Read(~/.claude.json)"
       - name: Keep only changes under e2e/
         if: steps.changes.outputs.ran == 'true'
@@ -258,7 +258,7 @@ jobs:
           node .github/e2e-agent/write-report.mjs --date "$day" --suite "$suite" --smoke "$in/e2e-smoke/e2e-results.json" \
             --summary "$in/e2e-agent/agent-out/summary.md" --agent "$agent" --run "$RUN_URL" \
             --out "docs/e2e-reports/$day.md"
-          branch="e2e-nightly/$day"
+          branch="e2e-nightly/$day-run$GITHUB_RUN_NUMBER"
           git switch -c "$branch"
           git config user.name "shopmate-e2e-nightly"
           git config user.email "e2e-nightly@users.noreply.github.com"
