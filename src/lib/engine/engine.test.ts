@@ -10,6 +10,8 @@ import {
 import {
   HANDOFF_TEXT,
   MAX_OUTPUT_TOKENS,
+  NO_SIZE_CHART_HANDOFF_TEXT,
+  SIZE_OUT_OF_RANGE_HANDOFF_TEXT,
   runBatch,
   runEngine,
   STAFF_DRAFT_GIVE_UP_TEXT,
@@ -317,6 +319,38 @@ describe("runEngine", () => {
     expect(result.output.reply).toEqual({ text: HANDOFF_TEXT, products: [], quickReplies: [] });
     // The handler already moved the conversation; runEngine doesn't do it again.
     expect(store.setNeedsHuman).not.toHaveBeenCalled();
+  });
+
+  describe("size handoff tells the shopper why", () => {
+    const sizeInput = { productId: PRODUCT, heightCm: 190, weightKg: 100 };
+
+    it("measurements outside the chart", async () => {
+      const { handlers, run } = setup([
+        toolCalls(toolUse("recommend_size", sizeInput)),
+        toolCalls(toolUse("handoff_to_staff", { reason: "size_out_of_range" })),
+      ]);
+      handlers.recommend_size.mockResolvedValue({ status: "out_of_range" });
+      const result = await run(customerInput());
+      expect(result.handoffReason).toBe("size_out_of_range");
+      expect(result.output.reply.text).toBe(SIZE_OUT_OF_RANGE_HANDOFF_TEXT);
+      expect(result.output.reply.text).toContain("ngoài bảng size");
+    });
+
+    it("product has no size chart", async () => {
+      const { run } = setup([
+        toolCalls(toolUse("recommend_size", sizeInput)),
+        toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" })),
+      ]);
+      const result = await run(customerInput());
+      expect(result.handoffReason).toBe("not_covered_by_data");
+      expect(result.output.reply.text).toBe(NO_SIZE_CHART_HANDOFF_TEXT);
+      expect(result.output.reply.text).toContain("chưa có bảng size");
+    });
+
+    it("other reasons keep the generic text", async () => {
+      const { run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "complaint" }))]);
+      expect((await run(customerInput())).output.reply.text).toBe(HANDOFF_TEXT);
+    });
   });
 
   describe("turn log", () => {

@@ -29,6 +29,29 @@ export const MAX_TOOL_CALLS = 5;
 export const MAX_OUTPUT_TOKENS = 4096;
 export const HANDOFF_TEXT =
   "Dạ, mình đã chuyển câu hỏi của bạn cho nhân viên shop. Nhân viên sẽ trả lời bạn sớm nhé!";
+const HANDOFF_SUFFIX = "Mình đã chuyển câu hỏi của bạn cho nhân viên shop, nhân viên sẽ trả lời bạn sớm nhé!";
+export const SIZE_OUT_OF_RANGE_HANDOFF_TEXT = `Dạ, số đo của bạn nằm ngoài bảng size của shop nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
+export const NO_SIZE_CHART_HANDOFF_TEXT = `Dạ, sản phẩm này shop chưa có bảng size nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
+
+type SizeStatus = "out_of_range" | "no_chart" | null;
+
+// The shopper is told why, not just that staff will answer. A size handoff says the
+// measurements are outside the chart, or that the product has no chart.
+export function handoffText(reason: HandoffReason, sizeStatus: SizeStatus): string {
+  if (sizeStatus === "no_chart") return NO_SIZE_CHART_HANDOFF_TEXT;
+  if (sizeStatus === "out_of_range" || reason === "size_out_of_range") return SIZE_OUT_OF_RANGE_HANDOFF_TEXT;
+  return HANDOFF_TEXT;
+}
+
+function sizeStatusOf(content: unknown): SizeStatus {
+  try {
+    const status = (JSON.parse(String(content)) as { status?: unknown }).status;
+    return status === "out_of_range" || status === "no_chart" ? status : null;
+  } catch {
+    return null;
+  }
+}
+
 export const STAFF_DRAFT_GIVE_UP_TEXT =
   "Chưa soạn được câu trả lời cho câu hỏi này. Bạn kiểm tra dữ liệu và tự trả lời khách nhé.";
 // Sequential. Raise above 1 only after measuring (see README, engine metrics); see runBatch.
@@ -161,6 +184,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let outputTokens = 0;
   let handoff: HandoffReason | null = null;
   let truncated = false;
+  let sizeStatus: SizeStatus = null;
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
 
@@ -227,6 +251,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       if (run.log) logs.push(run.log);
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
+      if (u.name === "recommend_size" && !run.isError) sizeStatus = sizeStatusOf(run.content);
     });
 
     const handedOff = uses.find((u, i) => u.name === "handoff_to_staff" && !runs[i].run.isError);
@@ -254,7 +279,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
     if (handoff === "too_many_tool_calls") await deps.store.setNeedsHuman(ctx);
-    reply = { text: HANDOFF_TEXT, products: [], quickReplies: [] };
+    reply = { text: handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
