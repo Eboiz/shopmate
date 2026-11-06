@@ -9,6 +9,15 @@ export type ToolOutcome = string;
 // One line per engine turn (event "engine_turn"). Only measurements, tool names,
 // result codes, shopId and mode: never message text, tool input or output, or
 // the shopper's name or phone.
+// What the model saw and said, for tracing only. NOT part of TurnMetrics because
+// the metrics line is printed to the console and stored as numbers; this can hold
+// customer text. `system` is the fixed prompt (plus the product being viewed).
+// `calls` is filled only when content capture is on (LANGFUSE_CAPTURE_CONTENT).
+export type TurnDetail = {
+  system: string;
+  calls: Array<{ messages: unknown; output: unknown }>;
+};
+
 export type TurnMetrics = {
   event: "engine_turn";
   promptVersion: string;

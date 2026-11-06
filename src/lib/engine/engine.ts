@@ -15,7 +15,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
-import { countDuplicateCalls, toolOutcome, type TurnMetrics } from "./metrics";
+import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { createLangfuseSink } from "./langfuse";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
@@ -54,7 +54,10 @@ export type EngineDeps = {
   // (src/lib/auth.ts). Never from the request body.
   staffShopId?: string;
   // May return a promise (e.g. a send to Langfuse); turnLogged waits for it.
-  onMetrics: (m: TurnMetrics) => unknown;
+  onMetrics: (m: TurnMetrics, detail?: TurnDetail) => unknown;
+  // Also hand the sink the messages and the model's reply (customer text!). Off by
+  // default; LANGFUSE_CAPTURE_CONTENT=true turns it on.
+  captureContent: boolean;
   toolConcurrency: number;
 };
 
@@ -91,9 +94,9 @@ export async function runBatch<T, R>(
 // LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set.
 function defaultMetricsSink(): EngineDeps["onMetrics"] {
   const langfuse = createLangfuseSink();
-  return (m) => {
+  return (m, detail) => {
     console.info(JSON.stringify(m));
-    return langfuse?.(m);
+    return langfuse?.(m, detail);
   };
 }
 
@@ -109,6 +112,7 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
     modelName: deps.modelName ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL,
     staffShopId: deps.staffShopId,
     onMetrics: deps.onMetrics ?? defaultMetricsSink(),
+    captureContent: deps.captureContent ?? process.env.LANGFUSE_CAPTURE_CONTENT === "true",
     toolConcurrency: deps.toolConcurrency ?? TOOL_CONCURRENCY,
   };
 }
@@ -146,6 +150,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const system = buildSystemPrompt({ mode, product: tc.product });
   const toolList = toolDefinitions(mode);
   const messages = toModelMessages(input.history);
+  const detail: TurnDetail = { system: system.map((b) => b.text).join("\n\n"), calls: [] };
 
   const logs: ToolCallLog[] = [];
   const modelCalls: TurnMetrics["modelCalls"] = [];
@@ -162,6 +167,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   for (;;) {
     const c0 = now();
     let firstTokenAt: number | null = null;
+    const sentMessages = deps.captureContent ? messages.slice() : null;
     const res = await deps.model.create(
       {
         model: deps.modelName,
@@ -183,6 +189,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       cacheCreationTokens: res.usage.cache_creation_input_tokens ?? 0,
       stopReason: res.stop_reason,
     });
+    if (sentMessages) detail.calls.push({ messages: sentMessages, output: res.content });
     inputTokens += res.usage.input_tokens;
     outputTokens += res.usage.output_tokens;
 
@@ -283,7 +290,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   };
   let sinkDone: Promise<unknown> = Promise.resolve();
   try {
-    sinkDone = Promise.resolve(deps.onMetrics(metrics)).catch((e) => console.error("engine: metrics sink failed", e));
+    sinkDone = Promise.resolve(deps.onMetrics(metrics, detail)).catch((e) => console.error("engine: metrics sink failed", e));
   } catch (e) {
     console.error("engine: metrics sink failed", e);
   }

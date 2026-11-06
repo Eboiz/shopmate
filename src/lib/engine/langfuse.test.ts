@@ -87,18 +87,49 @@ describe("langfuse", () => {
     expect(bad.attributes["langfuse.observation.status_message"]).toBe("unknown_tool");
   });
 
-  it("sends no message content: no observation has input or output", () => {
+  const detail = {
+    system: "Prompt v0.1. Bạn là trợ lý bán hàng.",
+    calls: [
+      { messages: [{ role: "user", content: "Mình cao 1m60" }], output: [{ type: "text", text: "Dạ size M ạ" }] },
+      { messages: [{ role: "user", content: "Mình cao 1m60" }, { role: "assistant", content: [] }], output: [{ type: "text", text: "Xong" }] },
+    ],
+  };
+  const gens = () => exporter.getFinishedSpans().filter((s) => s.attributes["langfuse.observation.type"] === "generation");
+  const hasIO = (s: { attributes: Record<string, unknown> }) =>
+    Object.keys(s.attributes).filter((k) => /\.(input|output)$/.test(k) && !/usage/.test(k));
+
+  it("without detail, no observation has input or output", () => {
     recordTurn(metrics, END);
-    for (const s of exporter.getFinishedSpans()) {
-      const keys = Object.keys(s.attributes).filter((k) => /input|output/.test(k) && !/usage/.test(k));
-      expect(keys).toEqual([]);
+    for (const s of exporter.getFinishedSpans()) expect(hasIO(s)).toEqual([]);
+  });
+
+  it("shows only the system prompt when content is not captured", () => {
+    recordTurn(metrics, END, { system: detail.system, calls: [] });
+    for (const g of gens()) {
+      expect(JSON.parse(String(g.attributes["langfuse.observation.input"]))).toEqual([{ role: "system", content: detail.system }]);
+      expect(g.attributes["langfuse.observation.output"]).toBeUndefined();
     }
+    const text = JSON.stringify(exporter.getFinishedSpans().map((s) => s.attributes));
+    expect(text).not.toContain("1m60");
+  });
+
+  it("adds the messages and the reply of each call when content is captured", () => {
+    recordTurn(metrics, END, detail);
+    const [g1, g2] = gens().sort((a, b) => a.name.localeCompare(b.name));
+    expect(JSON.parse(String(g1.attributes["langfuse.observation.input"]))).toEqual([
+      { role: "system", content: detail.system },
+      { role: "user", content: "Mình cao 1m60" },
+    ]);
+    expect(JSON.parse(String(g1.attributes["langfuse.observation.output"]))).toEqual([{ type: "text", text: "Dạ size M ạ" }]);
+    expect(JSON.parse(String(g2.attributes["langfuse.observation.input"]))).toHaveLength(3);
+    // tools are not generations: still no content
+    for (const s of exporter.getFinishedSpans().filter((x) => x.name.startsWith("tool:"))) expect(hasIO(s)).toEqual([]);
   });
 
   it("never throws: a failing flush returns false", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const cfg = { publicKey: "pk", secretKey: "sk", baseUrl: "http://127.0.0.1:1" };
-    expect(await sendToLangfuse(cfg, metrics, { now: () => END, flush: async () => { throw new Error("down"); } })).toBe(false);
+    expect(await sendToLangfuse(cfg, metrics, undefined, { now: () => END, flush: async () => { throw new Error("down"); } })).toBe(false);
     spy.mockRestore();
   });
 });

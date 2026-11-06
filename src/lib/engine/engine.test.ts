@@ -20,7 +20,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
-import type { TurnMetrics } from "./metrics";
+import type { TurnDetail, TurnMetrics } from "./metrics";
 import { ToolError, type Db, type ToolHandlers } from "./types";
 
 const SHOP_A = "a0000000-0000-4000-8000-000000000001";
@@ -81,7 +81,7 @@ function setup(responses: ScriptedResponse[], over: { store?: ReturnType<typeof 
   const store = over.store ?? fakeStore();
   const handlers = fakeHandlers();
   const model = scriptedModel(responses, clock);
-  const onMetrics = vi.fn<(m: TurnMetrics) => void>();
+  const onMetrics = vi.fn<(m: TurnMetrics, detail?: TurnDetail) => void>();
   const deps: Partial<EngineDeps> = {
     model,
     store,
@@ -386,6 +386,25 @@ describe("runEngine", () => {
       await result.turnLogged;
       expect(store.insertTurn.mock.calls[0][0].latency_ms).toBe(250);
       expect(onMetrics.mock.calls[0][0].latencyMs).toBe(250);
+    });
+  });
+
+  describe("trace detail", () => {
+    it("gives the sink the system prompt, and no customer text unless capture is on", async () => {
+      const { onMetrics, run } = setup([reply("Dạ size M ạ")]);
+      await run(customerInput());
+      const detail = onMetrics.mock.calls[0][1]!;
+      expect(detail.system).toContain("Prompt v0.1");
+      expect(detail.calls).toEqual([]);
+    });
+
+    it("with capture on, gives the messages and the reply of every model call", async () => {
+      const { onMetrics, run } = setup([reply("Dạ size M ạ")], { deps: { captureContent: true } });
+      await run(customerInput());
+      const detail = onMetrics.mock.calls[0][1]!;
+      expect(detail.calls).toHaveLength(1);
+      expect(JSON.stringify(detail.calls[0].messages)).toContain("user");
+      expect(JSON.stringify(detail.calls[0].output)).toContain("Dạ size M ạ");
     });
   });
 

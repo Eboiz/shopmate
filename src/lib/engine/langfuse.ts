@@ -1,7 +1,7 @@
 import { LangfuseSpanProcessor } from "@langfuse/otel";
 import { propagateAttributes, startObservation } from "@langfuse/tracing";
 import { NodeSDK } from "@opentelemetry/sdk-node";
-import type { TurnMetrics } from "./metrics";
+import type { TurnDetail, TurnMetrics } from "./metrics";
 
 // Sends each engine turn to Langfuse Cloud with the Langfuse JS/TS SDK v6
 // (OpenTelemetry). The old REST ingestion API is shut down for traces on
@@ -14,9 +14,11 @@ import type { TurnMetrics } from "./metrics";
 //   ├─ tool:search_products (tool)
 //   └─ model_call_2 (generation)
 //
-// Privacy: built only from TurnMetrics, which never holds message text, tool
-// input/output or customer data, so no observation has input or output. Adding
-// content here would break the PB-03 rule; ask first.
+// Privacy: TurnMetrics never holds message text or customer data. What a
+// generation shows as input is the fixed system prompt (no customer data). The
+// conversation messages and the model's reply are added only when the engine was
+// asked to capture content (LANGFUSE_CAPTURE_CONTENT=true), which is off by
+// default because the PB-03 plan keeps customer text out of the logs.
 
 export type LangfuseConfig = { publicKey: string; secretKey: string; baseUrl: string };
 
@@ -43,6 +45,10 @@ function ensureRuntime(config: LangfuseConfig): Runtime {
     publicKey: config.publicKey,
     secretKey: config.secretKey,
     baseUrl: config.baseUrl,
+    // The Anthropic SDK emits its own "anthropic.messages.create" spans. They
+    // duplicate our model_call_N generations (double tokens and cost), so only
+    // spans made by this file are exported.
+    shouldExportSpan: ({ otelSpan }) => otelSpan.instrumentationScope.name === "langfuse-sdk",
     environment: process.env.LANGFUSE_TRACING_ENVIRONMENT ?? process.env.NODE_ENV,
   });
   new NodeSDK({ spanProcessors: [processor] }).start();
@@ -51,7 +57,7 @@ function ensureRuntime(config: LangfuseConfig): Runtime {
 
 // Creates the observations for one finished turn. Needs a tracer provider
 // (ensureRuntime, or one set by a test).
-export function recordTurn(m: TurnMetrics, endedAt: number): void {
+export function recordTurn(m: TurnMetrics, endedAt: number, detail?: TurnDetail): void {
   const startedAt = endedAt - m.latencyMs;
   const at = (offsetMs: number) => new Date(startedAt + offsetMs);
 
@@ -81,10 +87,15 @@ export function recordTurn(m: TurnMetrics, endedAt: number): void {
       );
 
       m.modelCalls.forEach((c, i) => {
+        const call = detail?.calls[i];
         const generation = startObservation(
           `model_call_${i + 1}`,
           {
             model: m.model,
+            input: detail
+              ? [{ role: "system", content: detail.system }, ...(Array.isArray(call?.messages) ? call.messages : [])]
+              : undefined,
+            output: call?.output,
             usageDetails: {
               input: c.inputTokens,
               output: c.outputTokens,
@@ -120,11 +131,12 @@ export function recordTurn(m: TurnMetrics, endedAt: number): void {
 export async function sendToLangfuse(
   config: LangfuseConfig,
   m: TurnMetrics,
+  detail?: TurnDetail,
   deps: { now?: () => number; flush?: () => Promise<void> } = {},
 ): Promise<boolean> {
   try {
     const runtime = ensureRuntime(config);
-    recordTurn(m, (deps.now ?? Date.now)());
+    recordTurn(m, (deps.now ?? Date.now)(), detail);
     await (deps.flush ?? (() => runtime.processor.forceFlush()))();
     return true;
   } catch (e) {
@@ -136,7 +148,7 @@ export async function sendToLangfuse(
 // The onMetrics sink: null when Langfuse is not configured.
 export function createLangfuseSink(
   config: LangfuseConfig | null = langfuseConfigFromEnv(),
-): ((m: TurnMetrics) => Promise<boolean>) | null {
+): ((m: TurnMetrics, detail?: TurnDetail) => Promise<boolean>) | null {
   if (!config) return null;
-  return (m) => sendToLangfuse(config, m);
+  return (m, detail) => sendToLangfuse(config, m, detail);
 }

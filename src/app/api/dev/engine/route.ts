@@ -59,10 +59,10 @@ export async function POST(request: Request) {
     const result = await runEngine(parsed, {
       db,
       staffShopId: body.mode === "staff_draft" ? shop.id : undefined,
-      onMetrics: (m) => {
+      onMetrics: (m, detail) => {
         metrics = m;
         console.info(JSON.stringify(m));
-        return langfuse?.(m);
+        return langfuse?.(m, detail);
       },
     });
     // Dev: wait for the ai_turns write (and Langfuse) so the next look at the DB is current.
