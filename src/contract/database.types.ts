@@ -347,7 +347,10 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "engine_search_products":
+            "engine_create_draft_order":
+{ Args: { "p_conversation_id": string,"p_customer_address": string,"p_customer_name": string,"p_customer_phone": string,"p_items": Json,"p_shop_id": string }; Returns: Json
+                           },
+"engine_search_products":
 { Args: { "p_limit": number,"p_query": string,"p_shop_id": string }; Returns: {
               "category": string | null,
 "code": string,
