@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { TextArea } from "@/components/ui/text-area";
-import { createDemoInbox, type InboxConversation, type InboxDataSource } from "./inbox-data";
+import { createDemoInbox, type InboxConversation } from "./inbox-data";
+import { listLiveConversations } from "./inbox-live";
 
 const channelLabels: Record<Channel, string> = {
   web: "Web chat",
@@ -52,8 +53,9 @@ function ModeBadge({ mode }: { mode: ConversationMode }) {
   return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{modeLabels[mode]}</span>;
 }
 
-export function StaffInbox() {
-  const [{ source, simulateCustomerMessage, simulateHandoff }] = useState(createDemoInbox);
+export function StaffInbox({ demo }: { demo: boolean }) {
+  const [demoInbox] = useState(() => demo ? createDemoInbox() : null);
+  const source = demoInbox?.source;
   const [state, setState] = useState<InboxState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -61,13 +63,14 @@ export function StaffInbox() {
   useEffect(() => {
     let active = true;
     let receivedUpdate = false;
-    const unsubscribe = source.subscribe((conversations) => {
+    const unsubscribe = source?.subscribe((conversations) => {
       if (!active) return;
       receivedUpdate = true;
       setState({ status: "ready", conversations });
     });
 
-    void source.listConversations().then(
+    const request = source ? source.listConversations() : listLiveConversations();
+    void request.then(
       (conversations) => {
         if (active && !receivedUpdate) setState({ status: "ready", conversations });
       },
@@ -78,9 +81,14 @@ export function StaffInbox() {
 
     return () => {
       active = false;
-      unsubscribe();
+      unsubscribe?.();
     };
   }, [attempt, source]);
+
+  function reload() {
+    setState({ status: "loading" });
+    setAttempt((current) => current + 1);
+  }
 
   if (state.status === "loading") return <p role="status">Đang tải hộp thư…</p>;
 
@@ -88,23 +96,41 @@ export function StaffInbox() {
     return (
       <div className="space-y-3">
         <ErrorMessage>Không tải được danh sách hội thoại.</ErrorMessage>
-        <Button variant="secondary" onClick={() => {
-          setState({ status: "loading" });
-          setAttempt((current) => current + 1);
-        }}>
+        <Button variant="secondary" onClick={reload}>
           Thử lại
         </Button>
       </div>
     );
   }
 
-  if (!state.conversations.length) {
-    return <EmptyState title="Chưa có cuộc trò chuyện" description="Tin nhắn của khách sẽ xuất hiện tại đây." />;
-  }
-
   const selected = state.conversations.find(({ id }) => id === selectedId);
   const conversations = [...state.conversations].sort(compareConversations);
 
+  return (
+    <>
+      {!demo && (
+        <Button variant="secondary" className="mb-3" onClick={reload}>Làm mới</Button>
+      )}
+      {conversations.length ? (
+        <InboxConversations
+          conversations={conversations}
+          selected={selected}
+          onSelect={setSelectedId}
+          demoInbox={demoInbox}
+        />
+      ) : (
+        <EmptyState title="Chưa có cuộc trò chuyện" description="Tin nhắn của khách sẽ xuất hiện tại đây." />
+      )}
+    </>
+  );
+}
+
+function InboxConversations({ conversations, selected, onSelect, demoInbox }: {
+  conversations: InboxConversation[];
+  selected?: InboxConversation;
+  onSelect: (id: string | null) => void;
+  demoInbox: ReturnType<typeof createDemoInbox> | null;
+}) {
   return (
     <div className="gap-4 md:grid md:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
       <aside aria-label="Danh sách hội thoại" className={selected ? "hidden md:block" : undefined}>
@@ -115,7 +141,7 @@ export function StaffInbox() {
                 type="button"
                 aria-pressed={selected?.id === conversation.id}
                 className="block w-full min-w-0 rounded-lg border border-zinc-300 p-3 text-left aria-pressed:border-zinc-600"
-                onClick={() => setSelectedId(conversation.id)}
+                onClick={() => onSelect(conversation.id)}
               >
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="min-w-0 truncate font-semibold">{conversation.customerName}</span>
@@ -140,10 +166,8 @@ export function StaffInbox() {
         <ConversationPanel
           key={selected.id}
           conversation={selected}
-          source={source}
-          onBack={() => setSelectedId(null)}
-          onDemoMessage={() => simulateCustomerMessage(selected.id)}
-          onDemoHandoff={() => simulateHandoff(selected.id)}
+          demoInbox={demoInbox}
+          onBack={() => onSelect(null)}
         />
       ) : (
         <div className="hidden md:block">
@@ -154,13 +178,12 @@ export function StaffInbox() {
   );
 }
 
-function ConversationPanel({ conversation, source, onBack, onDemoMessage, onDemoHandoff }: {
+function ConversationPanel({ conversation, demoInbox, onBack }: {
   conversation: InboxConversation;
-  source: InboxDataSource;
+  demoInbox: ReturnType<typeof createDemoInbox> | null;
   onBack: () => void;
-  onDemoMessage: () => void;
-  onDemoHandoff: () => void;
 }) {
+  const source = demoInbox?.source;
   const [reply, setReply] = useState("");
   const [pending, setPending] = useState<"mode" | "send" | null>(null);
   const [error, setError] = useState<string>();
@@ -200,13 +223,15 @@ function ConversationPanel({ conversation, source, onBack, onDemoMessage, onDemo
               <ModeBadge mode={conversation.mode} />
             </div>
           </div>
-          <Button
-            variant={isStaff ? "secondary" : "primary"}
-            disabled={pending !== null}
-            onClick={() => void runAction("mode", () => source.setMode(conversation.id, isStaff ? "ai" : "staff"))}
-          >
-            {pending === "mode" ? "Đang cập nhật…" : isStaff ? "Trả lại cho AI" : "Tiếp quản"}
-          </Button>
+          {source && (
+            <Button
+              variant={isStaff ? "secondary" : "primary"}
+              disabled={pending !== null}
+              onClick={() => void runAction("mode", () => source.setMode(conversation.id, isStaff ? "ai" : "staff"))}
+            >
+              {pending === "mode" ? "Đang cập nhật…" : isStaff ? "Trả lại cho AI" : "Tiếp quản"}
+            </Button>
+          )}
         </header>
 
         <div ref={messageLog} role="log" aria-label="Tin nhắn" className="max-h-80 min-h-24 overflow-y-auto border-y border-zinc-200 py-3 md:max-h-[26rem]">
@@ -230,7 +255,7 @@ function ConversationPanel({ conversation, source, onBack, onDemoMessage, onDemo
         </div>
 
         {error && <ErrorMessage>{error}</ErrorMessage>}
-        {isStaff ? (
+        {source && (isStaff ? (
           <form className="space-y-2" onSubmit={(event) => {
             event.preventDefault();
             const text = reply.trim();
@@ -249,15 +274,17 @@ function ConversationPanel({ conversation, source, onBack, onDemoMessage, onDemo
           <p className="text-sm">
             {conversation.mode === "needs_human" ? "AI đang chờ nhân viên tiếp quản." : "Tiếp quản để gửi tin nhắn cho khách."}
           </p>
-        )}
+        ))}
       </div>
 
-      <div className="flex flex-wrap gap-2 text-sm" aria-label="Thao tác với dữ liệu mẫu">
-        <Button variant="secondary" disabled={pending !== null} onClick={onDemoMessage}>Mô phỏng tin mới</Button>
-        {conversation.mode === "ai" && (
-          <Button variant="secondary" disabled={pending !== null} onClick={onDemoHandoff}>Mô phỏng yêu cầu tiếp quản</Button>
-        )}
-      </div>
+      {demoInbox && (
+        <div className="flex flex-wrap gap-2 text-sm" aria-label="Thao tác với dữ liệu mẫu">
+          <Button variant="secondary" disabled={pending !== null} onClick={() => demoInbox.simulateCustomerMessage(conversation.id)}>Mô phỏng tin mới</Button>
+          {conversation.mode === "ai" && (
+            <Button variant="secondary" disabled={pending !== null} onClick={() => demoInbox.simulateHandoff(conversation.id)}>Mô phỏng yêu cầu tiếp quản</Button>
+          )}
+        </div>
+      )}
     </section>
   );
 }
