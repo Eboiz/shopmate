@@ -23,6 +23,8 @@ export async function POST(request: NextRequest) {
   }
   const body = new Uint8Array(await request.arrayBuffer());
   if (!verifyMessengerSignature(body, request.headers.get("x-hub-signature-256"), secret)) {
+    // Every real delivery failing here means META_APP_SECRET doesn't match the Meta app.
+    console.warn("messenger: rejected a delivery with a missing or wrong signature");
     return new Response(null, { status: 401 });
   }
   let payload: { object?: unknown };

@@ -143,6 +143,15 @@ describe("receiveChannelMessage", () => {
     expect(sent).toEqual([{ conversationId: conversation().id, reply: { text: HANDOFF_TEXT, products: [], quickReplies: [] }, from: "system" }]);
   });
 
+  it("sends the handoff notice once when another turn already handed off (two messages at once)", async () => {
+    engine.mockImplementation(async () => {
+      conversation().mode = "needs_human"; // the other turn got there first
+      throw new Error("not_implemented");
+    });
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("stored");
+    expect(sent).toEqual([]);
+  });
+
   it("hands a photo to staff, keeping its link for the inbox, without calling the AI", async () => {
     const photo = { externalId: "psid-1", messageId: "mid-1", imageUrls: ["https://x/1.jpg"] };
     expect(await receiveChannelMessage(account, photo)).toBe("handed_off");

@@ -86,16 +86,20 @@ export async function receiveChannelMessage(
 
   if (conversation.mode !== "ai") return "stored";
 
+  // Only the turn that actually switches the mode tells the shopper: two messages
+  // arriving together must not send the notice twice.
   const handOff = async (reply: Reply) => {
-    must(
+    const switched = must(
       await db
         .from("conversations")
         .update({ mode: "needs_human" })
         .eq("id", conversation.id)
         .eq("shop_id", shop_id)
-        .eq("mode", "ai"),
+        .eq("mode", "ai")
+        .select("id"),
       "handoff",
     );
+    if (switched.length === 0) return "stored" as const;
     await sendSystem(conversation.id, reply);
     return "handed_off" as const;
   };
