@@ -31,6 +31,7 @@ There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accoun
 | `pnpm db:reset` | Recreate the local database from `supabase/migrations/` |
 | `pnpm db:test` | Database tests (pgTAP, `supabase/tests/`): constraints and Row Level Security |
 | `pnpm db:types` | Regenerate `src/contract/database.types.ts` from the local database |
+| `pnpm engine:eval` | Labeled eval of the engine with real Claude (costs money; see [Engine eval](#engine-eval)) |
 | `pnpm engine:metrics` | Engine latency, TTFT, tool success and token summary from `ai_turns` (see [Reading the metrics](#reading-the-metrics)) |
 | `pnpm db:seed` | Load the demo shop, the eval shop and the demo accounts into local Supabase (see [Demo shop](#demo-shop-pb-02)) |
 
@@ -86,6 +87,15 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 - The reply is returned before the turn is written to `ai_turns`: `result.turnLogged` resolves with the row id or `null` and never rejects. On Vercel, pass it to `after()`.
 
 `pnpm test:int` includes `src/lib/engine/engine.int.test.ts`: the engine end to end on the two-shop fixture with a scripted model, plus a live Claude smoke test that runs only when `ANTHROPIC_API_KEY` is in `.env.test.local` (it costs real money; CI never runs it) and prints latency, TTFT, tokens and call counts.
+
+### Engine eval
+
+```bash
+pnpm engine:eval                      # 8 cases x 3 runs
+EVAL_RUNS=1 EVAL_CASE=size-advice pnpm engine:eval
+```
+
+Labeled basic cases (`src/lib/engine/eval/cases.ts`) on shop A of the two-shop fixture: for each case, which tools the model must call, with which arguments, and when it must call none. The table shows per case the pass rate, recall of required calls, argument accuracy and necessity precision (no extra or repeated calls), plus average latency, tokens and tool calls. Needs local Supabase running (`pnpm db:start`) and `ANTHROPIC_API_KEY` in `.env.test.local`. **Every run costs real money** (8 cases x 3 runs = 24 turns by default). It only reports, never fails on a low score, and CI doesn't run it.
 
 ### Engine metrics
 

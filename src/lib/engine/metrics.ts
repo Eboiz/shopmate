@@ -60,12 +60,15 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value) ?? "undefined";
 }
 
+// Same tool and same input, whatever the key order.
+export const callKey = (name: string, input: unknown) => `${name}:${stableStringify(input)}`;
+
 // The first call of each name + input is not a duplicate; every repeat is.
 export function countDuplicateCalls(calls: Array<{ name: string; input: unknown }>): number {
   const seen = new Set<string>();
   let duplicates = 0;
   for (const { name, input } of calls) {
-    const key = `${name}:${stableStringify(input)}`;
+    const key = callKey(name, input);
     if (seen.has(key)) duplicates++;
     else seen.add(key);
   }
