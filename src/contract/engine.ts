@@ -14,14 +14,16 @@ const shared = {
 };
 
 // customer: a shopper's conversation; the server reads shop_id from it.
-// staff_draft: the reply assistant (PB-20); no conversation, shop_id comes from
-// the signed-in staff member's profile. create_draft_order and handoff_to_staff
-// are not available in this mode (see toolsForMode).
+// staff_draft: the reply assistant (PB-20); no conversation, and no shop in the
+// input at all — the route resolves it from the signed-in staff member's profile
+// (requireStaff in src/lib/auth.ts) and passes it to runEngine via deps.
+// create_draft_order and handoff_to_staff are not available in this mode (see
+// toolsForMode).
 export const engineInputSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("customer"), conversationId: idSchema, ...shared }),
-  // shopId comes from the signed-in staff member's profile on the server, never
-  // from the request body.
-  z.object({ mode: z.literal("staff_draft"), shopId: idSchema, ...shared }),
+  // strictObject: a shopId in the request body is a parse error, not a key the
+  // server could ever accidentally read. The shop is verified server-side.
+  z.strictObject({ mode: z.literal("staff_draft"), ...shared }),
 ]);
 
 // What the model itself returns: product IDs only. The engine turns them into
