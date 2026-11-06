@@ -1,10 +1,15 @@
-import { EmptyState } from "@/components/ui/empty-state";
+import { StaffInbox } from "./staff-inbox";
 
 export default function InboxPage() {
   return (
-    <>
-      <h1 className="mb-4 text-xl font-semibold">Hộp thư</h1>
-      <EmptyState title="Sắp ra mắt" description="Các cuộc trò chuyện với khách sẽ hiện ở đây." />
-    </>
+    <section className="mx-auto max-w-5xl">
+      <header className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h1 className="text-xl font-semibold">Hộp thư</h1>
+        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-900">
+          Dữ liệu mẫu
+        </span>
+      </header>
+      <StaffInbox />
+    </section>
   );
 }
