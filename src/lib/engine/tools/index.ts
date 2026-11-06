@@ -1,3 +1,5 @@
+import type Anthropic from "@anthropic-ai/sdk";
+import { toolDefinitions as contractToolDefinitions, type EngineMode } from "@/contract";
 import type { ToolHandlers } from "../types";
 import { createDraftOrder } from "./create-draft-order";
 import { getPairings } from "./get-pairings";
@@ -20,3 +22,12 @@ export const toolHandlers: ToolHandlers = {
   create_draft_order: createDraftOrder,
   handoff_to_staff: handoffToStaff,
 };
+
+// The tools ADVERTISED to the model in this mode, in the shape the Claude API
+// takes. This is not the gate: executeTool enforces toolsForMode(mode). Both
+// come from the contract's toolsForMode, so they stay in step; if you ever
+// block a tool here by hand, block it in toolsForMode too (or the model can't
+// see it but could still run it), and add a case to execute-tool.test.ts.
+export function toolDefinitions(mode: EngineMode): Anthropic.Tool[] {
+  return contractToolDefinitions(mode) as Anthropic.Tool[];
+}

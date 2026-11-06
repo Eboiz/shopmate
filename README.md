@@ -72,6 +72,35 @@ pnpm db:seed --check                           # only check the CSV files
 
 All keys live in `.env.local` locally and in Vercel project settings for deployments. Never commit them. See `.env.example` for the full list.
 
+- `ANTHROPIC_API_KEY` (server-only): Claude API key used by the AI engine.
+- `ANTHROPIC_MODEL` (server-only, optional): overrides the engine's model, `claude-sonnet-5-5` by default.
+
+## AI engine (PB-03)
+
+`src/lib/engine/` (server-only): `runEngine(input, deps?)` takes the history and mode, calls Claude with the 8 contract tools, runs them on Supabase and returns an `EngineOutput`.
+
+- `executeTool` is the only way a tool runs. It blocks `create_draft_order` and `handoff_to_staff` in `staff_draft` (`toolsForMode`), validates input and output with the contract schemas, and turns every error into an error `tool_result`. `toolDefinitions(mode)` only advertises the same set to the model.
+- `shop_id` always comes from the server: from the conversation in `customer` mode, and from `deps.staffShopId` (filled from `requireStaff()`) in `staff_draft`. Every admin-client query filters by it.
+- More than 5 tool calls in one turn hands the conversation to staff (`too_many_tool_calls`). A conversation not in mode `ai` is refused with `conversation_not_found`; routes must still gate before calling.
+- The reply is returned before the turn is written to `ai_turns`: `result.turnLogged` resolves with the row id or `null` and never rejects. On Vercel, pass it to `after()`.
+
+### Engine metrics
+
+Each turn prints one JSON line with `event: "engine_turn"` (`deps.onMetrics`, `console.info` by default). It holds measurements only, never message text, tool input or output, or customer details:
+
+| Field | Meaning |
+| --- | --- |
+| `latencyMs` | Start of `runEngine` until the output is ready (the `ai_turns` write is not included) |
+| `ttftMs` | Start of the turn until the first text token of the last model response, the one the shopper reads. `null` when the model didn't write the reply (handoff, truncated) |
+| `modelCalls[]` | Per model call: `ms`, `ttftMs`, input/output tokens, `cacheReadTokens`, `cacheCreationTokens`, `stopReason` |
+| `toolCalls[]` | Per tool call the model asked for: `name`, `ms`, `outcome` (`ok`, `unknown_tool`, `tool_not_allowed`, `invalid_input`, a tool error code such as `product_not_found`, or `internal_error`) |
+| `duplicateToolCalls` | Calls repeating the same tool and input within the turn |
+| `inputTokens`, `outputTokens` | Totals over all model calls, as written to `ai_turns` |
+| `handoffReason`, `truncated` | Why the turn ended without a model reply, if it did |
+| `promptVersion`, `model`, `mode`, `shopId` | To compare runs |
+
+`ai_turns` stores `latency_ms`, `ttft_ms`, `input_tokens`, `output_tokens`, `model_calls`, `tool_calls`, `model` and `prompt_version`. Known limits: per-call timings, cache tokens and `duplicateToolCalls` are only in the log line; `unknown_tool` calls are not in `ai_turns.tool_calls`; the engine has no tuned prompt yet (`v0`, PB-10).
+
 ## Auth
 
 - `/admin/*` needs a signed-in user. `src/proxy.ts` redirects signed-out visitors to `/login?next=...`, and `src/app/admin/layout.tsx` checks the user again on the server.
