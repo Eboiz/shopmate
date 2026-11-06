@@ -17,6 +17,7 @@ import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
+import { createLangfuseSink } from "./langfuse";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -52,7 +53,8 @@ export type EngineDeps = {
   // staff_draft only: the signed-in staff member's shop, from requireStaff()
   // (src/lib/auth.ts). Never from the request body.
   staffShopId?: string;
-  onMetrics: (m: TurnMetrics) => void;
+  // May return a promise (e.g. a send to Langfuse); turnLogged waits for it.
+  onMetrics: (m: TurnMetrics) => unknown;
   toolConcurrency: number;
 };
 
@@ -85,6 +87,16 @@ export async function runBatch<T, R>(
   return results;
 }
 
+// Logs the JSON line, and also sends the turn to Langfuse Cloud when
+// LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are set.
+function defaultMetricsSink(): EngineDeps["onMetrics"] {
+  const langfuse = createLangfuseSink();
+  return (m) => {
+    console.info(JSON.stringify(m));
+    return langfuse?.(m);
+  };
+}
+
 function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
   // Defaults are built only when missing, so tests never touch Supabase or Claude.
   const db = deps.db ?? createAdminClient();
@@ -96,7 +108,7 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
     now: deps.now ?? Date.now,
     modelName: deps.modelName ?? process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL,
     staffShopId: deps.staffShopId,
-    onMetrics: deps.onMetrics ?? ((m) => console.info(JSON.stringify(m))),
+    onMetrics: deps.onMetrics ?? defaultMetricsSink(),
     toolConcurrency: deps.toolConcurrency ?? TOOL_CONCURRENCY,
   };
 }
@@ -267,15 +279,16 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     handoffReason: handoff,
     truncated,
   };
+  let sinkDone: Promise<unknown> = Promise.resolve();
   try {
-    deps.onMetrics(metrics);
+    sinkDone = Promise.resolve(deps.onMetrics(metrics)).catch((e) => console.error("engine: metrics sink failed", e));
   } catch (e) {
     console.error("engine: metrics sink failed", e);
   }
 
   const turnLogged = (async () => {
     try {
-      return await deps.store.insertTurn({
+      const [row] = await Promise.all([deps.store.insertTurn({
         shop_id: ctx.shopId,
         conversation_id: ctx.conversationId,
         mode,
@@ -288,7 +301,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         model_calls: modelCalls.length,
         model: deps.modelName,
         prompt_version: PROMPT_VERSION,
-      });
+      }), sinkDone]);
+      return row;
     } catch (e) {
       console.error("engine: failed to write ai_turns", e);
       return null;
