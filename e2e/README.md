@@ -37,7 +37,7 @@ Never set `E2E_SUPABASE_*` to the team's shared project: these tests write conve
 
 The `agent` job of `.github/workflows/e2e-nightly.yml` uses Playwright's own test agents (`playwright init-agents --loop=claude`) with Claude Code, through the team's Anthropic-compatible gateway:
 
-1. **Plan, Claude Opus** (`.github/e2e-agent/plan.md`): reads the last 24 hours of `src/` and `supabase/` changes, the acceptance criteria of the backlog items they name (PB-xx), and the existing tests; writes at most 10 cases (happy, edge, worst) to `e2e/plans/<date>.md`. No browser, no shell.
+1. **Plan, Claude Opus** (`.github/e2e-agent/plan.md`): reads the last 24 hours of `src/` and `supabase/` changes, the acceptance criteria of the backlog items they name (PB-xx), and the existing tests; writes at most 10 cases (happy, edge, worst). No browser, no shell. The plan comes from the private backlog, so it is deleted at the end of the job and never published.
 2. **Write and heal, Claude Sonnet** (`.github/e2e-agent/generate.md`): the generator and healer subagents write the tests against the running throwaway app and fix test-side failures. A real app bug stays as `test.fail()` with a comment; assertions are never loosened.
 3. The whole suite runs again without the key; the `report` job writes `docs/e2e-reports/<date>.md` and opens a PR. A person reviews and merges it in the morning.
 

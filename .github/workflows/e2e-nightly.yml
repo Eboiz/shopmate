@@ -174,14 +174,15 @@ jobs:
         if: steps.changes.outputs.ran == 'true'
         continue-on-error: true
         run: pnpm exec playwright test
-      # Plans are written from the private backlog: they stay in this run's artifacts and
-      # never enter the public repository. The agent's Vietnamese summary does go in the PR.
+      # Plans are written from the private backlog and artifacts of a public repository
+      # are downloadable: they are deleted here and never leave this machine. The agent's
+      # Vietnamese summary (test titles, app bugs found) does go in the PR.
       - name: Package e2e/ changes and results
         if: steps.changes.outputs.ran == 'true'
         run: |
           mkdir -p agent-out
           cp "e2e/plans/$SUMMARY_FILE" agent-out/summary.md 2>/dev/null || true
-          mv e2e/plans agent-out/plans 2>/dev/null || true
+          rm -rf e2e/plans
           git add -N e2e
           git diff -- e2e > e2e.patch
           [ -f e2e-results.json ] || echo '{}' > e2e-results.json
@@ -210,12 +211,6 @@ jobs:
             e2e.patch
             e2e-results.json
             agent-out/summary.md
-          retention-days: 14
-      - if: steps.changes.outputs.ran == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-agent-plans-private
-          path: agent-out/plans/
           retention-days: 14
 
   report:
