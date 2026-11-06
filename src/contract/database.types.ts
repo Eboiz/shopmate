@@ -7,14 +7,14 @@ export type Database = {
           Tables: {
             "ai_turns": {
                   Row: {
-                    "conversation_id": string | null,"created_at": string,"handoff_reason": Database["public"]['Enums']["handoff_reason"] | null,"id": string,"input_tokens": number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"output_tokens": number,"postcheck": Json | null,"shop_id": string,"tool_calls": NonNullable<Json>
+                    "conversation_id": string | null,"created_at": string,"handoff_reason": Database["public"]['Enums']["handoff_reason"] | null,"id": string,"input_tokens": number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"model": string | null,"model_calls": number,"output_tokens": number,"postcheck": Json | null,"prompt_version": string | null,"shop_id": string,"tool_calls": NonNullable<Json>,"ttft_ms": number | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "conversation_id"?: string | null,"created_at"?: string,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"output_tokens"?: number,"postcheck"?: Json | null,"shop_id": string,"tool_calls"?: NonNullable<Json>
+                    "conversation_id"?: string | null,"created_at"?: string,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"model"?: string | null,"model_calls"?: number,"output_tokens"?: number,"postcheck"?: Json | null,"prompt_version"?: string | null,"shop_id": string,"tool_calls"?: NonNullable<Json>,"ttft_ms"?: number | null
                   }
                   Update: {
-                    "conversation_id"?: string | null,"created_at"?: string,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms"?: number,"mode"?: Database["public"]['Enums']["engine_mode"],"output_tokens"?: number,"postcheck"?: Json | null,"shop_id"?: string,"tool_calls"?: NonNullable<Json>
+                    "conversation_id"?: string | null,"created_at"?: string,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms"?: number,"mode"?: Database["public"]['Enums']["engine_mode"],"model"?: string | null,"model_calls"?: number,"output_tokens"?: number,"postcheck"?: Json | null,"prompt_version"?: string | null,"shop_id"?: string,"tool_calls"?: NonNullable<Json>,"ttft_ms"?: number | null
                   }
                   Relationships: [
                     {

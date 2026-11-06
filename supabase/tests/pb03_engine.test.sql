@@ -3,7 +3,7 @@ begin;
 -- Ids differ from the integration fixture (src/lib/engine/test/two-shops.ts), so
 -- this file runs while that fixture is in the local database.
 create extension if not exists pgtap with schema extensions;
-select plan(14);
+select plan(21);
 -- Check deferrable foreign keys at each statement, as an autocommit write would.
 set constraints all immediate;
 
@@ -74,6 +74,28 @@ select results_eq(
     from public.orders o where o.shop_id = 'aa000000-0000-4000-8000-000000000001'$$,
   $$values ('draft', 700000, 2)$$,
   'one draft order at the current price, and stock does not change'
+);
+
+-- ai_turns metrics columns (additive: old rows keep working)
+insert into public.ai_turns (id, shop_id, mode, latency_ms)
+  values ('aa000000-0000-4000-8000-000000000051', 'aa000000-0000-4000-8000-000000000001', 'staff_draft', 10);
+select col_type_is('public', 'ai_turns', 'ttft_ms', 'integer', 'ai_turns.ttft_ms is an integer');
+select col_type_is('public', 'ai_turns', 'model_calls', 'integer', 'ai_turns.model_calls is an integer');
+select col_type_is('public', 'ai_turns', 'model', 'text', 'ai_turns.model is text');
+select col_type_is('public', 'ai_turns', 'prompt_version', 'text', 'ai_turns.prompt_version is text');
+select throws_ok(
+  $$update public.ai_turns set ttft_ms = -1 where id = 'aa000000-0000-4000-8000-000000000051'$$,
+  '23514', null, 'ttft_ms can never be negative'
+);
+select throws_ok(
+  $$update public.ai_turns set model_calls = -1 where id = 'aa000000-0000-4000-8000-000000000051'$$,
+  '23514', null, 'model_calls can never be negative'
+);
+select results_eq(
+  $$select ttft_ms, model_calls, model, prompt_version from public.ai_turns
+    where id = 'aa000000-0000-4000-8000-000000000051'$$,
+  $$values (null::int, 0, null::text, null::text)$$,
+  'a row written without the new columns reads with their defaults'
 );
 
 select * from finish();
