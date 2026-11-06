@@ -174,9 +174,14 @@ jobs:
         if: steps.changes.outputs.ran == 'true'
         continue-on-error: true
         run: pnpm exec playwright test
+      # Plans are written from the private backlog: they stay in this run's artifacts and
+      # never enter the public repository. The agent's Vietnamese summary does go in the PR.
       - name: Package e2e/ changes and results
         if: steps.changes.outputs.ran == 'true'
         run: |
+          mkdir -p agent-out
+          cp "e2e/plans/$SUMMARY_FILE" agent-out/summary.md 2>/dev/null || true
+          mv e2e/plans agent-out/plans 2>/dev/null || true
           git add -N e2e
           git diff -- e2e > e2e.patch
           [ -f e2e-results.json ] || echo '{}' > e2e-results.json
@@ -186,7 +191,7 @@ jobs:
         env:
           KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          files="e2e.patch e2e-results.json"
+          files="e2e.patch e2e-results.json $(ls agent-out/summary.md 2>/dev/null)"
           leak=false
           grep -qE '(sk-ant-|as_eyJ)[A-Za-z0-9_.-]{8,}' $files && leak=true
           if [ -n "$KEY" ]; then
@@ -204,6 +209,13 @@ jobs:
           path: |
             e2e.patch
             e2e-results.json
+            agent-out/summary.md
+          retention-days: 14
+      - if: steps.changes.outputs.ran == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-agent-plans-private
+          path: agent-out/plans/
           retention-days: 14
 
   report:
@@ -216,6 +228,8 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -234,16 +248,17 @@ jobs:
           day=$(TZ=Asia/Ho_Chi_Minh date +%F)
           patch="$in/e2e-agent/e2e.patch"
           if [ -s "$patch" ]; then
-            if grep -E '^(\+\+\+|---) [ab]/' "$patch" | grep -vE '^(\+\+\+|---) [ab]/e2e/' | grep -q .; then
-              echo "::error::The patch touches files outside e2e/; not applied."; patch=""
+            if grep -E '^(\+\+\+|---) [ab]/' "$patch" | grep -vE '^(\+\+\+|---) [ab]/e2e/' | grep -q . \
+              || grep -qE '^(new file mode|new mode|old mode) 120000' "$patch" || grep -q '^GIT binary patch' "$patch"; then
+              echo "::error::The patch touches files outside e2e/, adds a symlink or a binary; not applied."; patch=""
             else
-              git apply --include='e2e/*' "$patch"
+              git -c core.symlinks=false apply --include='e2e/*' "$patch"
             fi
           fi
           suite="$in/e2e-agent/e2e-results.json"; [ -s "$suite" ] && [ "$(cat "$suite")" != "{}" ] || suite="$in/e2e-local/e2e-results.json"
           agent=skipped; [ "$AGENT_RAN" = "true" ] && agent=ran; [ "$AGENT_RESULT" = "failure" ] && agent=failed
           node .github/e2e-agent/write-report.mjs --date "$day" --suite "$suite" --smoke "$in/e2e-smoke/e2e-results.json" \
-            --plan "e2e/plans/$day.md" --summary "e2e/plans/$day-summary.md" --agent "$agent" --run "$RUN_URL" \
+            --summary "$in/e2e-agent/agent-out/summary.md" --agent "$agent" --run "$RUN_URL" \
             --out "docs/e2e-reports/$day.md"
           branch="e2e-nightly/$day"
           git switch -c "$branch"
@@ -251,5 +266,5 @@ jobs:
           git config user.email "e2e-nightly@users.noreply.github.com"
           git add docs/e2e-reports e2e
           git commit -m "E2E: báo cáo đêm $day"
-          git push -u origin "$branch"
+          git push "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git" "HEAD:refs/heads/$branch"
           gh pr create --base main --head "$branch" --title "E2E: báo cáo đêm $day" --body-file "docs/e2e-reports/$day.md"

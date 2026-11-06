@@ -1,7 +1,7 @@
 // Writes the nightly E2E report (docs/e2e-reports/<date>.md) from Playwright JSON results.
 // node write-report.mjs --date 2026-11-07 --suite results.json [--smoke smoke.json]
-//   [--plan plan.md] [--summary summary.md] [--agent ran|skipped|failed] --out docs/e2e-reports/2026-11-07.md
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+//   [--summary summary.md] [--agent ran|skipped|failed] --out docs/e2e-reports/2026-11-07.md
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -10,7 +10,6 @@ const { values: a } = parseArgs({
     date: { type: "string" },
     suite: { type: "string" },
     smoke: { type: "string" },
-    plan: { type: "string" },
     summary: { type: "string" },
     agent: { type: "string" },
     run: { type: "string" },
@@ -18,8 +17,17 @@ const { values: a } = parseArgs({
   },
 });
 
-const readJson = (path) => (path && existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null);
-const readText = (path) => (path && existsSync(path) ? readFileSync(path, "utf8").trim() : "");
+// Inputs come from another job: read regular files only, never symlinks.
+const regular = (path) => Boolean(path) && existsSync(path) && lstatSync(path).isFile();
+const readJson = (path) => {
+  if (!regular(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+};
+const readText = (path) => (regular(path) ? readFileSync(path, "utf8").trim().slice(0, 20_000) : "");
 
 // Flatten Playwright's nested suites into one row per test.
 function rows(report) {
@@ -89,8 +97,6 @@ const lines = [
 ];
 const summary = readText(a.summary);
 if (summary) lines.push("### Agent đã làm", "", summary, "");
-const plan = readText(a.plan);
-if (plan) lines.push("<details><summary>Kế hoạch test của agent</summary>", "", plan, "", "</details>", "");
 
 mkdirSync(dirname(a.out), { recursive: true });
 writeFileSync(a.out, lines.join("\n"));
