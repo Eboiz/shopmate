@@ -9,6 +9,7 @@ import {
   type Reply,
   type ToolCallLog,
   type ToolContext,
+  type ToolOutput,
 } from "@/contract";
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -18,6 +19,7 @@ import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { createLangfuseSink } from "./langfuse";
+import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -187,6 +189,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let sizeStatus: SizeStatus = null;
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
+  const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
+    called: false, failed: false, needsProduct: false, items: [],
+  };
+  let knownSize = knownShopperSize(input.history);
 
   for (;;) {
     const c0 = now();
@@ -241,7 +247,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
     const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
       const s0 = now();
-      const run = await executeTool(u.name, u.input, ctx, mode, deps.handlers, deps.db);
+      const effectiveInput = u.name === "get_pairings" && u.input && typeof u.input === "object"
+        ? { ...u.input, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
+        : u.input;
+      const run = await executeTool(u.name, effectiveInput, ctx, mode, deps.handlers, deps.db);
       return { run, ms: now() - s0, startMs: s0 - t0 };
     });
 
@@ -252,6 +261,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
       if (u.name === "recommend_size" && !run.isError) sizeStatus = sizeStatusOf(run.content);
+      if (u.name === "recommend_size" && !run.isError && !knownSize) {
+        const size = (run.log?.output as { status?: string; size?: string } | undefined);
+        if (size?.status === "ok") knownSize = size.size ?? null;
+      }
+      if (u.name === "get_pairings") {
+        pairingState.called = true;
+        if (run.isError) pairingState.failed = true;
+        if (!run.isError) pairingState.items.push(...tools.get_pairings.output.parse(run.log?.output).pairings);
+      }
     });
 
     const handedOff = uses.find((u, i) => u.name === "handoff_to_staff" && !runs[i].run.isError);
@@ -274,6 +292,25 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     );
   }
 
+  // A matching question must not depend on the model remembering the tool. If
+  // it forgot, query the product the shopper is viewing on the server. Without
+  // a product, ask which item they mean instead of showing invented matches.
+  if (mode === "customer" && !handoff && !truncated && modelReply && isMatchingQuestion(input.history) && !pairingState.called) {
+    pairingState.called = true;
+    if (tc.product && calls < MAX_TOOL_CALLS) {
+      const toolInput = { productId: tc.product.id, ...(knownSize ? { size: knownSize } : {}) };
+      const started = now();
+      const run = await executeTool("get_pairings", toolInput, ctx, mode, deps.handlers, deps.db);
+      toolMetrics.push({ name: "get_pairings", startMs: started - t0, ms: now() - started, outcome: toolOutcome(run) });
+      if (run.log) logs.push(run.log);
+      pairingState.failed = run.isError;
+      if (!run.isError) pairingState.items.push(...tools.get_pairings.output.parse(run.log?.output).pairings);
+    } else {
+      pairingState.needsProduct = !tc.product;
+      pairingState.failed = Boolean(tc.product);
+    }
+  }
+
   let reply: Reply;
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
@@ -284,6 +321,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
     reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+  } else if (pairingState.called) {
+    const cards = pairingState.items.length === 0
+      ? []
+      : await deps.store.productCards(ctx.shopId, pairingState.items.map((pairing) => pairing.productId));
+    reply = pairingState.needsProduct
+      ? { text: "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.", products: [], quickReplies: [] }
+      : pairingState.failed && pairingState.items.length === 0
+        ? { text: "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.", products: [], quickReplies: [] }
+        : matchingReply(pairingState.items, cards);
   } else {
     reply = {
       text: modelReply.text,

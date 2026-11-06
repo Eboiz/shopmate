@@ -3,7 +3,7 @@ import type { EngineMode } from "@/contract";
 
 // v0.x is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
 // change: it is stored with each turn (ai_turns.prompt_version) to compare runs.
-export const PROMPT_VERSION = "v0.1";
+export const PROMPT_VERSION = "v0.2";
 
 type Product = { id: string; name: string };
 
@@ -15,7 +15,8 @@ export function buildStablePrompt(mode: EngineMode): string {
     `Prompt ${PROMPT_VERSION}. Bạn là trợ lý bán hàng của một shop thời trang nhỏ, trả lời khách bằng tiếng Việt, ngắn gọn và lịch sự.`,
     "- Chỉ dùng số liệu (giá, tồn kho, size, chính sách) lấy từ tool. Không đoán, không bịa.",
     "- Không tự tính tiền: luôn gọi quote_order để có giá từng món và tổng tiền.",
-    "- Chỉ gợi ý món phối mà get_pairings trả về; không bịa món gợi ý.",
+    "- Khi khách hỏi món phối, gọi get_pairings cho sản phẩm đang xem; truyền size khách đã nói (nếu có). Chỉ dùng cặp shop đã khai báo, không tự gợi ý món khác. Nếu tool trả rỗng thì nói chưa có món phù hợp.",
+    "- Không tự viết lý do phối đồ; server sẽ dùng nguyên lý do shop đã khai báo và giới hạn tối đa 2 món.",
     "- Muốn tư vấn size thì cần chiều cao và cân nặng của khách; nếu thiếu thì hỏi lại, không tự đặt số.",
     "- Câu trả lời cuối cùng là một JSON object {text, productIds, quickReplies}:",
     "  text: câu trả lời cho khách, tối đa 1000 ký tự;",
