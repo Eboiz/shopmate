@@ -1,0 +1,75 @@
+name: E2E nightly
+
+# 02:00 Vietnam time (19:00 UTC) every day, or by hand from the Actions tab. A PR
+# that changes the tests or this setup also runs the local job, so the suite is
+# checked before it lands.
+on:
+  schedule:
+    - cron: "0 19 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "e2e/**"
+      - "playwright.config.ts"
+      - ".github/workflows/e2e-*.yml"
+      - ".github/actions/**"
+
+permissions:
+  contents: read
+
+jobs:
+  # The whole suite on a throwaway Supabase seeded with the demo shop. Channel
+  # secrets below are test values for this run only; the Send API calls they make
+  # fail harmlessly, and the tests check the database instead.
+  local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      DEMO_OWNER_EMAIL: owner@shopmate.test
+      DEMO_OWNER_PASSWORD: e2e-owner-password
+      DEMO_STAFF_EMAIL: staff@shopmate.test
+      DEMO_STAFF_PASSWORD: e2e-staff-password
+      META_APP_SECRET: e2e-app-secret
+      META_VERIFY_TOKEN: e2e-verify-token
+      MESSENGER_PAGE_ID: "100000000000001"
+      MESSENGER_PAGE_ACCESS_TOKEN: e2e-page-token
+      TELEGRAM_BOT_TOKEN: "100000001:e2e-bot-token"
+      TELEGRAM_WEBHOOK_SECRET: e2e_telegram_secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/local-stack
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-local-report
+          path: playwright-report/
+          retention-days: 14
+
+  # Read-only checks against production: pages load, the gate holds, webhooks
+  # refuse unsigned calls. Writes nothing to the shared database.
+  production-smoke:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: "true"
+      E2E_BASE_URL: https://shopmate-beige.vercel.app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e --grep @smoke
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-production-smoke-report
+          path: playwright-report/
+          retention-days: 14
