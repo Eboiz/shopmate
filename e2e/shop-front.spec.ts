@@ -104,3 +104,89 @@ test("a send error remains visible while history polling succeeds", async ({ pag
   await page.waitForTimeout(3200);
   await expect(page.getByText("Trợ lý đang bận. Vui lòng thử lại.")).toBeVisible();
 });
+
+test("keeps the reply indicator until the answer arrives", async ({ page }) => {
+  const messages: Array<Record<string, unknown>> = [];
+  await page.route("**/api/shops/may-boutique/catalog", (route) => route.fulfill({ json: catalog }));
+  await page.route("**/api/shops/may-boutique/chat", async (route) => {
+    if (route.request().method() === "POST") {
+      messages.push({ id: "55555555-5555-4555-8555-555555555555", sender: "shopper", text: "Còn hàng không?", reply: null, createdAt: new Date().toISOString() });
+      await route.fulfill({ json: { messages } });
+      return;
+    }
+    await route.fulfill({ json: { messages } });
+  });
+
+  await page.goto("/s/may-boutique");
+  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Còn hàng không?");
+  await page.getByRole("button", { name: "Gửi" }).click();
+  await expect(page.getByRole("status")).toContainText("Shop đang trả lời");
+  await expect(page.getByText("Còn hàng không?", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Shop đang trả lời");
+
+  messages.push({ id: "66666666-6666-4666-8666-666666666666", sender: "ai", text: "Còn hàng ạ.", reply: null, createdAt: new Date().toISOString() });
+  await expect(page.getByText("Còn hàng ạ.")).toBeVisible({ timeout: 7000 });
+  await expect(page.getByRole("status")).toHaveCount(0);
+});
+
+test("reuses message id on retry and shows a Vietnamese network error", async ({ page }) => {
+  const submitted: Array<Record<string, unknown>> = [];
+  await page.route("**/api/shops/may-boutique/catalog", (route) => route.fulfill({ json: catalog }));
+  await page.route("**/api/shops/may-boutique/chat", async (route) => {
+    if (route.request().method() === "POST") {
+      submitted.push(route.request().postDataJSON() as Record<string, unknown>);
+      if (submitted.length === 1) await route.abort("failed");
+      else await route.fulfill({ json: { messages: [] } });
+      return;
+    }
+    await route.fulfill({ json: { messages: [] } });
+  });
+
+  await page.goto("/s/may-boutique");
+  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Tư vấn giúp mình");
+  await page.getByRole("button", { name: "Gửi" }).click();
+  await expect(page.getByText("Chưa gửi được tin nhắn. Vui lòng kiểm tra kết nối và thử lại.")).toBeVisible();
+  await page.getByRole("button", { name: "Gửi" }).click();
+  await expect.poll(() => submitted.length).toBe(2);
+  expect(submitted[1]?.clientMessageId).toBe(submitted[0]?.clientMessageId);
+});
+
+test("a delayed old poll cannot erase a newer answer", async ({ page }) => {
+  let reads = 0;
+  let answerReady = false;
+  let releaseOldPoll = () => {};
+  const oldPoll = new Promise<void>((resolve) => { releaseOldPoll = resolve; });
+  let oldPollStarted = () => {};
+  const pollStarted = new Promise<void>((resolve) => { oldPollStarted = resolve; });
+  const answer = { id: "77777777-7777-4777-8777-777777777777", sender: "ai", text: "Còn hàng ạ.", reply: null, createdAt: new Date().toISOString() };
+  await page.route("**/api/shops/may-boutique/catalog", (route) => route.fulfill({ json: catalog }));
+  await page.route("**/api/shops/may-boutique/chat", async (route) => {
+    if (route.request().method() === "POST") {
+      answerReady = true;
+      await route.fulfill({ json: { messages: [answer] } });
+      return;
+    }
+    reads += 1;
+    if (reads === 2) {
+      oldPollStarted();
+      await oldPoll;
+      await route.fulfill({ json: { messages: [] } });
+      return;
+    }
+    await route.fulfill({ json: { messages: answerReady ? [answer] : [] } });
+  });
+
+  await page.goto("/s/may-boutique");
+  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.keyboard.press("Enter");
+  await pollStarted;
+  await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Còn hàng không?");
+  await page.getByRole("button", { name: "Gửi" }).click();
+  await expect(page.getByText("Còn hàng ạ.")).toBeVisible();
+  releaseOldPoll();
+  await expect(page.getByText("Còn hàng ạ.")).toBeVisible();
+});

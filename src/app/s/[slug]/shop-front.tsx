@@ -24,7 +24,11 @@ export function ShopFront({ slug }: Props) {
   const [sendError, setSendError] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [awaitingReply, setAwaitingReply] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const refreshSequence = useRef(0);
+  const pendingSend = useRef<{ text: string; productId: string | null; clientMessageId: string } | null>(null);
+  const previousReplies = useRef<Set<string>>(new Set());
   const catalogEndpoint = `/api/shops/${encodeURIComponent(slug)}/catalog`;
   const endpoint = `/api/shops/${encodeURIComponent(slug)}/chat`;
 
@@ -49,16 +53,22 @@ export function ShopFront({ slug }: Props) {
   }, [catalogEndpoint, catalogRetry]);
 
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
     try {
       const response = await fetch(endpoint, { cache: "no-store" });
       if (!response.ok) throw new Error("Không tải được cuộc trò chuyện.");
       const data = chatHistorySchema.parse(await response.json());
+      if (sequence !== refreshSequence.current) return;
       setMessages(data.messages);
+      if (data.messages.some((message) => message.sender !== "shopper" && !previousReplies.current.has(message.id))) {
+        setAwaitingReply(false);
+      }
       setError("");
     } catch {
+      if (sequence !== refreshSequence.current) return;
       setError("Không tải được cuộc trò chuyện. Vui lòng thử lại.");
     } finally {
-      setLoading(false);
+      if (sequence === refreshSequence.current) setLoading(false);
     }
   }, [endpoint]);
 
@@ -69,6 +79,7 @@ export function ShopFront({ slug }: Props) {
     return () => {
       window.clearTimeout(initial);
       window.clearInterval(timer);
+      refreshSequence.current += 1;
     };
   }, [open, refresh]);
 
@@ -86,21 +97,35 @@ export function ShopFront({ slug }: Props) {
     if (!message || sending) return;
     setSending(true);
     setSendError("");
-    const clientMessageId = crypto.randomUUID();
+    refreshSequence.current += 1;
+    const productId = selected?.id ?? null;
+    const retry = pendingSend.current;
+    const clientMessageId = retry?.text === message && retry.productId === productId
+      ? retry.clientMessageId
+      : crypto.randomUUID();
+    pendingSend.current = { text: message, productId, clientMessageId };
+    previousReplies.current = new Set(messages.filter((item) => item.sender !== "shopper").map((item) => item.id));
+    let responseError = "";
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: message, productId: selected?.id ?? null, clientMessageId }),
+        body: JSON.stringify({ text: message, productId, clientMessageId }),
       });
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || "Không gửi được tin nhắn.");
+        responseError = typeof data?.error === "string" && data.error !== "Failed to fetch"
+          ? data.error
+          : "Không gửi được tin nhắn. Vui lòng thử lại.";
+        throw new Error("send_failed");
       }
+      pendingSend.current = null;
       setDraft("");
+      setAwaitingReply(true);
       await refresh();
-    } catch (cause) {
-      setSendError(cause instanceof Error ? cause.message : "Chưa xác nhận được tin nhắn. Vui lòng kiểm tra trước khi gửi lại.");
+    } catch {
+      setAwaitingReply(false);
+      setSendError(responseError || "Chưa gửi được tin nhắn. Vui lòng kiểm tra kết nối và thử lại.");
       await refresh();
     } finally {
       setSending(false);
@@ -231,7 +256,7 @@ export function ShopFront({ slug }: Props) {
                 ))}
               </div>
             )}
-            {sending && <p role="status" className="mt-4 text-sm text-zinc-500">Shop đang trả lời…</p>}
+            {(sending || awaitingReply) && <p role="status" className="mt-4 text-sm text-zinc-500">Shop đang trả lời…</p>}
             <div ref={endRef} />
           </div>
 
