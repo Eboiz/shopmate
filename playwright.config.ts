@@ -23,7 +23,8 @@ export default defineConfig({
     : {
         command: `${process.env.CI ? "pnpm start" : "pnpm dev"} -p ${port}`,
         url: `http://localhost:${port}/login`,
-        reuseExistingServer: !process.env.CI,
+        // The nightly agent starts the app itself and reuses it (E2E_REUSE_SERVER).
+        reuseExistingServer: !process.env.CI || Boolean(process.env.E2E_REUSE_SERVER),
         timeout: 120_000,
       },
 });

@@ -150,6 +150,14 @@ jobs:
             --model claude-opus-5-5 \
             --allowedTools "Read(./**),Glob,Grep,Edit(./e2e/plans/**)" \
             --disallowedTools "Bash,WebFetch,WebSearch,Read(//proc/**),Read(//etc/**),Read(~/.ssh/**),Read(~/.config/**),Read(//home/runner/work/_temp/**),Read(//home/runner/actions-runner/**),Read(~/.claude/**),Read(~/.claude.json)"
+      # Playwright's MCP test runner does not start config.webServer: start the built app
+      # here (this step has no key) and let the agent's test runs reuse it.
+      - name: Start the app for the agent
+        if: steps.changes.outputs.ran == 'true'
+        run: |
+          nohup pnpm start -p 3000 > app.log 2>&1 &
+          for i in $(seq 60); do curl -sf -o /dev/null http://localhost:3000/login && exit 0; sleep 2; done
+          cat app.log; exit 1
       - name: Write and heal tests (Claude Sonnet + Playwright test agents)
         if: steps.changes.outputs.ran == 'true'
         continue-on-error: true
@@ -158,6 +166,7 @@ jobs:
           ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_DEFAULT_SONNET_MODEL: claude-sonnet-5-5
+          E2E_REUSE_SERVER: "1"
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
         run: |
           [ -s "e2e/plans/$PLAN_FILE" ] || { echo "No plan; skipping."; exit 0; }
@@ -169,7 +178,9 @@ jobs:
       - name: Keep only changes under e2e/
         if: steps.changes.outputs.ran == 'true'
         run: |
-          rm -rf .claude .mcp.json recent-changes.diff requirements.md
+          fuser -k 3000/tcp 2>/dev/null || true; sleep 1
+          rm -rf .claude .mcp.json recent-changes.diff requirements.md app.log
+          rm -f e2e/tmp-*
           git checkout -- . ':(exclude)e2e'
           git clean -fdq -- . ':(exclude)e2e' ':(exclude)node_modules' ':(exclude).next'
       - name: Run the whole suite again (no key in the environment)
@@ -253,7 +264,7 @@ jobs:
               git -c core.symlinks=false apply --include='e2e/*' "$patch"
             fi
           fi
-          suite="$in/e2e-agent/e2e-results.json"; [ -s "$suite" ] && [ "$(cat "$suite")" != "{}" ] || suite="$in/e2e-local/e2e-results.json"
+          suite="$in/e2e-agent/e2e-results.json"; grep -q '"specs"' "$suite" 2>/dev/null || suite="$in/e2e-local/e2e-results.json"
           agent=skipped; [ "$AGENT_RAN" = "true" ] && agent=ran; [ "$AGENT_RESULT" = "failure" ] && agent=failed
           node .github/e2e-agent/write-report.mjs --date "$day" --suite "$suite" --smoke "$in/e2e-smoke/e2e-results.json" \
             --summary "$in/e2e-agent/agent-out/summary.md" --agent "$agent" --run "$RUN_URL" \
