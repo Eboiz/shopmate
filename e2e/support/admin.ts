@@ -5,7 +5,7 @@ import { demo } from "./env";
 // (PB-25), the shop page (PB-04), the products page (PB-16) and the orders page
 // (PB-12).
 
-export const DEMO_SHOP_SLUG = "may-boutique";
+export const DEMO_SHOP_SLUG = "hanh-boutique";
 
 export async function signIn(page: Page, role: "owner" | "staff", next = "/admin") {
   const { email, password } = demo[role];

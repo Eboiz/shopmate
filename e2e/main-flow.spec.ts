@@ -36,8 +36,8 @@ test("sizesNamed finds sizes written as words, not letters inside words", () => 
 // facts (the right size, the right order line, stock one lower), not sentences.
 // Run it with `pnpm test:e2e:main` (one worker, three times; see README).
 const PRODUCT = "Váy suông linen";
-const SIZE = "M"; // 158 cm and 50 kg fall in M on the seeded chart (156–160 cm, 48–52 kg)
-const COLOR = "Trắng";
+const SIZE = "S"; // The PO's VAY01 chart maps 150 cm / 44 kg to S; be/S has stock for three runs.
+const COLOR = "be";
 
 test("shopper asks for a size, orders in the chat, staff confirm, stock goes down", async ({ page, browser }) => {
   test.setTimeout(5 * 60_000);
@@ -79,8 +79,8 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
     return aiLabels.last().locator("xpath=following-sibling::div[1]").innerText();
   };
 
-  // 2. Size question: the reply text recommends M (PB-06).
-  const sizeAnswer = await send("Mình cao 158cm, nặng 50kg thì mặc size nào vừa?");
+  // 2. Size question: the reply text recommends S (PB-06).
+  const sizeAnswer = await send("Mình cao 150cm, nặng 44kg thì mặc size nào vừa?");
   expect(sizesNamed(sizeAnswer), `size answer: ${sizeAnswer}`).toContain(SIZE);
 
   // 3. Order in the chat (PB-11): everything in one message, then confirm the

@@ -7,8 +7,8 @@
 //   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15, PB-21)
 //     [--telegram-webhook=<base URL>]             also point the Telegram bot's webhook there
 //
-// Safe to run again: rows are upserted on their natural keys and nothing is ever
-// deleted. Each run resets name, price and stock to the CSV, so on the shared
+// Safe to run again: rows are upserted on their natural keys. Each run resets
+// name, price and stock to the CSV, so on the shared
 // project it also undoes PB-16 edits and stock taken by confirmed orders.
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -16,12 +16,13 @@ import { parseArgs } from "node:util";
 import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/contract/database.types.ts";
 import { readDemoData, SHEET_COLUMNS, type DemoData, type SheetName } from "../src/lib/seed/sheet.ts";
+import { checkTestQuestions } from "../src/lib/seed/questions.ts";
 
 const root = new URL("../", import.meta.url);
 const demoDir = new URL("supabase/seed/demo/", root);
 const { values: args } = parseArgs({
   options: { check: { type: "boolean" }, target: { type: "string" }, confirm: { type: "string" }, only: { type: "string" },
-    "telegram-webhook": { type: "string" } },
+    "telegram-webhook": { type: "string" }, accounts: { type: "string" } },
 });
 
 function fail(message: string): never {
@@ -37,6 +38,22 @@ const { data, errors, warnings } = readDemoData(csv);
 for (const w of warnings) console.warn(`! ${w}`);
 if (!data) fail(`supabase/seed/demo has ${errors.length} error(s):\n  ${errors.join("\n  ")}`);
 console.log(`✓ CSV: ${data.products.length} products, ${data.variants.length} variants, ${data.pairings.length} pairings`);
+const questionCsv = readFileSync(new URL("test_questions.csv", demoDir), "utf8");
+const questionErrors = checkTestQuestions(data, questionCsv);
+if (questionErrors.length) fail(questionErrors.join("\n  "));
+console.log("✓ PO test set: 60 question fixtures match the catalog labels");
+if (args.only !== "channels") {
+  for (const product of data.products) {
+    const path = new URL(`images/${product.code}.jpg`, demoDir);
+    if (!existsSync(path)) fail(`missing photo: ${product.code}.jpg`);
+    const file = readFileSync(path);
+    if (file.length >= 200000 || file[0] !== 0xff || file[1] !== 0xd8) {
+      fail(`${product.code}.jpg must be a JPEG smaller than 200 KB`);
+    }
+  }
+  console.log(`✓ ${data.products.length} JPEG photos smaller than 200 KB`);
+}
+if (args.accounts !== undefined && args.accounts !== "existing") fail("use --accounts=existing to reuse the current demo accounts");
 if (args.check) process.exit(0);
 if (args.only !== undefined && args.only !== "channels") fail(`unknown --only=${args.only}; use --only=channels`);
 
@@ -181,6 +198,45 @@ async function seedShop(name: string, slug: string, d: DemoData, imageUrls: Map<
   return shop_id;
 }
 
+// Verify every source row and question label in each shop, including unexpected
+// rows that could change search results or pairing suggestions.
+async function verifyCatalog(shop_id: string, slug: string, source: DemoData) {
+  const products = must(await db.from("products")
+    .select("id,code,name,category,price,description,variants(size,color,stock),size_charts(size,height_min_cm,height_max_cm,weight_min_kg,weight_max_kg)")
+    .eq("shop_id", shop_id), `${slug} catalog read back`);
+  const codeById = new Map(products.map((p) => [p.id, p.code]));
+  const pairs = must(await db.from("pairings").select("product_a_id,product_b_id,reason").eq("shop_id", shop_id), `${slug} pairing read back`);
+  const policies = must(await db.from("policies").select("kind,content").eq("shop_id", shop_id), `${slug} policy read back`);
+  const actual: DemoData = {
+    shop: source.shop,
+    products: products.map((p) => ({ code: p.code, name: p.name, category: p.category, price: p.price, description: p.description })),
+    variants: products.flatMap((p) => p.variants.map((v) => ({ code: p.code, ...v }))),
+    sizeCharts: products.flatMap((p) => p.size_charts.map((c) => ({
+      code: p.code, size: c.size, heightMin: c.height_min_cm, heightMax: c.height_max_cm,
+      weightMin: c.weight_min_kg, weightMax: c.weight_max_kg,
+    }))),
+    pairings: pairs.map((p) => ({ a: codeById.get(p.product_a_id)!, b: codeById.get(p.product_b_id)!, reason: p.reason })),
+    policies,
+  };
+  const errors = checkTestQuestions(actual, questionCsv);
+  if (errors.length) fail(`${slug}: ${errors.join("\n  ")}`);
+  const sourceCodes = new Set(source.products.map((p) => p.code));
+  const sourceRows = {
+    products: actual.products.filter((p) => sourceCodes.has(p.code)),
+    variants: actual.variants.filter((v) => sourceCodes.has(v.code)),
+    sizeCharts: actual.sizeCharts.filter((c) => sourceCodes.has(c.code)),
+    pairings: actual.pairings.filter((p) => sourceCodes.has(p.a) || sourceCodes.has(p.b)),
+    policies: actual.policies,
+  };
+  const canonical = (rows: object[]) => rows.map((row) => JSON.stringify(Object.entries(row).sort())).sort().join("\n");
+  for (const table of ["products", "variants", "sizeCharts", "policies"] as const) {
+    if (canonical(sourceRows[table]) !== canonical(source[table])) fail(`${slug}: ${table} differs from the PO source`);
+  }
+  const canonicalPairs = (rows: DemoData["pairings"]) => rows.map((p) => ({ pair: [p.a, p.b].sort().join("|"), reason: p.reason }));
+  if (canonical(canonicalPairs(sourceRows.pairings)) !== canonical(canonicalPairs(source.pairings))) fail(`${slug}: pairings differ from the PO source`);
+  console.log(`✓ ${slug}: every PO catalog row and all 60 question fixtures verified`);
+}
+
 // 5. Demo accounts: create, or reset the password to the one in .env.local.
 async function findUser(email: string) {
   for (let page = 1; ; page++) {
@@ -195,10 +251,15 @@ async function seedAccount(shop_id: string, a: Account) {
   const user = await findUser(a.email);
   if (user) {
     // Never move a real teammate's account out of their shop: they would lose access to it.
-    const { data: profile, error } = await db.from("profiles").select("shop_id").eq("id", user.id).maybeSingle();
+    const { data: profile, error } = await db.from("profiles").select("shop_id,role").eq("id", user.id).maybeSingle();
     if (error) fail(`${a.role} profile: ${error.message}`);
     if (profile && profile.shop_id !== shop_id) fail(`${a.email} already belongs to another shop; pick another DEMO_${a.role.toUpperCase()}_EMAIL`);
+    if (args.accounts === "existing") {
+      if (!profile || profile.role !== a.role) fail(`${a.role} existing profile does not match the demo shop`);
+      return;
+    }
   }
+  if (args.accounts === "existing") fail(`${a.role} existing account was not found`);
   const result = user
     ? await db.auth.admin.updateUserById(user.id, { password: a.password, email_confirm: true })
     : await db.auth.admin.createUser({ email: a.email, password: a.password, email_confirm: true });
@@ -276,6 +337,15 @@ async function seedChannels(shop_id: string, slug: string) {
 
 // The full seed, or with --only=channels just the channel accounts.
 if (args.only === undefined) {
+  if (args.accounts === "existing") {
+    const shop = must(await db.from("shops").select("id").eq("slug", data.shop.slug).single(), "existing demo shop (apply PB-28 migration first)");
+    for (const account of accounts) {
+      await seedAccount(shop.id, account);
+      const login = client(publishableKey);
+      ok(await login.auth.signInWithPassword({ email: account.email, password: account.password }), `${account.role} existing sign-in`);
+      await login.auth.signOut({ scope: "local" });
+    }
+  }
   const imageUrls = await uploadImages(data);
   const shops = [data.shop, { name: `${data.shop.name} (eval)`, slug: `${data.shop.slug}-eval` }];
   const [demoId, evalId] = await Promise.all(shops.map((s) => seedShop(s.name, s.slug, data, imageUrls)));
@@ -333,6 +403,8 @@ if (args.only === undefined) {
   });
   if (mismatched.length > 0) fail(`CSV and database differ for ${mismatched.map((p) => p.code).join(", ")}`);
   console.log(`✓ 5 random products match the CSV: ${picked.map((p) => p.code).join(", ")}`);
+  await verifyCatalog(demoId, shops[0].slug, data);
+  await verifyCatalog(evalId, shops[1].slug, data);
 
   // 7. Two-shop isolation (RLS), checked as the real users through the publishable
   // key. pgTAP (supabase/tests/rls.test.sql) covers every case inside a rolled-back
@@ -373,6 +445,7 @@ if (args.only === undefined) {
   const after = must(await db.from("products").select("code, name, price").eq("shop_id", evalId), "eval shop read back");
   check("read back: eval shop products unchanged",
     data.products.every((q) => after.some((p) => p.code === q.code && p.name === q.name && p.price === q.price)));
+  await Promise.all([owner.auth.signOut({ scope: "local" }), staff.auth.signOut({ scope: "local" })]);
   if (failed) process.exit(1);
 } else {
   // --only=channels touches nothing but channel_accounts: no prices, stock, photos or

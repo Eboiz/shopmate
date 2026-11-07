@@ -1,4 +1,4 @@
-import { fold, sortSizes } from "../text";
+import { fold, sortSizes } from "../text.ts";
 import type { ToolOutput } from "@/contract";
 import type { ToolHandler } from "../types";
 

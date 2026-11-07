@@ -1,31 +1,11 @@
 ma_sp_1,ma_sp_2,ly_do
-SP10,SP23,Sơ mi trắng sơ vin với chân váy chữ A cho buổi đi làm.
-SP06,SP16,Áo thun basic với jean ống rộng: dễ mặc hằng ngày.
-SP07,SP24,"Croptop với chân váy xếp ly dài, cân đối dáng người."
-SP13,SP19,"Áo cổ nơ với quần tây ống suông, thanh lịch công sở."
-SP12,SP22,"Sơ mi linen với short đũi cùng chất liệu, mát mùa hè."
-SP08,SP21,"Áo thun rộng với short jean, phong cách năng động."
-SP15,SP25,Áo len cổ tim với chân váy jean ngắn.
-SP26,SP01,Cardigan khoác ngoài váy suông linen khi vào phòng lạnh.
-SP27,SP03,Blazer khoác ngoài đầm suông công sở.
-SP28,SP05,"Áo khoác jean với váy babydoll, trẻ trung khi đi chơi."
-SP31,SP27,"Blazer khoác ngoài đầm sơ mi thắt eo, gọn gàng đi làm."
-SP32,SP26,Cardigan len mỏng khoác ngoài đầm xoè tay cánh tiên khi trời se lạnh.
-SP33,SP59,"Áo măng tô qua gối phủ ngoài đầm hai dây satin, đi tiệc tối."
-SP34,SP60,Gile len cổ V mặc ngoài đầm suông kẻ caro cho phong cách học đường.
-SP35,SP37,"Váy yếm kaki với áo thun raglan bên trong, năng động."
-SP36,SP43,Sơ mi denim khoác hờ ngoài váy cổ yếm khi đi biển.
-SP38,SP54,"Áo thun oversize với short kaki, thoải mái ngày hè."
-SP39,SP49,Áo thun cổ V sơ vin với jean mom fit hằng ngày.
-SP40,SP58,"Tank top gân bên trong áo khoác bomber, cá tính."
-SP41,SP55,"Sơ mi lụa sơ vin với chân váy bút chì, thanh lịch công sở."
-SP42,SP48,"Sơ mi croptop với jean ống loe lưng cao, hack dáng chân dài."
-SP44,SP56,"Áo kiểu tay phồng với chân váy tennis xếp ly, nữ tính."
-SP45,SP51,"Áo kiểu cổ sen với quần tây ống loe, đi làm vẫn dịu dàng."
-SP46,SP19,"Áo len cổ lọ với quần tây ống suông, ấm và gọn mùa lạnh."
-SP47,SP50,Áo len kẻ ngang form rộng với jean rách gối.
-SP52,SP06,"Quần ống rộng lưng thun với áo thun basic, mặc nhà hay đi dạo đều hợp."
-SP53,SP08,"Jogger kaki với áo thun form rộng in chữ, phong cách đường phố."
-SP57,SP12,"Chân váy maxi hoa với sơ mi linen tay lỡ, nhẹ nhàng đi biển."
-SP60,SP10,Gile len khoác ngoài sơ mi trắng công sở.
-SP59,SP30,Áo măng tô qua gối với đầm len body mùa đông.
+AO03,VAY01,Áo croptop trắng hợp với váy suông màu be
+AO01,CV01,"Sơ mi sơ vin với chân váy chữ A, gọn gàng khi đi làm"
+AO01,QUAN02,"Sơ mi basic với quần tây ống suông, lịch sự mà vẫn thoải mái"
+AO01,CV04,"Sơ mi với chân váy bút chì, hợp đi phỏng vấn hoặc đi họp"
+AO02,QUAN01,"Áo thun basic với jean ống rộng, mặc đi chơi hằng ngày"
+AO04,CV02,"Áo cổ nơ với chân váy xếp ly dài, phong cách nữ tính"
+AK01,VAY07,Blazer khoác ngoài đầm công sở cho buổi họp quan trọng
+AK02,VAY04,Cardigan len khoác ngoài váy babydoll khi trời se lạnh
+AO09,CV03,Áo trễ vai với chân váy jean ngắn cho buổi đi chơi
+AO07,AK03,"Áo hai dây mặc trong, khoác jean lửng bên ngoài cho set năng động"
