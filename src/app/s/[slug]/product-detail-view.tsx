@@ -56,7 +56,7 @@ export function ProductDetailView({ shopName, product, shopHref, loginHref, onAs
           </Link>
           <div className="flex shrink-0 items-center gap-2">
             <Link href={loginHref} aria-label="Đăng nhập quản lý" title="Đăng nhập quản lý" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#d5d0c8] px-3 text-xs font-bold hover:border-[#171717]"><Icon name="login" className="size-4" /><span className="hidden lg:inline">Đăng nhập</span></Link>
-            <button type="button" onClick={() => onAsk(product)} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#171717] px-3 text-xs font-bold transition-colors hover:bg-[#171717] hover:text-white"><Icon name="chat" className="size-4" /><span className="hidden sm:inline">Hỏi shop</span></button>
+            <button type="button" onClick={() => onAsk(product)} aria-label="Mở trò chuyện với shop" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#171717] px-3 text-xs font-bold transition-colors hover:bg-[#171717] hover:text-white"><Icon name="chat" className="size-4" /><span className="hidden sm:inline">Hỏi shop</span></button>
           </div>
         </div>
       </header>

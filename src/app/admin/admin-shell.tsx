@@ -15,8 +15,8 @@ export function AdminShell({ children, email, previewPath, showNav = true }: { c
         <span className="hidden rounded-full border border-[#e3dfd8] px-3 py-1 text-[10px] font-bold uppercase tracking-[.18em] text-[#706d67] md:block">Không gian quản lý</span>
         {previewPath ? <Link href="/dev/login" title="Xem giao diện đăng nhập" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#e3dfd8] px-3 text-xs font-bold text-[#171717] hover:border-[#171717]"><Icon name="logout" className="size-4" /><span className="hidden sm:inline">Về đăng nhập</span></Link> : (
           <form action={signOut} className="flex min-w-0 items-center gap-3 text-sm">
-            <span className="hidden max-w-52 truncate text-[#706d67] sm:block">{email}</span>
-            <button type="submit" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#e3dfd8] bg-white px-3 text-xs font-bold text-[#171717] transition-colors hover:border-[#171717] hover:bg-[#f5f3ef]"><Icon name="logout" className="size-4" /><span className="hidden sm:inline">Đăng xuất</span></button>
+            <span className="max-w-28 truncate text-xs text-[#706d67] sm:max-w-52 sm:text-sm">{email}</span>
+            <button type="submit" aria-label="Đăng xuất" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#e3dfd8] bg-white px-3 text-xs font-bold text-[#171717] transition-colors hover:border-[#171717] hover:bg-[#f5f3ef]"><Icon name="logout" className="size-4" /><span className="hidden sm:inline">Đăng xuất</span></button>
           </form>
         )}
       </header>

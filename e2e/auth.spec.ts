@@ -3,8 +3,8 @@ import { againstDeployment, demo } from "./support/env";
 
 // PB-01: sign-in, sign-out and the /admin gate.
 
-// The dashboard at /admin is also protected.
-const ADMIN_HOME = "/admin/inbox";
+// Signing in without a next lands on the dashboard at /admin.
+const ADMIN_HOME = "/admin";
 
 const adminPages = ["/admin", "/admin/inbox", "/admin/orders", "/admin/products"];
 
@@ -20,7 +20,7 @@ test.describe("signed out", () => {
   test("@smoke a wrong password shows an error and stays on the login page", async ({ page }) => {
     await page.goto("/login");
     await page.getByLabel("Email").fill("nobody@shopmate.test");
-    await page.getByLabel("Mật khẩu").fill("wrong-password");
+    await page.getByLabel("Mật khẩu", { exact: true }).fill("wrong-password");
     await page.getByRole("button", { name: "Đăng nhập" }).click();
     await expect(page.getByText("Sai email hoặc mật khẩu.")).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
@@ -38,7 +38,7 @@ test.describe("demo accounts", () => {
   async function signIn(page: import("@playwright/test").Page, who: { email: string; password: string }, next = "") {
     await page.goto(`/login${next ? `?next=${encodeURIComponent(next)}` : ""}`);
     await page.getByLabel("Email").fill(who.email);
-    await page.getByLabel("Mật khẩu").fill(who.password);
+    await page.getByLabel("Mật khẩu", { exact: true }).fill(who.password);
     await page.getByRole("button", { name: "Đăng nhập" }).click();
   }
 

@@ -48,12 +48,16 @@ test("ask about a product, get a reply, keep the chat after a reload, see a staf
   await page.goto(`/s/${DEMO_SHOP_SLUG}`);
   const card = page.getByRole("article").first();
   const productName = (await card.getByRole("heading", { level: 3 }).textContent())!.trim();
-  await card.getByRole("button", { name: "Hỏi về món này" }).click();
+  // Asking about a product starts from its detail page.
+  await card.getByRole("link", { name: "Xem chi tiết", exact: true }).click();
+  await expect(page).toHaveURL(/\/p\//);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(productName);
+  await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
 
   const chat = page.getByRole("region", { name: "Trò chuyện với shop" });
   await expect(chat.getByText("Đang hỏi về:")).toContainText(productName);
   // The first GET can be slow on `next dev` (the route compiles on first use).
-  await expect(chat.getByText("Bắt đầu trò chuyện")).toBeVisible({ timeout: 20_000 });
+  await expect(chat.getByText("Xin chào! Mình giúp gì cho bạn?")).toBeVisible({ timeout: 20_000 });
   await chat.getByRole("textbox", { name: "Tin nhắn" }).fill(question);
   await chat.getByRole("button", { name: "Gửi" }).click();
   await expect(chat.getByRole("status")).toContainText("Shop đang trả lời");
