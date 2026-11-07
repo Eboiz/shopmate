@@ -74,27 +74,61 @@ export async function productInShop(shopId: string, productId: string): Promise<
   return data !== null;
 }
 
-// Every product with its in-stock colors and sizes. Prices and stock come from
-// the database, the same rows the AI tools read.
-export async function loadCatalog(shop: Shop): Promise<ShopCatalog> {
+// The product's name for the browser tab; null when it isn't in this shop.
+export async function productName(shopId: string, productId: string): Promise<string | null> {
   const { data, error } = await createAdminClient()
     .from("products")
-    .select("id, name, price, image_url, variants(color, size, stock)")
-    .eq("shop_id", shop.id)
-    .order("code");
+    .select("name")
+    .eq("shop_id", shopId)
+    .eq("id", productId)
+    .maybeSingle();
   if (error) throw new Error(`products: ${error.message}`);
+  return data?.name ?? null;
+}
+
+// Every product with its in-stock colors and sizes, description, size chart
+// and the shop's return and shipping policies. Prices and stock come from the
+// database, the same rows the AI tools read.
+export async function loadCatalog(shop: Shop): Promise<ShopCatalog> {
+  const db = createAdminClient();
+  const [products, policies] = await Promise.all([
+    db
+      .from("products")
+      .select(
+        "id, name, price, image_url, category, description, variants(color, size, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)",
+      )
+      .eq("shop_id", shop.id)
+      .order("code"),
+    db.from("policies").select("kind, content").eq("shop_id", shop.id).in("kind", ["doi_tra", "giao_hang"]),
+  ]);
+  if (products.error) throw new Error(`products: ${products.error.message}`);
+  if (policies.error) throw new Error(`policies: ${policies.error.message}`);
+  const policy = (kind: "doi_tra" | "giao_hang") =>
+    policies.data.find((row) => row.kind === kind)?.content.trim() ?? "";
 
   return {
-    shop: { name: shop.name },
-    products: data.map((product) => {
+    shop: { name: shop.name, policies: { returns: policy("doi_tra"), shipping: policy("giao_hang") } },
+    products: products.data.map((product) => {
       const inStock = product.variants.filter((variant) => variant.stock > 0);
       return {
         id: product.id,
         name: product.name,
         price: product.price,
         imageUrl: product.image_url,
+        category: product.category,
+        description: product.description,
         colors: [...new Set(inStock.map((variant) => variant.color))].toSorted((a, b) => a.localeCompare(b, "vi")),
         sizesInStock: sortSizes(inStock.map((variant) => variant.size)),
+        variants: inStock.map(({ color, size, stock }) => ({ color, size, stock })),
+        sizeChart: product.size_charts
+          .map((row) => ({
+            size: row.size,
+            heightMinCm: row.height_min_cm,
+            heightMaxCm: row.height_max_cm,
+            weightMinKg: row.weight_min_kg,
+            weightMaxKg: row.weight_max_kg,
+          }))
+          .toSorted((a, b) => a.heightMinCm - b.heightMinCm || a.weightMinKg - b.weightMinKg),
       };
     }),
   };

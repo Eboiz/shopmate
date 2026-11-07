@@ -48,11 +48,11 @@ test("shop page and chat fit 375 px, send product context and restore history", 
 
   await page.goto("/s/may-boutique");
   await expect(page.getByRole("heading", { name: "Mây Boutique" })).toBeVisible();
-  await expect(page.getByText("Màu: Be, Xanh")).toBeVisible();
+  await expect(page.getByText("2 màu · S–M")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
 
   // Asking about a product starts from its detail page.
-  await page.getByRole("link", { name: "Xem chi tiết", exact: true }).click();
+  await page.getByRole("link", { name: "Váy hoa", exact: true }).click();
   await expect(page).toHaveURL(`/s/may-boutique/p/${productId}`);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Váy hoa");
   await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();

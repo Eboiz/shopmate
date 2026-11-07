@@ -64,7 +64,7 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   await page.goto(`/s/${DEMO_SHOP_SLUG}`);
   await page
     .locator("article", { has: page.getByRole("heading", { name: PRODUCT, exact: true }) })
-    .getByRole("link", { name: "Xem chi tiết", exact: true })
+    .getByRole("link", { name: PRODUCT, exact: true })
     .click();
   await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
 

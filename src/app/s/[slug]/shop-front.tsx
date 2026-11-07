@@ -9,11 +9,17 @@ import { ErrorMessage } from "@/components/ui/error-message";
 import { ProductCard } from "@/components/ui/product-card";
 import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
+import { compareSizes } from "@/lib/size-order";
+import { firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
+import { cartCount, cartMessage, useCart } from "./cart";
+import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
 
 type Props = { slug: string; previewCatalog?: ShopCatalog; detailProductId?: string };
+
+const PAGE_SIZE = 12;
 
 export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [catalog, setCatalog] = useState<ShopCatalog | null>(previewCatalog ?? null);
@@ -23,7 +29,14 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [catalogRetry, setCatalogRetry] = useState(0);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("featured");
+  const [sort, setSort] = useState("group");
+  const [group, setGroup] = useState<ProductGroup | "">("");
+  const [sizeFilter, setSizeFilter] = useState("");
+  const [shown, setShown] = useState(PAGE_SIZE);
+  const [cartOpen, setCartOpen] = useState(false);
+  const cart = useCart(slug);
+  // The order message the cart put in the chat; the cart empties once it is sent.
+  const cartMessageRef = useRef<string | null>(null);
   const [selected, setSelected] = useState<ShopProduct | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -38,6 +51,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // The control that opened the chat gets focus back when it closes.
   const openerRef = useRef<HTMLElement | null>(null);
   const floatingRef = useRef<HTMLButtonElement>(null);
+  const mobileChatRef = useRef<HTMLButtonElement>(null);
   const wasOpenRef = useRef(false);
   const refreshSequence = useRef(0);
   const pendingSend = useRef<{ text: string; productId: string | null; clientMessageId: string } | null>(null);
@@ -131,7 +145,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     wasOpenRef.current = false;
     const opener = openerRef.current;
     openerRef.current = null;
-    (opener?.isConnected ? opener : floatingRef.current)?.focus({ preventScroll: true });
+    // Below sm the bottom bar holds the chat button; above it, the floating one.
+    const visible = (element: HTMLElement | null | undefined) => !!element?.isConnected && element.getClientRects().length > 0;
+    const fallback = [floatingRef.current, mobileChatRef.current].find(visible);
+    (visible(opener) ? opener : fallback)?.focus({ preventScroll: true });
   }, [open]);
 
   // Below sm the chat covers the whole screen, so the page behind it is taken
@@ -149,9 +166,33 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     };
   }, [open]);
 
+  // The cart panel gives focus back to the button that opened it.
+  const cartOpenerRef = useRef<HTMLElement | null>(null);
+  const openCart = useCallback(() => {
+    cartOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCartOpen(true);
+  }, []);
+  const closeCart = useCallback(() => {
+    setCartOpen(false);
+    const opener = cartOpenerRef.current;
+    cartOpenerRef.current = null;
+    if (opener?.isConnected) window.setTimeout(() => opener.focus({ preventScroll: true }), 0);
+  }, []);
+
   function askAbout(product: ShopProduct, initialMessage?: string) {
     setSelected(product);
     if (initialMessage) setDraft(initialMessage);
+    setOpen(true);
+  }
+
+  function sendCart() {
+    if (cart.items.length === 0) return;
+    const message = cartMessage(cart.items);
+    cartMessageRef.current = message;
+    setSelected(null);
+    setDraft(message);
+    setCartOpen(false);
+    cartOpenerRef.current = null;
     setOpen(true);
   }
 
@@ -187,6 +228,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         throw new Error("send_failed");
       }
       pendingSend.current = null;
+      if (cartMessageRef.current === message) {
+        cartMessageRef.current = null;
+        cart.clear();
+      }
       setDraft("");
       setAwaitingReply(true);
       await refresh();
@@ -233,13 +278,53 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const shopName = catalog.shop.name;
   const products = catalog.products;
   const shopHref = previewCatalog ? "/dev/shop" : `/s/${encodeURIComponent(slug)}`;
-  const loginHref = previewCatalog ? "/dev/login" : "/login";
   const senderLabel = { shopper: "Bạn", ai: "Trợ lý AI", staff: "Nhân viên", system: "Shop" } as const;
   const detailProduct = detailProductId ? products.find((product) => product.id === detailProductId) : null;
-  const heroProduct = products.find((product) => product.imageUrl);
-  const visibleProducts = products.filter((product) => product.name.toLocaleLowerCase("vi").includes(search.trim().toLocaleLowerCase("vi")));
-  if (sort === "price-asc") visibleProducts.sort((a, b) => a.price - b.price);
-  if (sort === "price-desc") visibleProducts.sort((a, b) => b.price - a.price);
+  const policies = catalog.shop.policies;
+  const policyItems = [
+    { title: "Đổi trả", text: policies?.returns ?? "" },
+    { title: "Giao hàng", text: policies?.shipping ?? "" },
+  ].filter((item) => item.text);
+  const itemCount = cartCount(cart.items);
+  const grouped = products.map((product, index) => ({ product, index, group: productGroup(product.category, product.name) }));
+  const groupCounts = new Map<ProductGroup, number>();
+  for (const item of grouped) groupCounts.set(item.group, (groupCounts.get(item.group) ?? 0) + 1);
+  const groupChips = ([...PRODUCT_GROUPS, OTHER_GROUP] as ProductGroup[]).filter((name) => groupCounts.has(name));
+  const allSizes = [...new Set(products.flatMap((product) => product.sizesInStock))].sort(compareSizes);
+  const filtered = grouped
+    .filter((item) => !group || item.group === group)
+    .filter((item) => !sizeFilter || item.product.sizesInStock.includes(sizeFilter))
+    .filter((item) => matchesQuery([item.product.name, item.product.category, item.group, ...item.product.colors], search))
+    .sort((a, b) => {
+      if (sort === "price-asc") return a.product.price - b.product.price || a.index - b.index;
+      if (sort === "price-desc") return b.product.price - a.product.price || a.index - b.index;
+      return groupRank(a.group) - groupRank(b.group) || a.index - b.index;
+    })
+    .map((item) => item.product);
+  const visibleProducts = filtered.slice(0, shown);
+  const filtering = group !== "" || sizeFilter !== "" || search.trim() !== "";
+  // Any filter change starts the list again from the first page.
+  const filterBy = <T,>(set: (value: T) => void) => (value: T) => { set(value); setShown(PAGE_SIZE); };
+  const chooseGroup = filterBy(setGroup);
+  const chooseSize = filterBy(setSizeFilter);
+  const chooseSearch = filterBy(setSearch);
+  const chooseSort = filterBy(setSort);
+  function clearFilters() {
+    setGroup("");
+    setSizeFilter("");
+    setSearch("");
+    setShown(PAGE_SIZE);
+  }
+  const cartPanel = cartOpen && (
+    <CartPanel
+      items={cart.items}
+      shippingPolicy={policies?.shipping || undefined}
+      onQuantity={cart.setQuantity}
+      onRemove={cart.remove}
+      onSend={sendCart}
+      onClose={closeCart}
+    />
+  );
 
   return (
     <>
@@ -250,7 +335,11 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
             shopName={shopName}
             product={detailProduct}
             shopHref={shopHref}
+            policies={policies}
+            cartCount={itemCount}
             onAsk={askAbout}
+            onAddToCart={cart.add}
+            onOpenCart={openCart}
           />
         ) : (
           <section className="mx-auto max-w-4xl px-4 py-24 text-center">
@@ -258,12 +347,15 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
             <Link href={shopHref} className="mt-6 inline-flex min-h-11 items-center justify-center rounded-lg bg-[#171717] px-5 text-sm font-semibold text-white">Về cửa hàng</Link>
           </section>
         ) : <>
-        <div className="bg-[#171717] px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[.08em] text-white sm:text-xs sm:tracking-[.16em]">Tìm đúng món đồ bạn yêu · Tư vấn 24/7</div>
+        <div className="bg-[#171717] px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[.08em] text-white sm:text-xs sm:tracking-[.16em]">Trợ lý AI trả lời ngay trên trang</div>
         <header className="sticky top-0 z-20 border-b border-[#e3dfd8] bg-white/95 backdrop-blur-xl">
           <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-10">
             <a href="#dau-trang" className="flex min-w-0 items-center gap-3"><Image src="/images/shop-avatar.jpg" alt="" width={36} height={36} className="size-9 shrink-0 object-cover" /><span className="flex min-w-0 items-baseline text-lg font-black uppercase tracking-[-.04em] sm:text-xl"><h1 className="truncate">{shopName}</h1><span aria-hidden="true" className="text-[#e9573f]">.</span></span></a>
             <nav aria-label="Điều hướng cửa hàng" className="hidden items-center gap-8 text-xs font-bold uppercase tracking-[.12em] md:flex"><a href="#san-pham" className="hover:text-[#c2412b]">Sản phẩm</a><a href="#tro-ly" className="hover:text-[#c2412b]">Tư vấn</a></nav>
-            <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-11 shrink-0 items-center gap-2 border border-[#171717] px-4 text-xs font-bold uppercase tracking-[.08em] transition-colors hover:bg-[#171717] hover:text-white"><span className="hidden sm:inline">Chat với shop</span><span className="sm:hidden">Chat</span></button>
+            <div className="hidden shrink-0 items-center gap-2 sm:flex">
+              <button type="button" onClick={openCart} className="inline-flex min-h-11 items-center border border-[#8f8a82] px-4 text-xs font-bold uppercase tracking-[.08em] transition-colors hover:border-[#171717]">Giỏ ({itemCount})</button>
+              <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-11 items-center border border-[#171717] px-4 text-xs font-bold uppercase tracking-[.08em] transition-colors hover:bg-[#171717] hover:text-white">Chat với shop</button>
+            </div>
           </div>
         </header>
 
@@ -275,31 +367,92 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
               <div className="mt-8 flex flex-wrap gap-3"><a href="#san-pham" className="inline-flex min-h-12 items-center bg-[#c2412b] px-5 text-xs font-bold uppercase tracking-[.1em] text-white transition-colors hover:bg-[#a83826]">Xem sản phẩm</a><button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center border border-[#8a877f] px-5 text-xs font-bold uppercase tracking-[.1em] hover:border-white">Hỏi trợ lý AI</button></div>
             </div>
             <div className="ui-enter ui-enter-delay relative min-h-[320px] overflow-hidden bg-[#33312d] lg:min-h-full">
-              {heroProduct?.imageUrl ? <Image src={heroProduct.imageUrl} alt={heroProduct.name} fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover opacity-90" /> : <Image src="/hero-texture.png" alt="" fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover" />}
+              <Image src="/images/hero-boutique.jpg" alt="" fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover" />
             </div>
           </div>
         </section>
-        <div aria-hidden="true" className="overflow-hidden border-y border-[#171717] bg-[#e9573f] py-3 text-[#171717]"><div className="ui-marquee text-xs font-black uppercase tracking-[.22em]"><span className="shrink-0 px-5">Chọn đúng size ✳ Hỏi trợ lý AI ✳ Đặt hàng qua chat ✳ Chọn đúng size ✳ Hỏi trợ lý AI ✳ Đặt hàng qua chat ✳</span><span className="shrink-0 px-5">Chọn đúng size ✳ Hỏi trợ lý AI ✳ Đặt hàng qua chat ✳ Chọn đúng size ✳ Hỏi trợ lý AI ✳ Đặt hàng qua chat ✳</span></div></div>
+        {policyItems.length > 0 && (
+          <div className="border-y border-[#171717] bg-[#e9573f] text-[#171717]">
+            <ul aria-label="Chính sách cửa hàng" className="mx-auto grid max-w-[1400px] gap-x-10 gap-y-2 px-4 py-4 text-sm sm:px-6 md:grid-cols-2 lg:px-10">
+              {policyItems.map((item) => <li key={item.title}><strong>{item.title}:</strong> {firstSentence(item.text)}</li>)}
+            </ul>
+          </div>
+        )}
 
         <section id="san-pham" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
-          <div className="mb-8 flex flex-wrap items-end justify-between gap-4"><div><h2 className="ui-page-title">Khám phá sản phẩm<span className="text-[#e9573f]">.</span></h2><p className="mt-3 text-sm text-[#706d67]">Những lựa chọn dành cho phong cách của bạn.</p></div><p className="text-sm font-semibold tabular-nums text-[#706d67]">{visibleProducts.length} / {products.length} sản phẩm</p></div>
-          {products.length > 0 && <div className="mb-7 flex flex-col gap-3 border-y border-[#e3dfd8] py-4 sm:flex-row sm:items-center sm:justify-between"><label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-72"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Tìm sản phẩm..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label><label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => setSort(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="featured">Mặc định</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label></div>}
-          {products.length === 0 ? <EmptyState title="Chưa có sản phẩm" description="Vui lòng quay lại sau." /> : visibleProducts.length === 0 ? <EmptyState title="Không tìm thấy sản phẩm" description="Thử tìm bằng tên sản phẩm khác." /> : <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{visibleProducts.map((product) => <ProductCard key={product.id} href={`${shopHref}/p/${encodeURIComponent(product.id)}`} name={product.name} price={product.price} imageUrl={product.imageUrl} colors={product.colors} sizesInStock={product.sizesInStock} />)}</div>}
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><h2 className="ui-page-title">Khám phá sản phẩm<span className="text-[#e9573f]">.</span></h2><p className="mt-3 text-sm text-[#706d67]">Những lựa chọn dành cho phong cách của bạn.</p></div><p className="text-sm font-semibold tabular-nums text-[#706d67]">{filtered.length} / {products.length} sản phẩm</p></div>
+          {products.length > 0 && (
+            <div className="mb-7 border-y border-[#e3dfd8] py-4">
+              {groupChips.length > 1 && (
+                <div role="group" aria-label="Nhóm sản phẩm" className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
+                  {[{ name: "" as const, label: "Tất cả", count: products.length }, ...groupChips.map((name) => ({ name, label: name, count: groupCounts.get(name) ?? 0 }))].map((chip) => (
+                    <button key={chip.label} type="button" aria-pressed={group === chip.name} onClick={() => chooseGroup(chip.name)} className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition-colors ${group === chip.name ? "border-[#171717] bg-[#171717] text-white" : "border-[#8f8a82] bg-white hover:border-[#171717]"}`}>
+                      {chip.label} <span className={`tabular-nums ${group === chip.name ? "text-[#d4d1ca]" : "text-[#706d67]"}`}>{chip.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                <label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-80"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => chooseSearch(event.target.value)} placeholder="Tìm theo tên, nhóm, màu..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label>
+                <div className="flex flex-wrap gap-3">
+                  {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => chooseSize(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
+                  <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => chooseSort(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="group">Theo nhóm</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label>
+                </div>
+              </div>
+            </div>
+          )}
+          {products.length === 0 ? <EmptyState title="Chưa có sản phẩm" description="Vui lòng quay lại sau." /> : filtered.length === 0 ? (
+            <div className="py-6 text-center">
+              <EmptyState title="Không tìm thấy sản phẩm" description="Thử bỏ bớt bộ lọc, hoặc hỏi trợ lý AI tìm giúp." />
+              <div className="mt-5 flex flex-wrap justify-center gap-3">
+                {filtering && <button type="button" onClick={clearFilters} className="inline-flex min-h-11 items-center rounded-lg border border-[#171717] px-5 text-sm font-semibold hover:bg-white">Xóa bộ lọc</button>}
+                <button type="button" onClick={() => { if (search.trim()) setDraft(`Shop có ${search.trim()} không?`); setOpen(true); }} className="inline-flex min-h-11 items-center rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white hover:bg-[#a83826]">Hỏi trợ lý AI</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{visibleProducts.map((product) => <ProductCard key={product.id} href={`${shopHref}/p/${encodeURIComponent(product.id)}`} name={product.name} price={product.price} imageUrl={product.imageUrl} colors={product.colors} sizesInStock={product.sizesInStock} />)}</div>
+              {filtered.length > visibleProducts.length && (
+                <div className="mt-10 flex flex-col items-center gap-2">
+                  <button type="button" onClick={() => setShown((value) => value + PAGE_SIZE)} className="inline-flex min-h-12 items-center rounded-lg border border-[#171717] px-6 text-sm font-semibold transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
+                  <p className="text-xs tabular-nums text-[#706d67]">Đang xem {visibleProducts.length} / {filtered.length}</p>
+                </div>
+              )}
+            </>
+          )}
         </section>
 
         <section id="tro-ly" className="scroll-mt-24 bg-[#e9e5dc]"><div className="mx-auto flex max-w-[1400px] flex-col items-start justify-between gap-6 px-4 py-12 sm:px-6 lg:flex-row lg:items-center lg:px-10"><div><h2 className="text-3xl font-black uppercase tracking-[-.04em] sm:text-5xl">Chưa chắc về size?<br /><span className="text-[#c2412b]">Cứ hỏi ShopMate.</span></h2><p className="mt-4 max-w-xl text-sm leading-6 text-[#5f5c56]">Hỏi về giá, tồn kho, màu sắc hoặc gợi ý phối đồ ngay trên trang này.</p></div><Button onClick={() => setOpen(true)} className="min-h-12 px-6 text-xs uppercase tracking-[.1em]">Chat với shop</Button></div></section>
-        {/* pb-24 leaves room for the floating chat button so it covers nothing. */}
-        <footer className="bg-[#171717] px-4 pb-24 pt-9 text-white sm:px-6 lg:px-10"><div className="mx-auto flex max-w-[1400px] flex-wrap items-end justify-between gap-5"><div><p className="text-2xl font-black uppercase tracking-[-.04em]">{shopName}<span className="text-[#e9573f]">.</span></p><p className="mt-2 text-xs text-[#aaa69f]">Được hỗ trợ bởi ShopMate</p></div><div className="flex flex-col items-start sm:items-end"><a href="#dau-trang" className="inline-flex min-h-11 items-center gap-2 text-xs font-bold uppercase tracking-[.12em] hover:text-[#e9573f]">Lên đầu trang</a><Link href={loginHref} className="inline-flex min-h-11 items-center gap-2 text-xs font-semibold text-[#d4d1ca] hover:text-white">Quản lý cửa hàng</Link></div></div></footer>
+        {/* pb-28 leaves room for the floating chat button and the phone bottom bar. */}
+        <footer className="bg-[#171717] px-4 pb-28 pt-9 text-white sm:px-6 lg:px-10">
+          <div className="mx-auto max-w-[1400px]">
+            <div className="flex flex-wrap items-end justify-between gap-5"><div><p className="text-2xl font-black uppercase tracking-[-.04em]">{shopName}<span className="text-[#e9573f]">.</span></p><p className="mt-2 text-xs text-[#aaa69f]">Được hỗ trợ bởi ShopMate</p></div><a href="#dau-trang" className="inline-flex min-h-11 items-center text-xs font-bold uppercase tracking-[.12em] hover:text-[#e9573f]">Lên đầu trang</a></div>
+            {policyItems.length > 0 && (
+              <div className="mt-8 grid gap-6 border-t border-[#ffffff26] pt-8 md:grid-cols-2">
+                {policyItems.map((item) => <div key={item.title}><h2 className="text-sm font-bold">Chính sách {item.title.toLocaleLowerCase("vi")}</h2><p className="mt-2 whitespace-pre-line text-sm leading-6 text-[#d4d1ca]">{item.text}</p></div>)}
+              </div>
+            )}
+          </div>
+        </footer>
         </>}
       </main>
 
+      {!detailProductId && (
+        <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
+          <button ref={mobileChatRef} type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#171717] px-3 text-sm font-semibold text-white">Chat với shop</button>
+          <button type="button" onClick={openCart} className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#171717] px-3 text-sm font-semibold">Giỏ đặt ({itemCount})</button>
+        </div>
+      )}
+
       {!open && !detailProductId && (
-        <div className="fixed bottom-4 right-4 z-40 sm:bottom-6 sm:right-6">
+        <div className="fixed bottom-6 right-6 z-40 hidden sm:block">
           <Button ref={floatingRef} className="min-h-14 rounded-full border border-[#ffffff33] bg-[#171717] px-5 text-white shadow-[0_16px_35px_-12px_#171717aa] hover:bg-[#c2412b]" onClick={() => setOpen(true)}>
             Chat với shop
           </Button>
         </div>
       )}
+
+      {cartPanel}
 
       {open && (
         <section role="dialog" aria-label="Trò chuyện với shop" className="ui-chat-enter fixed inset-0 z-50 flex h-dvh w-full flex-col overflow-hidden bg-white shadow-2xl sm:inset-auto sm:bottom-5 sm:right-5 sm:h-[min(700px,calc(100dvh-2.5rem))] sm:w-[420px] sm:rounded-xl sm:border sm:border-[#e3dfd8]">
