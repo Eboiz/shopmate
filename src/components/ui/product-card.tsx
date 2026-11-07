@@ -47,7 +47,7 @@ export function ProductCard({
       {href ? <Link href={href} scroll={false} aria-label={`Xem chi tiết ${name}`} className={imageClass}>{image}</Link> : <div className={imageClass}>{image}</div>}
       <div className={`flex min-w-0 flex-1 flex-col gap-2 ${compact ? "p-3" : "p-4"}`}>
         <h3 className="font-semibold leading-snug text-[#171717]">{href ? <Link href={href} scroll={false} className="hover:underline">{name}</Link> : name}</h3>
-        <p className="font-bold tabular-nums text-[#e9573f]">{formatPrice(price)}</p>
+        <p className="font-bold tabular-nums text-[#c2412b]">{formatPrice(price)}</p>
         {colors && colors.length > 0 && (
           <p className="text-xs text-[#706d67]">Màu: {colors.join(", ")}</p>
         )}
@@ -56,7 +56,7 @@ export function ProductCard({
             {formatSizesInStock(sizesInStock)}
           </p>
         )}
-        {(action || (href && !compact)) && <div className="mt-auto pt-2">{action ?? <Link href={href!} scroll={false} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#171717] px-2 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#e9573f] sm:text-sm">Xem chi tiết <Icon name="arrow" className="size-4" /></Link>}</div>}
+        {(action || (href && !compact)) && <div className="mt-auto pt-2">{action ?? <Link href={href!} scroll={false} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#171717] px-2 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#c2412b] sm:text-sm">Xem chi tiết <Icon name="arrow" className="size-4" /></Link>}</div>}
       </div>
     </article>
   );

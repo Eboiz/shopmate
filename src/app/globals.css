@@ -12,6 +12,10 @@
   --brand-strong: #090909;
   --brand-soft: #efebe4;
   --accent: #e9573f;
+  /* #e9573f is 3.6:1 on white: fine for large type and fills, not for small
+     text. Small orange text and orange button fills use this darker tone. */
+  --accent-ink: #c2412b;
+  --accent-ink-hover: #a83826;
 }
 
 @theme inline {
@@ -31,11 +35,11 @@ button:disabled { cursor: not-allowed; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 
 .ui-card { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; box-shadow: 0 18px 48px -44px #17171766; }
-.ui-eyebrow { color: var(--accent); font-size: .7rem; font-weight: 800; letter-spacing: .19em; text-transform: uppercase; }
+.ui-eyebrow { color: var(--accent-ink); font-size: .7rem; font-weight: 800; letter-spacing: .19em; text-transform: uppercase; }
 .ui-page-title { color: var(--foreground); font-size: clamp(2rem, 3.4vw, 3rem); font-weight: 800; letter-spacing: -.04em; line-height: 1.18; }
-.ui-field { background: #fff; border: 1px solid #d5d0c8; border-radius: .75rem; color: var(--foreground); transition: border-color .18s, box-shadow .18s; }
-.ui-field:focus { border-color: var(--foreground); box-shadow: 0 0 0 3px #e9573f30; outline: 0; }
-.ui-field::placeholder { color: #8b8881; }
+.ui-field { background: #fff; border: 1px solid #8f8a82; border-radius: .75rem; color: var(--foreground); transition: border-color .18s, box-shadow .18s; }
+.ui-field:focus { border-color: var(--foreground); box-shadow: 0 0 0 3px #c2412b40; outline: 2px solid transparent; }
+.ui-field::placeholder { color: #7a766f; }
 .ui-hover-lift { transition: transform .28s cubic-bezier(.2,.8,.2,1), box-shadow .28s; }
 .ui-hover-lift:hover { transform: translateY(-5px); box-shadow: 0 20px 40px -27px #17171777; }
 .ui-enter { animation: ui-rise .65s cubic-bezier(.2,.8,.2,1) both; }
