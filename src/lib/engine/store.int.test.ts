@@ -1,0 +1,116 @@
+import { randomUUID } from "node:crypto";
+import { beforeAll, describe, expect, it } from "vitest";
+import { productCardSchema } from "@/contract";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { createSupabaseStore } from "./store";
+import { FX, seedTwoShops } from "./test/two-shops";
+
+const db = createAdminClient();
+const store = createSupabaseStore(db);
+
+describe("createSupabaseStore", () => {
+  beforeAll(() => seedTwoShops(db));
+
+  describe("loadTurnContext", () => {
+    it("reads the conversation and the product in one call", async () => {
+      expect(
+        await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: FX.a.vay01 }),
+      ).toEqual({
+        conversation: { shopId: FX.a.shop, mode: "ai" },
+        product: { id: FX.a.vay01, name: "Váy suông linen" },
+      });
+    });
+
+    it("returns nulls for an unknown conversation", async () => {
+      expect(await store.loadTurnContext({ conversationId: randomUUID(), shopId: null, productId: FX.a.vay01 })).toEqual({
+        conversation: null,
+        product: null,
+      });
+    });
+
+    it("returns the mode as it is; gating is runEngine's job", async () => {
+      await db.from("conversations").update({ mode: "staff" }).eq("id", FX.a.conversation);
+      try {
+        const tc = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
+        expect(tc.conversation).toEqual({ shopId: FX.a.shop, mode: "staff" });
+      } finally {
+        await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
+      }
+    });
+
+    it("never returns another shop's product", async () => {
+      const customer = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: FX.b.vay01 });
+      expect(customer.product).toBeNull();
+      const staff = await store.loadTurnContext({ conversationId: null, shopId: FX.a.shop, productId: FX.b.vay01 });
+      expect(staff.product).toBeNull();
+      const own = await store.loadTurnContext({ conversationId: null, shopId: FX.a.shop, productId: FX.a.vay01 });
+      expect(own).toEqual({ conversation: null, product: { id: FX.a.vay01, name: "Váy suông linen" } });
+    });
+
+    it("needs exactly one of conversationId and shopId", async () => {
+      await expect(
+        store.loadTurnContext({ conversationId: FX.a.conversation, shopId: FX.a.shop, productId: null }),
+      ).rejects.toThrow();
+      await expect(store.loadTurnContext({ conversationId: null, shopId: null, productId: null })).rejects.toThrow();
+    });
+  });
+
+  it("productCards keeps order and drops repeats and foreign ids", async () => {
+    const cards = await store.productCards(FX.a.shop, [FX.a.ao03, FX.b.vay01, FX.a.vay01, FX.a.ao03, randomUUID()]);
+    expect(cards.map((c) => c.productId)).toEqual([FX.a.ao03, FX.a.vay01]);
+    for (const c of cards) productCardSchema.parse(c);
+    expect(cards[1]).toEqual({
+      productId: FX.a.vay01,
+      name: "Váy suông linen",
+      price: 350000,
+      imageUrl: null,
+      sizesInStock: ["M"],
+    });
+    expect(await store.productCards(FX.a.shop, [])).toEqual([]);
+  });
+
+  it("setNeedsHuman hands off the conversation", async () => {
+    await store.setNeedsHuman({ shopId: FX.a.shop, conversationId: FX.a.conversation });
+    const { data } = await db.from("conversations").select("mode").eq("id", FX.a.conversation).single();
+    expect(data?.mode).toBe("needs_human");
+    await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
+  });
+
+  describe("insertTurn", () => {
+    it("writes the metrics columns", async () => {
+      const id = await store.insertTurn({
+        shop_id: FX.a.shop,
+        conversation_id: FX.a.conversation,
+        mode: "customer",
+        latency_ms: 12,
+        tool_calls: [],
+        input_tokens: 3,
+        output_tokens: 4,
+        ttft_ms: 7,
+        model_calls: 2,
+        model: "m",
+        prompt_version: "v0",
+      });
+      const { data } = await db.from("ai_turns").select("*").eq("id", id).single();
+      expect(data).toMatchObject({
+        shop_id: FX.a.shop,
+        conversation_id: FX.a.conversation,
+        mode: "customer",
+        latency_ms: 12,
+        tool_calls: [],
+        input_tokens: 3,
+        output_tokens: 4,
+        ttft_ms: 7,
+        model_calls: 2,
+        model: "m",
+        prompt_version: "v0",
+      });
+    });
+
+    it("defaults the new columns for rows that leave them out", async () => {
+      const id = await store.insertTurn({ shop_id: FX.a.shop, mode: "staff_draft", latency_ms: 5 });
+      const { data } = await db.from("ai_turns").select("*").eq("id", id).single();
+      expect(data).toMatchObject({ ttft_ms: null, model_calls: 0, model: null, prompt_version: null });
+    });
+  });
+});

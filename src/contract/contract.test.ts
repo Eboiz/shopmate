@@ -172,10 +172,16 @@ describe("reply shape", () => {
 describe("engine input and output", () => {
   const history = [{ sender: "shopper" as const, text: "váy này còn size M không?" }];
 
-  it("customer mode needs the conversation; staff_draft needs the shop", () => {
+  it("customer mode reads the shop from the conversation, never the body", () => {
     expect(engineInputSchema.safeParse({ mode: "customer", conversationId: id, history }).success).toBe(true);
     expect(engineInputSchema.safeParse({ mode: "customer", shopId: id, history }).success).toBe(false);
-    expect(engineInputSchema.safeParse({ mode: "staff_draft", shopId: id, history }).success).toBe(true);
+  });
+
+  it("staff_draft takes no shop from the body; the server resolves it from the staff profile", () => {
+    expect(engineInputSchema.safeParse({ mode: "staff_draft", history }).success).toBe(true);
+    // strictObject: a forged shopId is a parse error, so no path can build an
+    // engine input that trusts a client-supplied shop.
+    expect(engineInputSchema.safeParse({ mode: "staff_draft", shopId: id, history }).success).toBe(false);
   });
 
   it("returns the reply plus the personal-reply flag", () => {
