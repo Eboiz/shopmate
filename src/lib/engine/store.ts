@@ -1,5 +1,6 @@
 import { toolCallLogSchema, type ConversationMode, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
 import { searchMissed } from "./misunderstood";
+import { latestQuote, type PendingQuote } from "./order-flow";
 import { sortSizes } from "./text";
 import { setNeedsHuman } from "./tools/handoff-to-staff";
 import type { Db } from "./types";
@@ -16,6 +17,9 @@ export type TurnContext = {
   // customer only: the conversation's previous AI turn searched for a product and
   // found nothing (see searchMissed), and did not hand off. Missing means false.
   previousTurnMissedProduct?: boolean;
+  // Last customer turn's quote, used only after its summary was shown to the
+  // shopper. The engine checks the next shopper message before allowing a write.
+  previousQuote?: PendingQuote | null;
 };
 
 export type EngineStore = {
@@ -48,7 +52,7 @@ export function createSupabaseStore(db: Db): EngineStore {
     return data;
   }
 
-  async function previousTurnMissed(shopId: string, conversationId: string): Promise<boolean> {
+  async function previousTurnState(shopId: string, conversationId: string) {
     const { data, error } = await db
       .from("ai_turns")
       .select("tool_calls, handoff_reason")
@@ -59,9 +63,12 @@ export function createSupabaseStore(db: Db): EngineStore {
       .limit(1)
       .maybeSingle();
     if (error) throw new Error(`ai_turns: ${error.message}`);
-    if (!data || data.handoff_reason !== null) return false;
+    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
-    return logs.success && searchMissed(logs.data);
+    return {
+      previousTurnMissedProduct: logs.success && searchMissed(logs.data),
+      previousQuote: logs.success ? latestQuote(logs.data) : null,
+    };
   }
 
   return {
@@ -79,14 +86,14 @@ export function createSupabaseStore(db: Db): EngineStore {
         .maybeSingle();
       if (error) throw new Error(`conversations: ${error.message}`);
       if (!conversation) return { conversation: null, product: null };
-      const [found, previousTurnMissedProduct] = await Promise.all([
+      const [found, previous] = await Promise.all([
         product(conversation.shop_id, productId),
-        previousTurnMissed(conversation.shop_id, conversationId!),
+        previousTurnState(conversation.shop_id, conversationId!),
       ]);
       return {
         conversation: { shopId: conversation.shop_id, mode: conversation.mode },
         product: found,
-        previousTurnMissedProduct,
+        ...previous,
       };
     },
 

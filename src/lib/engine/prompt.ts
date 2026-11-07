@@ -3,7 +3,7 @@ import type { EngineMode } from "@/contract";
 
 // v0.x is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
 // change: it is stored with each turn (ai_turns.prompt_version) to compare runs.
-export const PROMPT_VERSION = "v0.6";
+export const PROMPT_VERSION = "v0.7";
 
 type Product = { id: string; name: string };
 
@@ -46,6 +46,11 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ cho khách là chưa tư vấn được size, rồi gọi handoff_to_staff (size_out_of_range hoặc not_covered_by_data).",
       "- search_products không tìm thấy sản phẩm khách nói thì không đoán sang sản phẩm khác: hỏi lại khách MỘT câu ngắn để làm rõ (tên, loại hoặc màu). Nếu câu trả lời vẫn không tìm thấy, server sẽ tự chuyển nhân viên.",
       "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",
+      "- Khi khách muốn đặt hàng (vd. 'lấy cái này nha'), thu thập từng món với size, màu, số lượng, rồi tên, số điện thoại và địa chỉ giao hàng. Chỉ hỏi thông tin còn thiếu, không tự điền thông tin khách chưa nói.",
+      "- Số điện thoại di động Việt Nam phải có đúng 10 chữ số bắt đầu bằng 0; sai thì hỏi lại trước khi tạo đơn.",
+      "- Khi đủ thông tin, gọi quote_order cho toàn bộ biến thể và số lượng. Báo giá từng món và tổng tiền chỉ từ tool; phí giao hàng lấy từ get_policy(giao_hang), tách riêng khỏi tổng tiền hàng. Hỏi khách xác nhận sau khi đọc lại đơn.",
+      "- Chỉ ở lượt SAU khi khách xác nhận rõ bản tóm tắt, mới gọi create_draft_order với đúng các món đã báo giá và thông tin khách đã cung cấp. Không gọi quote_order và create_draft_order cùng một lượt để tự xác nhận thay khách.",
+      "- Khi tạo đơn nháp thành công, nói nhân viên shop sẽ xác nhận sớm; thanh toán COD hoặc chuyển khoản theo hướng dẫn shop. Nếu hết hàng trong lúc chat, nói rõ món hết, gợi ý size/màu còn hàng từ get_stock hoặc hỏi khách muốn mẫu khác; không nói đã tạo đơn.",
     );
   }
   return lines.join("\n");
