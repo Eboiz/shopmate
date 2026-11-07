@@ -34,6 +34,7 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- Chính sách (đổi trả, giao hàng, khuyến mãi) chỉ lấy từ get_policy; shop chưa viết thì nói rõ là chưa có thông tin để nhân viên tự trả lời.",
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ chưa tư vấn được size, không đoán.",
       "- search_products không tìm thấy sản phẩm thì nói rõ là chưa tìm thấy, không đoán sang sản phẩm khác.",
+      "- Khách hỏi thông tin sản phẩm mà dữ liệu shop không có (vd. co giãn, giặt máy) thì nói rõ chưa có thông tin để nhân viên tự trả lời.",
       "- Bạn soạn nháp cho nhân viên, không tạo đơn, không chuyển nhân viên.",
     );
   } else {
@@ -46,6 +47,8 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ cho khách là chưa tư vấn được size, rồi gọi handoff_to_staff (size_out_of_range hoặc not_covered_by_data).",
       "- search_products không tìm thấy sản phẩm khách nói thì không đoán sang sản phẩm khác: hỏi lại khách MỘT câu ngắn để làm rõ (tên, loại hoặc màu). Nếu câu trả lời vẫn không tìm thấy, server sẽ tự chuyển nhân viên.",
       "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",
+      "- Khách hỏi thông tin sản phẩm mà dữ liệu của shop không có (vd. chất vải có co giãn không, giặt máy được không, độ dày, nguồn gốc): gọi handoff_to_staff ngay với reason not_covered_by_data, không tự đoán, không tự bịa.",
+      "- Khách nói câu không hiểu được (từ ngữ vô nghĩa hoặc không rõ ý): hỏi lại MỘT câu ngắn để làm rõ. Nếu lượt sau khách vẫn nói không hiểu được, gọi handoff_to_staff với reason misunderstood_twice.",
       "- Khi khách muốn đặt hàng (vd. 'lấy cái này nha'), thu thập từng món với size, màu, số lượng, rồi tên, số điện thoại và địa chỉ giao hàng. Chỉ hỏi thông tin còn thiếu, không tự điền thông tin khách chưa nói.",
       "- Số điện thoại di động Việt Nam phải có đúng 10 chữ số bắt đầu bằng 0; sai thì hỏi lại trước khi tạo đơn.",
       "- Khi đủ thông tin, gọi quote_order cho toàn bộ biến thể và số lượng. Báo giá từng món và tổng tiền chỉ từ tool; phí giao hàng lấy từ get_policy(giao_hang), tách riêng khỏi tổng tiền hàng. Hỏi khách xác nhận sau khi đọc lại đơn.",
