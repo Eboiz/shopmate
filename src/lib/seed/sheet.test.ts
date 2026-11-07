@@ -103,12 +103,12 @@ describe("readDemoData", () => {
     expect(data?.products[0].name).toBe("Váy suông linen");
   });
 
-  it("warns, without failing, when the counts differ from the issue (30 products, 10 pairings)", () => {
+  it("warns, without failing, when the counts differ from the demo shop (60 products, 30 pairings)", () => {
     const { errors, warnings } = readDemoData(sheets());
     expect(errors).toEqual([]);
     expect(warnings).toEqual([
-      "products: 2 sản phẩm, issue yêu cầu 30",
-      "pairings: 1 cặp, issue yêu cầu 10",
+      "products: 2 sản phẩm, dữ liệu demo cần 60",
+      "pairings: 1 cặp, dữ liệu demo cần 30",
     ]);
   });
 
