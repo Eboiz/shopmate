@@ -4,7 +4,6 @@ import { MAX_MESSAGE_LENGTH, chatErrors } from "@/lib/chat/request";
 
 const SHOP = { id: "shop-a", name: "Mây Boutique" };
 const PRODUCT = "11111111-1111-4111-8111-111111111111";
-const TOKEN = "a".repeat(43);
 
 const history = vi.fn<(...args: unknown[]) => Promise<unknown[]>>();
 const productInShop = vi.fn<(...args: unknown[]) => Promise<boolean>>();
@@ -28,8 +27,11 @@ vi.mock("@/lib/guard/web-chat-limit", async (original) => ({
 process.env.SUPABASE_SECRET_KEY ??= "sb_secret_unit_test";
 
 const { GET, POST } = await import("./route");
-const { shopperExternalId } = await import("@/lib/chat/web-chat");
+const { shopperExternalId, newShopperToken } = await import("@/lib/chat/web-chat");
 const { WEB_CHAT_LIMIT_ERROR, clientHash } = await import("@/lib/guard/web-chat-limit");
+// A token the server issued (signed).
+const TOKEN = newShopperToken();
+const ISSUED = /^[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}$/;
 
 const ctx = (slug = "may-boutique") => ({ params: Promise.resolve({ slug }) });
 const get = (cookie?: string, slug?: string) =>
@@ -71,12 +73,31 @@ describe("POST /api/shops/[slug]/chat limits the client cannot reset", () => {
     expect(takeSlot.mock.calls[1][0]).toMatchObject({ newShopper: false });
   });
 
+  it("counts made-up cookies as new shoppers (a random-token flood can't skip the new-shopper limit)", async () => {
+    const [id] = TOKEN.split(".");
+    const forged = [
+      `${"x".repeat(43)}.${"y".repeat(43)}`, // right shape, wrong signature
+      `${id}.${"A".repeat(43)}`, // real id, forged signature
+      "a".repeat(43), // the unsigned format
+    ];
+    for (const cookie of forged) {
+      const response = await post(valid, { cookie });
+      expect(response.cookies.get("shopmate_shopper")?.value).toMatch(ISSUED);
+      expect(response.cookies.get("shopmate_shopper")?.value).not.toBe(cookie);
+    }
+    expect(takeSlot.mock.calls.map(([input]) => input.newShopper)).toEqual([true, true, true]);
+    // None of them reached the conversation the forged value would name.
+    for (const cookie of forged) {
+      expect(receive.mock.calls.some(([, msg]) => (msg as { externalId: string }).externalId === shopperExternalId(cookie))).toBe(false);
+    }
+  });
+
   it("never stores the raw IP", async () => {
     await post(valid, { ip: "203.0.113.7" });
     expect(takeSlot.mock.calls[0][0].clientHash).not.toContain("203.0.113.7");
   });
 
-  it.each(["client", "new_shopper", "shop"] as const)(
+  it.each(["client", "client_shop", "new_shopper", "shop"] as const)(
     "answers 429 with a Vietnamese error over the %s limit, without a shopper, cookie or AI turn",
     async (limit) => {
       takeSlot.mockResolvedValue(limit);
@@ -195,6 +216,6 @@ describe("POST /api/shops/[slug]/chat", () => {
     const response = await post(valid);
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: chatErrors.sendFailed });
-    expect(response.cookies.get("shopmate_shopper")?.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(response.cookies.get("shopmate_shopper")?.value).toMatch(ISSUED);
   });
 });

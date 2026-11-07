@@ -392,7 +392,7 @@ isOneToOne: false
         isSetofReturn: true
       } },
 "web_chat_take":
-{ Args: { "p_client_hash": string,"p_client_per_minute": number,"p_new_shopper": boolean,"p_new_shoppers_per_hour": number,"p_shop_id": string,"p_shop_per_minute": number }; Returns: string
+{ Args: { "p_client_hash": string,"p_client_per_minute": number,"p_client_shop_per_minute": number,"p_new_shopper": boolean,"p_new_shoppers_per_hour": number,"p_shop_id": string,"p_shop_per_minute": number }; Returns: string
                            }
           }
           Enums: {

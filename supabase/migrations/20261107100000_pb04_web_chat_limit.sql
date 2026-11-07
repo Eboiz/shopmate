@@ -23,16 +23,17 @@ alter table public.web_chat_hits enable row level security;
 revoke all on public.web_chat_hits from anon, authenticated;
 
 -- Returns 'ok' and records the request, or the name of the limit it is over
--- ('client', 'new_shopper', 'shop') and records nothing. One client's requests
--- are serialized by an advisory lock, so two parallel requests can't both pass
--- the last free slot.
+-- ('client', 'client_shop', 'new_shopper', 'shop') and records nothing. Advisory
+-- locks (client first, then shop: always the same order) serialize the checks,
+-- so two parallel requests can't both pass the last free slot.
 create function public.web_chat_take(
   p_shop_id uuid,
   p_client_hash text,
   p_new_shopper boolean,
   p_client_per_minute integer,
   p_new_shoppers_per_hour integer,
-  p_shop_per_minute integer
+  p_shop_per_minute integer,
+  p_client_shop_per_minute integer
 )
 returns text
 language plpgsql
@@ -40,10 +41,19 @@ set search_path = ''
 as $$
 begin
   perform pg_advisory_xact_lock(hashtextextended('web_chat_take:' || p_client_hash, 0));
+  perform pg_advisory_xact_lock(hashtextextended('web_chat_take:' || p_shop_id::text, 0));
 
   if (select count(*) from public.web_chat_hits
       where client_hash = p_client_hash and created_at > now() - interval '1 minute') >= p_client_per_minute then
     return 'client';
+  end if;
+
+  -- One client may use only a part of a shop's ceiling, so a few IPs can't
+  -- block the shop's chat for everyone else.
+  if (select count(*) from public.web_chat_hits
+      where client_hash = p_client_hash and shop_id = p_shop_id
+        and created_at > now() - interval '1 minute') >= p_client_shop_per_minute then
+    return 'client_shop';
   end if;
 
   if p_new_shopper and (select count(*) from public.web_chat_hits
@@ -68,6 +78,6 @@ begin
 end;
 $$;
 
-revoke execute on function public.web_chat_take(uuid, text, boolean, integer, integer, integer)
+revoke execute on function public.web_chat_take(uuid, text, boolean, integer, integer, integer, integer)
   from public, anon, authenticated;
-grant execute on function public.web_chat_take(uuid, text, boolean, integer, integer, integer) to service_role;
+grant execute on function public.web_chat_take(uuid, text, boolean, integer, integer, integer, integer) to service_role;

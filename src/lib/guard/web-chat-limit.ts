@@ -17,14 +17,18 @@ export const WEB_CHAT_LIMIT = {
   clientPerMinute: 30,
   // Requests without the shopper cookie (each may create a shopper and an AI turn).
   newShoppersPerHour: 20,
+  // Messages from one IP to one shop: a quarter of the shop's ceiling, so one
+  // client (or two) can't use up the shop's chat for everyone.
+  clientShopPerMinute: 15,
   // Ceiling for the whole shop, many IPs together: bounds AI spend per shop.
   shopPerMinute: 60,
 } as const;
 
-export type WebChatLimitResult = "ok" | "client" | "new_shopper" | "shop";
+export type WebChatLimitResult = "ok" | "client" | "client_shop" | "new_shopper" | "shop";
 
 export const WEB_CHAT_LIMIT_ERROR: Record<Exclude<WebChatLimitResult, "ok">, string> = {
   client: "Bạn nhắn hơi nhanh rồi ạ. Bạn chờ khoảng một phút rồi nhắn tiếp nhé!",
+  client_shop: "Bạn nhắn hơi nhanh rồi ạ. Bạn chờ khoảng một phút rồi nhắn tiếp nhé!",
   new_shopper: "Có quá nhiều cuộc trò chuyện mới từ mạng của bạn. Vui lòng thử lại sau ít phút.",
   shop: "Shop đang nhận quá nhiều tin nhắn. Vui lòng thử lại sau một phút.",
 };
@@ -62,8 +66,11 @@ export async function takeWebChatSlot(input: {
     p_client_per_minute: WEB_CHAT_LIMIT.clientPerMinute,
     p_new_shoppers_per_hour: WEB_CHAT_LIMIT.newShoppersPerHour,
     p_shop_per_minute: WEB_CHAT_LIMIT.shopPerMinute,
+    p_client_shop_per_minute: WEB_CHAT_LIMIT.clientShopPerMinute,
   });
   if (error) throw new Error(`web_chat_take: ${error.message}`);
-  if (data === "ok" || data === "client" || data === "new_shopper" || data === "shop") return data;
+  if (data === "ok" || data === "client" || data === "client_shop" || data === "new_shopper" || data === "shop") {
+    return data;
+  }
   throw new Error(`web_chat_take: unexpected result ${String(data)}`);
 }

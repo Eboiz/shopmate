@@ -1,5 +1,5 @@
 import "server-only";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { replySchema } from "@/contract";
 import { sortSizes } from "@/lib/engine/text";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -22,15 +22,29 @@ export const SHOPPER_COOKIE_PATH = "/api/shops";
 // The shop page shows the latest messages; older ones stay in the staff inbox.
 export const HISTORY_SHOWN = 100;
 
-const TOKEN = /^[A-Za-z0-9_-]{32,128}$/;
+// "<random id>.<HMAC of the id>": only the server can make a valid token, so a
+// script can't skip the new-shopper limit by sending made-up cookies.
+const TOKEN = /^([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})$/;
 
-export function newShopperToken(): string {
-  return randomBytes(32).toString("base64url");
+function sign(id: string): string {
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!key) throw new Error("SUPABASE_SECRET_KEY is not set");
+  return createHmac("sha256", key).update(`shopper-token:${id}`).digest("base64url");
 }
 
-// The cookie value if it looks like one we issued, else null.
+export function newShopperToken(): string {
+  const id = randomBytes(32).toString("base64url");
+  return `${id}.${sign(id)}`;
+}
+
+// The cookie value if we issued it (valid signature), else null: the request
+// is then treated as a new shopper.
 export function readShopperToken(value: string | undefined): string | null {
-  return value && TOKEN.test(value) ? value : null;
+  const match = value ? TOKEN.exec(value) : null;
+  if (!match) return null;
+  const expected = Buffer.from(sign(match[1]));
+  const given = Buffer.from(match[2]);
+  return given.length === expected.length && timingSafeEqual(given, expected) ? value! : null;
 }
 
 export function shopperExternalId(token: string): string {
