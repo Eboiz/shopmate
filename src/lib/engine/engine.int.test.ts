@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createAnthropicModel } from "./anthropic-model";
+import { createDefaultModel } from "./anthropic-model";
 import { runEngine } from "./engine";
 import type { TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT } from "./model-reply";
@@ -93,7 +93,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("live Claude smoke test", () => 
     const metrics: TurnMetrics[] = [];
     const result = await runEngine(
       { mode: "staff_draft", history: [{ sender: "shopper", text: "váy suông linen màu be size M còn không?" }] },
-      { model: createAnthropicModel(new Anthropic()), db, store, staffShopId: FX.a.shop, onMetrics: (m) => metrics.push(m) },
+      { model: createDefaultModel(), db, store, staffShopId: FX.a.shop, onMetrics: (m) => metrics.push(m) },
     );
     const row = await turnRow(await result.turnLogged);
     const [m] = metrics;
