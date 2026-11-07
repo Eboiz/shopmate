@@ -58,3 +58,6 @@ next-env.d.ts
 
 # local visual review captures
 /.preview-*.png
+
+# local UI design review mockup
+/src/shopmate-ui-review.html
