@@ -43,15 +43,9 @@ export type EvalEnvInput = {
   status: Record<string, string>;
 };
 
-export function buildEvalEnv({ shell, files, status }: EvalEnvInput): Record<string, string> {
-  const url = status.API_URL;
-  if (!isLocalSupabaseUrl(url)) {
-    throw new Error(`Refusing to run: Supabase URL from \`supabase status\` is ${url ?? "missing"}, not 127.0.0.1/localhost.`);
-  }
-  const secret = status.SECRET_KEY || status.SERVICE_ROLE_KEY;
-  const publishable = status.PUBLISHABLE_KEY || status.ANON_KEY;
-  if (!secret || !publishable) throw new Error("`supabase status` printed no SECRET_KEY / PUBLISHABLE_KEY.");
-
+// --plan: no database at all. The shell env without any Supabase variable, plus
+// the Anthropic ones (for the model name in the plan).
+export function buildPlanEnv({ shell, files }: Omit<EvalEnvInput, "status">): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(shell)) if (v !== undefined && !SUPABASE_VAR.test(k)) env[k] = v;
   for (const name of ANTHROPIC_VARS) {
@@ -61,6 +55,19 @@ export function buildEvalEnv({ shell, files, status }: EvalEnvInput): Record<str
     if (value) env[name] = value;
   }
   env.ANTHROPIC_MODEL ||= EVAL_DEFAULT_MODEL;
+  return env;
+}
+
+export function buildEvalEnv({ shell, files, status }: EvalEnvInput): Record<string, string> {
+  const url = status.API_URL;
+  if (!isLocalSupabaseUrl(url)) {
+    throw new Error(`Refusing to run: Supabase URL from \`supabase status\` is ${url ?? "missing"}, not 127.0.0.1/localhost.`);
+  }
+  const secret = status.SECRET_KEY || status.SERVICE_ROLE_KEY;
+  const publishable = status.PUBLISHABLE_KEY || status.ANON_KEY;
+  if (!secret || !publishable) throw new Error("`supabase status` printed no SECRET_KEY / PUBLISHABLE_KEY.");
+
+  const env = buildPlanEnv({ shell, files });
   env.NEXT_PUBLIC_SUPABASE_URL = url!;
   env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY = publishable;
   env.SUPABASE_SECRET_KEY = secret;

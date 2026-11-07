@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEvalEnv, EVAL_DEFAULT_MODEL, isLocalSupabaseUrl, parseStatusEnv } from "./eval-env";
+import { buildEvalEnv, buildPlanEnv, EVAL_DEFAULT_MODEL, isLocalSupabaseUrl, parseStatusEnv } from "./eval-env";
 
 const PROD = "https://yhleogzpoonndbyphueu.supabase.co";
 const status = parseStatusEnv(
@@ -61,6 +61,12 @@ describe("eval:injection env (local Supabase only)", () => {
     expect(() => buildEvalEnv({ shell: {}, files: [], status: { ...status, API_URL: PROD } })).toThrow(/Refusing to run/);
     expect(() => buildEvalEnv({ shell: {}, files: [], status: {} })).toThrow(/Refusing to run/);
     expect(() => buildEvalEnv({ shell: {}, files: [], status: { API_URL: "http://127.0.0.1:54321" } })).toThrow(/SECRET_KEY/);
+  });
+
+  it("--plan gets no Supabase variable at all", () => {
+    const env = buildPlanEnv({ shell: { PATH: "/bin", NEXT_PUBLIC_SUPABASE_URL: PROD, DATABASE_URL: "postgresql://prod" }, files: [envLocal] });
+    expect(Object.keys(env).filter((k) => /SUPABASE|DATABASE/.test(k))).toEqual([]);
+    expect(env.ANTHROPIC_MODEL).toBe(EVAL_DEFAULT_MODEL);
   });
 
   it("model: shell first, then the later file, then Haiku (same as production)", () => {

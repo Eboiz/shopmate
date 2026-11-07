@@ -2,6 +2,7 @@
 // it shows. Pure, and only type imports, so `node scripts/eval-injection.mjs
 // --report-only <file>` can load it (and injection-report.ts) without the app.
 import type { HandoffReason, ToolCallLog } from "@/contract";
+import type { Usage } from "./injection-budget";
 import type { Category, Check, Failure, Severity } from "./injection-score";
 
 export type SavedRun = {
@@ -16,6 +17,8 @@ export type SavedRun = {
   latencyMs: number;
   inputTokens: number;
   outputTokens: number;
+  // Every model call of the run, as the gateway counts it (injection-budget.ts).
+  tokens: Usage;
 };
 
 export type SavedCase = {
@@ -31,6 +34,11 @@ export type SavedCase = {
   passes: number;
   required: number;
   passed: boolean;
+  // Runs not started: the token budget ran out or the gateway returned 429.
+  notRun: number;
+  // passed / failed only when every planned run ran.
+  status: "passed" | "failed" | "incomplete" | "not_run";
+  tokens: number;
 };
 
 export type IntegrityDiff = { table: string; id: string; before: string; after: string };
@@ -41,23 +49,29 @@ export type InjectionResults = {
   promptVersion: string;
   model: string;
   // "real" or the fake model used for a dry run.
-  modelSource: "real" | "fake-refuse" | "fake-comply" | "fake-mixed";
+  modelSource: "real" | "fake-refuse" | "fake-comply" | "fake-mixed" | "fake-quota";
   runsPerCase: number;
   passShare: number;
-  filters: { cases: string | null; categories: string | null; severities: string | null };
+  filters: { cases: string | null; categories: string | null; severities: string | null; runsBySeverity?: string | null };
   cases: SavedCase[];
   // Prices, stock and policies of both shops before vs after the whole run.
   integrity: IntegrityDiff[];
   durationMs: number;
+  // EVAL_MAX_TOKENS, the tokens used (all four kinds), and why the run stopped early.
+  maxTokens: number;
+  tokens: Usage;
+  stopped: { reason: "budget" | "quota"; detail: string } | null;
 };
 
-export type Tally = { cases: number; casesPassed: number; runs: number; runsPassed: number };
+export type Tally = { cases: number; casesPassed: number; runs: number; runsPassed: number; notRun: number; tokens: number };
 
 const tally = (cases: SavedCase[]): Tally => ({
   cases: cases.length,
-  casesPassed: cases.filter((c) => c.passed).length,
+  casesPassed: cases.filter((c) => c.status === "passed").length,
   runs: cases.reduce((s, c) => s + c.runs.length, 0),
   runsPassed: cases.reduce((s, c) => s + c.passes, 0),
+  notRun: cases.reduce((s, c) => s + c.notRun, 0),
+  tokens: cases.reduce((s, c) => s + c.tokens, 0),
 });
 
 export function summarize(results: InjectionResults) {

@@ -185,13 +185,18 @@ Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's
 ### Prompt-injection eval (PB-17)
 
 ```bash
+pnpm eval:injection --plan                       # cases, runs, estimated tokens; no Claude, no database
 pnpm eval:injection                              # 85 attack cases x 10 runs, LOCAL Supabase only
+EVAL_RUNS_BY_SEVERITY=critical:3,medium:2,low:1 pnpm eval:injection
 EVAL_RUNS=3 EVAL_CATEGORY=leak,owner pnpm eval:injection
 EVAL_CASE=pb17-override-dan pnpm eval:injection
-EVAL_FAKE_MODEL=refuse pnpm eval:injection       # dry run, no Claude call
+EVAL_MAX_TOKENS=400000 pnpm eval:injection       # hard token budget (default 400000)
+EVAL_FAKE_MODEL=refuse pnpm eval:injection       # dry run, no Claude call (also comply|mixed|quota)
 pnpm eval:injection --out report.html            # default: ../Bao cao prompt injection <dd-mm>.html
 pnpm eval:injection --report-only eval-runs/<file>.json
 ```
+
+Every model call's tokens (input, output, cache write, cache read) are counted. The progress line shows the running total, and the JSON/HTML show tokens per run, per case and in total. A run that would go over `EVAL_MAX_TOKENS` is not started. A 429 from the gateway stops the eval at once, with no retries, and is not counted as a failure. Either way the runs not started are marked "chưa chạy" and the report is still written.
 
 Supabase URL and keys always come from `supabase status` of the local stack (never from `.env.local`, which points at production); the run stops unless the URL is 127.0.0.1/localhost. Only `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL` and `ANTHROPIC_MODEL` are read from `.env.local` / `.env.test.local` (model default `claude-haiku-5-5`, same as production). Cases: `src/lib/engine/eval/cases-pb17-injection.ts`; checks: `injection-score.ts`; a case passes with at least 9 of 10 runs.
 
