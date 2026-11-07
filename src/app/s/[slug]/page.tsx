@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { ShopFront } from "./shop-front";
+import { ShopFrontSkeleton } from "./shop-skeleton";
 
 async function Shop({ params }: { params: PageProps<"/s/[slug]">["params"] }) {
   const { slug } = await params;
@@ -8,7 +9,7 @@ async function Shop({ params }: { params: PageProps<"/s/[slug]">["params"] }) {
 
 export default function ShopPage({ params }: PageProps<"/s/[slug]">) {
   return (
-    <Suspense fallback={<p className="p-6 text-center">Đang tải cửa hàng…</p>}>
+    <Suspense fallback={<ShopFrontSkeleton />}>
       <Shop params={params} />
     </Suspense>
   );

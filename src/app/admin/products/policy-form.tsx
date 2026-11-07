@@ -29,7 +29,7 @@ export function PolicyForm({ type, content, canEdit, updatePolicy }: PolicyFormP
         error={state.error}
       />
       {canEdit && (
-        <Button type="submit" disabled={pending} className="self-end">
+        <Button type="submit" loading={pending} loadingText="Đang lưu…" className="self-end">
           Lưu
         </Button>
       )}

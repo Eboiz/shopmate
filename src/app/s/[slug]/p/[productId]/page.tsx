@@ -1,11 +1,12 @@
 import { Suspense } from "react";
 import { ShopFront } from "../../shop-front";
+import { ProductDetailSkeleton } from "../../shop-skeleton";
 
 type ProductPageProps = PageProps<"/s/[slug]/p/[productId]">;
 
 export default function ProductPage({ params }: ProductPageProps) {
   return (
-    <Suspense fallback={<p className="p-6 text-center">Đang tải sản phẩm…</p>}>
+    <Suspense fallback={<ProductDetailSkeleton />}>
       <Product params={params} />
     </Suspense>
   );
