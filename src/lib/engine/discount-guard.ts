@@ -107,7 +107,8 @@ function offersIn(text: string, strict: boolean): Offer[] {
 // service the policy texts don't offer, or null. An offer is backed when, for
 // each kind it names, a policy sentence makes that kind of offer and the reply's
 // sentence keeps that policy sentence's numbers (its conditions); and every
-// number the clause names comes from those policy sentences. Quoting "Miễn phí
+// number in the reply's sentence comes from those policy sentences (clauses only
+// scope the negation, numbers are checked per sentence). Quoting "Miễn phí
 // giao hàng cho đơn từ 500.000đ" passes; "bạn được miễn phí ship" drops the
 // 500.000đ condition and is flagged, like any offer no policy makes.
 export function findUnbackedDiscount(reply: string, policyTexts: string[]): string | null {
@@ -117,7 +118,9 @@ export function findUnbackedDiscount(reply: string, policyTexts: string[]): stri
       backing.filter((b) => b.kinds.includes(k) && b.sentenceNumbers.every((n) => offer.sentenceNumbers.includes(n))),
     );
     const allowed = new Set(backers.flat().flatMap((b) => b.sentenceNumbers));
-    if (backers.some((b) => b.length === 0) || !offer.numbers.every((n) => allowed.has(n))) return offer.clause;
+    // Sentence level: a changed condition may sit in the next clause
+    // ("miễn phí giao hàng, cho đơn từ 200.000đ").
+    if (backers.some((b) => b.length === 0) || !offer.sentenceNumbers.every((n) => allowed.has(n))) return offer.clause;
   }
   return null;
 }

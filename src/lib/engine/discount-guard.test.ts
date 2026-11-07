@@ -105,6 +105,25 @@ describe("findUnbackedDiscount", () => {
     expect(findUnbackedDiscount("Mình giảm giá cho bạn nhé", [DOI_TRA])).not.toBeNull();
   });
 
+  // The policy offers free shipping from 500.000đ; a changed number in the next
+  // clause of the same sentence must not pass.
+  it.each([
+    "Miễn phí giao hàng, cho đơn từ 200.000đ",
+    "Mien phi giao hang, cho don tu 200.000d",
+    "Free ship và áp dụng cho đơn 100k",
+    "Free ship va ap dung cho don 100k",
+    "Shop miễn phí giao hàng mà đơn chỉ cần 300.000đ thôi",
+    "Shop mien phi giao hang ma don chi can 300k thoi",
+    "Miễn phí giao hàng cho đơn từ 500.000đ, đơn 200.000đ cũng được",
+  ])("flags a changed number in another clause of the sentence: %j", (reply) => {
+    expect(findUnbackedDiscount(reply, [GIAO_HANG])).not.toBeNull();
+  });
+
+  it("still lets the condition sit in another clause when it is the policy's", () => {
+    expect(findUnbackedDiscount("Miễn phí giao hàng, cho đơn từ 500.000đ ạ", [GIAO_HANG])).toBeNull();
+    expect(findUnbackedDiscount("Mien phi giao hang va ap dung cho don tu 500k a", [GIAO_HANG])).toBeNull();
+  });
+
   it("returns the offending clause", () => {
     expect(findUnbackedDiscount("Váy giá 350.000đ. Mình giảm 50% cho bạn nhé!", [])).toBe("minh giam 50% cho ban nhe");
   });
