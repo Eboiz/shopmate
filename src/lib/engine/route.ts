@@ -17,7 +17,8 @@ export const MIN_INTENT_CONFIDENCE = 0.6;
 export const DISCOUNT_TRICK_THRESHOLD = 0.5;
 export const ASKED_TO_CLARIFY_THRESHOLD = 0.5;
 // Below this, the shop's policy text doesn't answer what was asked (v0.6 rule).
-export const POLICY_COVERS_THRESHOLD = 0.5;
+// Between the two calibration groups in checkPolicyCovers (0.49 / 0.66).
+export const POLICY_COVERS_THRESHOLD = 0.57;
 
 export const ASK_PAIRING_PRODUCT_TEXT = "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.";
 export const PAIRING_FAILED_TEXT = "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.";

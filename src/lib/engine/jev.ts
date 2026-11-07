@@ -252,8 +252,12 @@ export async function checkPolicyCovers(
     questions: {
       policy_answers: {
         type: "noul",
+        // Calibrated 07/11 on 6 labeled pairs (2 runs each): answered 0.66-0.97,
+        // not answered 0.07-0.49. A stricter wording ("directly answer ...
+        // without assuming") scored "không vừa thì đổi được không" + "Đổi trong
+        // 7 ngày" at 0.40 and sent a plain returns question to staff.
         instructions:
-          "Does the shop's policy text (shopPolicy) directly answer what the shopper's last message asks, without assuming anything the text doesn't say?",
+          "Can a shop assistant answer the shopper's last message using only the shop's policy text (shopPolicy)? Yes when the text states the rule the question is about, even briefly; no when the question is about something the text doesn't mention.",
       },
     },
   });
