@@ -1,9 +1,15 @@
-import { EmptyState } from "@/components/ui/empty-state";
+import { Suspense } from "react";
+import { ShopFront } from "./shop-front";
 
-export default function ShopPage() {
+async function Shop({ params }: { params: PageProps<"/s/[slug]">["params"] }) {
+  const { slug } = await params;
+  return <ShopFront slug={slug} />;
+}
+
+export default function ShopPage({ params }: PageProps<"/s/[slug]">) {
   return (
-    <main className="flex-1 px-4 py-6">
-      <EmptyState title="Cửa hàng sắp ra mắt" />
-    </main>
+    <Suspense fallback={<p className="p-6 text-center">Đang tải cửa hàng…</p>}>
+      <Shop params={params} />
+    </Suspense>
   );
 }

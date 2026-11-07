@@ -107,3 +107,18 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 - `/admin/*` needs a signed-in user. `src/proxy.ts` redirects signed-out visitors to `/login?next=...`, and `src/app/admin/layout.tsx` checks the user again on the server.
 - `/login` signs in with Supabase Auth email + password.
 - `/s/<shop-slug>` (customer web chat, PB-04) is public.
+
+## Customer shop and web chat (PB-04)
+
+The frontend at `/s/<shop-slug>` uses the PB-25 shared UI components and
+expects these same-origin, server-owned endpoints (they are not implemented in
+this frontend branch):
+
+- `GET /api/shops/<slug>/catalog` → `{ shop: { name }, products: [{ id, name, price, imageUrl, colors, sizesInStock }] }`.
+- `GET /api/shops/<slug>/chat` → `{ messages: [{ id, sender, text, reply, createdAt }] }`; `reply` is the PB-00 shared reply shape or `null`.
+- `POST /api/shops/<slug>/chat` with `{ text, productId, clientMessageId }` → a successful response after saving the shopper message; the selected `productId` must be passed into the PB-00 customer engine input.
+
+The browser never reads Supabase directly. The backend owns the HTTP-only
+shopper cookie, conversation persistence, product/shop validation, engine call,
+and delivery through `sendToConversation`. The chat polls GET every 3 seconds
+while open to display staff replies and order updates without a reload.
