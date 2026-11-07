@@ -3,7 +3,7 @@ import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
 import { sortSizes } from "./text";
-import { setNeedsHuman } from "./tools/handoff-to-staff";
+import { setAiMode, setNeedsHuman } from "./tools/handoff-to-staff";
 import type { Db } from "./types";
 
 export type TurnContextArgs = {
@@ -34,6 +34,7 @@ export type EngineStore = {
   // Separate from loadTurnContext: it depends on the productIds the model returns.
   productCards(shopId: string, productIds: string[]): Promise<ProductCard[]>;
   setNeedsHuman(ctx: ToolContext): Promise<void>;
+  setAiMode?(ctx: ToolContext): Promise<void>;
   // Runs AFTER the reply is returned (see runEngine); returns the row id.
   insertTurn(row: TablesInsert<"ai_turns">): Promise<string>;
   // PB-10: every product of the shop with its colors and sizes, for the Jev
@@ -142,6 +143,7 @@ export function createSupabaseStore(db: Db): EngineStore {
     },
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),
+    setAiMode: (ctx) => setAiMode(db, ctx),
 
     async insertTurn(row) {
       const { data, error } = await db.from("ai_turns").insert(row).select("id").single();

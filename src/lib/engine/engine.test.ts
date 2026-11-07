@@ -55,6 +55,7 @@ function fakeStore(context: TurnContext = { conversation: { shopId: SHOP_A, mode
     loadTurnContext: vi.fn<EngineStore["loadTurnContext"]>(async () => context),
     productCards: vi.fn<EngineStore["productCards"]>(async (_shopId, ids) => ids.map(card)),
     setNeedsHuman: vi.fn<EngineStore["setNeedsHuman"]>(async () => {}),
+    setAiMode: vi.fn<NonNullable<EngineStore["setAiMode"]>>(async () => {}),
     insertTurn: vi.fn<EngineStore["insertTurn"]>(async () => "turn-1"),
   };
 }
@@ -988,7 +989,7 @@ describe("runEngine", () => {
     await run(customerInput({ productId: PRODUCT }));
     expect(store.loadTurnContext).toHaveBeenCalledTimes(1);
     expect(store.loadTurnContext).toHaveBeenCalledWith({ conversationId: CONV, shopId: null, productId: PRODUCT });
-    expect(Object.keys(store).sort()).toEqual(["insertTurn", "loadTurnContext", "productCards", "setNeedsHuman"]);
+    expect(Object.keys(store).sort()).toEqual(["insertTurn", "loadTurnContext", "productCards", "setAiMode", "setNeedsHuman"]);
     expect(order).toEqual(["model", "model", "productCards"]);
   });
 
@@ -1234,16 +1235,25 @@ describe("runEngine", () => {
       expect(store.insertTurn).not.toHaveBeenCalled();
     });
 
-    it("conversation not in mode ai", async () => {
-      for (const mode of ["needs_human", "staff"] as const) {
-        const { store, model, run } = setup([reply()], {
-          store: fakeStore({ conversation: { shopId: SHOP_A, mode }, product: null }),
-        });
-        await expect(run(customerInput())).rejects.toMatchObject({ code: "conversation_not_found" });
-        expect(model.calls).toHaveLength(0);
-        expect(store.insertTurn).not.toHaveBeenCalled();
-        expect(store.setNeedsHuman).not.toHaveBeenCalled();
-      }
+    it("conversation in staff mode rejects with conversation_not_found", async () => {
+      const { store, model, run } = setup([reply()], {
+        store: fakeStore({ conversation: { shopId: SHOP_A, mode: "staff" }, product: null }),
+      });
+      await expect(run(customerInput())).rejects.toMatchObject({ code: "conversation_not_found" });
+      expect(model.calls).toHaveLength(0);
+      expect(store.insertTurn).not.toHaveBeenCalled();
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    });
+
+    it("conversation in needs_human mode auto-resumes and calls setAiMode on successful answer", async () => {
+      const { store, model, run } = setup([reply("Dạ shop còn hàng nhé")], {
+        store: fakeStore({ conversation: { shopId: SHOP_A, mode: "needs_human" }, product: null }),
+      });
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "áo còn không shop?" }] }));
+      expect(result.output.reply.text).toBe("Dạ shop còn hàng nhé");
+      expect(model.calls).toHaveLength(1);
+      expect(store.setAiMode).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
     });
 
     it("foreign productId is ignored", async () => {

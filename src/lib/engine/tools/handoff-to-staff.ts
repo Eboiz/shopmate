@@ -16,6 +16,18 @@ export async function setNeedsHuman(db: Db, ctx: ToolContext): Promise<void> {
   if (error) throw new Error(`conversations: ${error.message}`);
 }
 
+// Moves the conversation from needs_human back to ai when the AI can answer a new question.
+export async function setAiMode(db: Db, ctx: ToolContext): Promise<void> {
+  if (ctx.conversationId === null) throw new ToolError("no_conversation");
+  const { error } = await db
+    .from("conversations")
+    .update({ mode: "ai" })
+    .eq("id", ctx.conversationId)
+    .eq("shop_id", ctx.shopId)
+    .eq("mode", "needs_human");
+  if (error) throw new Error(`conversations: ${error.message}`);
+}
+
 export const handoffToStaff: ToolHandler<"handoff_to_staff"> = async (_input, ctx, db) => {
   await setNeedsHuman(db, ctx);
   return { mode: "needs_human" };

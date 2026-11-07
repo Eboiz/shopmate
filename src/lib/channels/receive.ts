@@ -84,6 +84,7 @@ export async function receiveChannelMessage(
     await db.from("conversations").select("id, mode").eq("shop_id", shop_id).eq("shopper_id", shopper.id).single(),
     "conversation read",
   );
+  const initialMode = conversation.mode;
 
   const text = "text" in incoming ? incoming.text : `[Khách gửi ảnh] ${incoming.imageUrls.join(" ")}`;
   const stored = await db.from("messages").insert({
@@ -106,7 +107,7 @@ export async function receiveChannelMessage(
     "bump",
   );
 
-  if (conversation.mode !== "ai") return "stored";
+  if (initialMode === "staff") return "stored";
 
   // PB-17: more than 10 messages in a minute get a "please wait" reply and no AI
   // turn. Counted after storing, so this message is included.
@@ -175,6 +176,8 @@ export async function receiveChannelMessage(
     "mode read",
   );
   if (now.mode !== "needs_human") return "stored";
+  // If the conversation was already waiting for staff before this turn, don't repeat the handoff notice.
+  if (initialMode === "needs_human") return "stored";
   await sendSystem(conversation.id, reply);
   return "handed_off";
 }
