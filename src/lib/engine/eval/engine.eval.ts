@@ -60,7 +60,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
           input: t.input,
         }));
         runs.push({
-          score: scoreRun(c, calls),
+          score: scoreRun(c, calls, result.output.reply.text),
           latencyMs: turn.latency_ms,
           inputTokens: turn.input_tokens ?? 0,
           outputTokens: turn.output_tokens ?? 0,
