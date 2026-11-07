@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
+import { LoadingRegion, Skeleton } from "@/components/ui/skeleton";
 import { formatPrice } from "@/lib/format";
 import {
   decideDraftOrder,
@@ -57,9 +58,10 @@ export function DraftOrders() {
 
   if (state.status === "loading") {
     return (
-      <p role="status" className="ui-card p-5 text-sm text-[#706d67]">
-        Đang tải đơn nháp…
-      </p>
+      <LoadingRegion label="Đang tải đơn nháp…" className="space-y-3">
+        <DraftOrderSkeleton />
+        <DraftOrderSkeleton />
+      </LoadingRegion>
     );
   }
 
@@ -176,13 +178,38 @@ function DraftOrderCard({
 
       {error && <ErrorMessage>{error}</ErrorMessage>}
       <div className="grid grid-cols-2 gap-2 text-sm">
-        <Button variant="secondary" disabled={pending !== null} onClick={() => void submit("cancelled")}>
-          {pending === "cancelled" ? "Đang hủy…" : "Hủy đơn"}
+        <Button variant="secondary" disabled={pending !== null} loading={pending === "cancelled"} loadingText="Đang hủy…" onClick={() => void submit("cancelled")}>
+          Hủy đơn
         </Button>
-        <Button disabled={pending !== null} onClick={() => void submit("confirmed")}>
-          {pending === "confirmed" ? "Đang xác nhận…" : "Xác nhận"}
+        <Button disabled={pending !== null} loading={pending === "confirmed"} loadingText="Đang xác nhận…" onClick={() => void submit("confirmed")}>
+          Xác nhận
         </Button>
       </div>
     </article>
+  );
+}
+
+// The frame of one DraftOrderCard while the list loads.
+function DraftOrderSkeleton() {
+  return (
+    <div className="ui-card space-y-4 p-5 sm:p-6">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-2">
+          <Skeleton className="h-3 w-28" />
+          <Skeleton className="h-6 w-40" />
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className="h-4 w-56 max-w-full" />
+        </div>
+        <Skeleton className="h-6 w-24 rounded-full" />
+      </div>
+      <div className="space-y-2 border-y border-[#e3dfd8] py-3">
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-4 w-1/2" />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Skeleton className="h-11 rounded-lg" />
+        <Skeleton className="h-11 rounded-lg" />
+      </div>
+    </div>
   );
 }

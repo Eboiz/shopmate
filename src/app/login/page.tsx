@@ -2,11 +2,11 @@ import { Suspense } from "react";
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { safeNextPath } from "@/lib/auth-routes";
-import { LoginForm } from "./login-form";
+import { LoginForm, LoginFormSkeleton } from "./login-form";
 
 export default function LoginPage({ searchParams }: PageProps<"/login">) {
   return (
-    <LoginScreen><Suspense><LoginFormWithNext searchParams={searchParams} /></Suspense></LoginScreen>
+    <LoginScreen><Suspense fallback={<LoginFormSkeleton />}><LoginFormWithNext searchParams={searchParams} /></Suspense></LoginScreen>
   );
 }
 

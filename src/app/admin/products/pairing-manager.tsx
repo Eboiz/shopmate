@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
+import { SubmitButton } from "@/components/ui/submit-button";
 import { TextInput } from "@/components/ui/text-input";
 import { INITIAL_FORM_STATE, type FormAction } from "./form-state";
 
@@ -49,7 +50,7 @@ export function PairingManager({
           />
           <TextInput label="Lý do hợp nhau" name="reason" defaultValue={addState.values?.reason} />
           {addState.error && <ErrorMessage>{addState.error}</ErrorMessage>}
-          <Button type="submit" disabled={adding}>
+          <Button type="submit" loading={adding} loadingText="Đang thêm…">
             Thêm cặp phối đồ
           </Button>
         </form>
@@ -73,9 +74,10 @@ export function PairingManager({
               {canEdit && (
                 <form action={deleteAction}>
                   <input type="hidden" name="pairingId" value={pairing.id} />
-                  <Button type="submit" variant="danger" disabled={deleting}>
+                  {/* Every row shares deleteAction: only the pressed row spins, the others wait. */}
+                  <SubmitButton variant="danger" disabled={deleting} loadingText="Đang xoá…">
                     Xoá
-                  </Button>
+                  </SubmitButton>
                 </form>
               )}
             </li>

@@ -40,7 +40,7 @@ export function ProductEditor({
           />
         </div>
         {canEdit && (
-          <Button type="submit" disabled={pending} className="mt-6">
+          <Button type="submit" loading={pending} loadingText="Đang lưu…" className="mt-6">
             Lưu
           </Button>
         )}
@@ -83,7 +83,7 @@ function StockForm({
         />
       </div>
       {canEdit && (
-        <Button type="submit" variant="secondary" disabled={pending} className="mt-6">
+        <Button type="submit" variant="secondary" loading={pending} loadingText="Đang lưu…" className="mt-6">
           Lưu
         </Button>
       )}

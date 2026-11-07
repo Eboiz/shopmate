@@ -3,6 +3,7 @@
 import { useActionState, useState } from "react";
 import { signIn, type LoginState } from "./actions";
 import { Icon } from "@/components/ui/icon";
+import { LoadingRegion, Skeleton, Spinner } from "@/components/ui/skeleton";
 
 const initialState: LoginState = { error: null };
 
@@ -33,10 +34,26 @@ export function LoginForm({ next, preview = false }: { next: string; preview?: b
       <button
         type="submit"
         disabled={pending || preview}
+        aria-busy={pending || undefined}
         className="mt-2 flex min-h-12 items-center justify-center gap-3 rounded-lg bg-[#171717] px-4 py-2 font-semibold text-white transition-colors hover:bg-[#e9573f] disabled:opacity-60"
       >
-        <Icon name="login" className="size-4" />{preview ? "Bản xem thử giao diện" : pending ? "Đang đăng nhập..." : "Đăng nhập"}
+        {pending ? <Spinner /> : <Icon name="login" className="size-4" />}{preview ? "Bản xem thử giao diện" : pending ? "Đang đăng nhập..." : "Đăng nhập"}
       </button>
     </form>
+  );
+}
+
+// The form's frame while the page reads ?next=, so the card doesn't jump.
+export function LoginFormSkeleton() {
+  return (
+    <LoadingRegion label="Đang tải biểu mẫu đăng nhập…" className="flex flex-col gap-5">
+      {[0, 1].map((field) => (
+        <div key={field} className="flex flex-col gap-2">
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-12 w-full rounded-xl" />
+        </div>
+      ))}
+      <Skeleton className="mt-2 h-12 w-full rounded-lg" />
+    </LoadingRegion>
   );
 }
