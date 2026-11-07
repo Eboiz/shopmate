@@ -1,0 +1,38 @@
+name: Local stack
+description: Installs dependencies, starts a throwaway Supabase with every migration, seeds the demo shop and builds the app. Exports E2E_SUPABASE_* and NEXT_PUBLIC_SUPABASE_* for later steps.
+
+inputs:
+  build:
+    description: Build the Next.js app
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    # Only the services the app, the seed and the tests use.
+    - run: pnpm exec supabase start -x studio,imgproxy,edge-runtime,logflare,vector,mailpit,postgres-meta,supavisor,realtime
+      shell: bash
+    - name: Export the local keys (well-known local values, not secrets)
+      shell: bash
+      run: |
+        pnpm exec supabase status -o env > "$RUNNER_TEMP/supabase.env"
+        get() { grep "^$1=" "$RUNNER_TEMP/supabase.env" | cut -d= -f2- | tr -d '"'; }
+        {
+          echo "NEXT_PUBLIC_SUPABASE_URL=$(get API_URL)"
+          echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$(get PUBLISHABLE_KEY)"
+          echo "SUPABASE_SECRET_KEY=$(get SECRET_KEY)"
+          echo "E2E_SUPABASE_URL=$(get API_URL)"
+          echo "E2E_SUPABASE_SECRET_KEY=$(get SECRET_KEY)"
+        } >> "$GITHUB_ENV"
+    - run: pnpm db:seed
+      shell: bash
+    - if: inputs.build == 'true'
+      run: pnpm build
+      shell: bash

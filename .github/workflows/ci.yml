@@ -26,8 +26,10 @@ jobs:
       # Runs the seed script with plain Node, which also catches imports Vitest and tsc accept but Node can't run.
       - run: pnpm db:seed --check
 
-  # Database tests and integration tests against local Supabase in Docker.
-  integration:
+  # pgTAP tests (supabase/tests): schema, RLS between shops, constraints. Runs every
+  # migration on a throwaway Supabase first, so a broken migration fails here too.
+  # Then the integration tests (src/**/*.int.test.ts) against the same database.
+  db:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +39,7 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec supabase start
+      - run: pnpm exec supabase start -x studio,imgproxy,edge-runtime,logflare,vector,mailpit,postgres-meta,supavisor,realtime
       # Local keys only (printed by `supabase status`); they never leave the runner.
       - name: Export local Supabase env
         run: |
