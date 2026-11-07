@@ -2,7 +2,6 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatPrice, formatSizesInStock } from "@/lib/format";
-import { Icon } from "./icon";
 
 // Replace with the `products[]` item type once PB-00 merges.
 type ProductCardProps = {
@@ -35,10 +34,14 @@ export function ProductCard({
       className="object-cover transition-transform duration-500 group-hover:scale-[1.06]"
     />
   ) : (
-    <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[linear-gradient(140deg,#f2eee8,#ded8ce)] text-[#171717]">
-      <span aria-hidden="true" className={compact ? "text-2xl" : "text-5xl"}>✳</span>
-      {!compact && <span className="text-[10px] font-bold uppercase tracking-[.2em]">ShopMate selection</span>}
-    </span>
+    // No shop photo yet: a neutral stock photo, not a coloured block.
+    <Image
+      src="/images/product-placeholder.jpg"
+      alt=""
+      fill
+      sizes={compact ? "112px" : "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"}
+      className="object-cover"
+    />
   );
   const imageClass = `relative shrink-0 overflow-hidden bg-[#eeebe5] ${compact ? "w-24 self-stretch sm:w-28" : "aspect-[4/5] w-full"}`;
 
@@ -56,7 +59,7 @@ export function ProductCard({
             {formatSizesInStock(sizesInStock)}
           </p>
         )}
-        {(action || (href && !compact)) && <div className="mt-auto pt-2">{action ?? <Link href={href!} scroll={false} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#171717] px-2 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#c2412b] sm:text-sm">Xem chi tiết <Icon name="arrow" className="size-4" /></Link>}</div>}
+        {(action || (href && !compact)) && <div className="mt-auto pt-2">{action ?? <Link href={href!} scroll={false} className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-[#171717] px-2 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#c2412b] sm:text-sm">Xem chi tiết</Link>}</div>}
       </div>
     </article>
   );

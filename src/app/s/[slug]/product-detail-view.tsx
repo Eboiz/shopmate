@@ -3,7 +3,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
 import { compareSizes } from "@/lib/size-order";
 import type { ShopProduct } from "@/lib/shop/types";
@@ -50,11 +49,11 @@ export function ProductDetailView({ shopName, product, shopHref, onAsk }: Props)
       <header className="sticky top-0 z-20 border-b border-[#e3dfd8] bg-white/95 backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-10">
           <Link href={shopHref} className="flex min-w-0 items-center gap-3">
-            <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center bg-[#171717] text-xl font-black text-white">S</span>
+            <Image src="/images/shop-avatar.jpg" alt="" width={36} height={36} className="size-9 shrink-0 object-cover" />
             <span className="truncate text-lg font-black uppercase tracking-[-.04em] sm:text-xl">{shopName}<span className="text-[#e9573f]">.</span></span>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => onAsk(product)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#171717] px-4 text-sm font-bold transition-colors hover:bg-[#171717] hover:text-white"><Icon name="chat" className="size-4" />Chat</button>
+            <button type="button" onClick={() => onAsk(product)} className="inline-flex min-h-11 items-center rounded-lg border border-[#171717] px-4 text-sm font-bold transition-colors hover:bg-[#171717] hover:text-white">Chat</button>
           </div>
         </div>
       </header>
@@ -72,10 +71,7 @@ export function ProductDetailView({ shopName, product, shopHref, onAsk }: Props)
               {product.imageUrl ? (
                 <Image src={product.imageUrl} alt={product.name} fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover" />
               ) : (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[linear-gradient(140deg,#f2eee8,#ded8ce)] text-[#171717]">
-                  <span aria-hidden="true" className="text-8xl">✳</span>
-                  <span className="text-xs font-bold uppercase tracking-[.2em]">ShopMate selection</span>
-                </div>
+                <Image src="/images/product-placeholder.jpg" alt="" fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover" />
               )}
             </div>
             <p className="mt-3 text-xs text-[#706d67]">Ảnh sản phẩm do cửa hàng cung cấp</p>
@@ -95,8 +91,8 @@ export function ProductDetailView({ shopName, product, shopHref, onAsk }: Props)
             {canOrder && <div className="mt-6 flex items-center gap-4"><span className="text-sm font-semibold">Số lượng</span><div className="flex items-center overflow-hidden rounded-lg border border-[#8f8a82]"><button type="button" aria-label="Giảm số lượng" disabled={quantity <= 1} onClick={() => setQuantity((value) => Math.max(1, value - 1))} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">−</button><output className="min-w-10 text-center text-sm font-semibold tabular-nums">{quantity}</output><button type="button" aria-label="Tăng số lượng" disabled={quantity >= maxQuantity} onClick={() => setQuantity((value) => Math.min(maxQuantity, value + 1))} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">+</button></div>{selectedVariant && <span className="text-xs text-[#706d67]">Còn {selectedVariant.stock} sản phẩm</span>}</div>}
 
             <div className="mt-8 grid gap-3 sm:grid-cols-2">
-              <button type="button" onClick={() => onAsk(product)} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-[#171717] px-5 text-sm font-semibold transition-colors hover:bg-[#f5f3ef]"><Icon name="chat" className="size-5" /> Hỏi shop</button>
-              <button type="button" onClick={requestOrder} disabled={!canOrder} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#a83826] disabled:cursor-not-allowed disabled:opacity-50">Đặt qua chat <Icon name="arrow" className="size-4" /></button>
+              <button type="button" onClick={() => onAsk(product)} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-[#171717] px-5 text-sm font-semibold transition-colors hover:bg-[#f5f3ef]">Hỏi shop</button>
+              <button type="button" onClick={requestOrder} disabled={!canOrder} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#a83826] disabled:cursor-not-allowed disabled:opacity-50">Đặt qua chat</button>
             </div>
             <p className="mt-3 text-xs leading-5 text-[#706d67]">Yêu cầu đặt hàng được soạn sẵn trong chat; shop sẽ xác nhận trước khi tạo đơn.</p>
           </div>

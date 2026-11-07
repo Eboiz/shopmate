@@ -15,7 +15,7 @@ function ShopHeaderSkeleton({ detail = false }: { detail?: boolean }) {
           <Skeleton className="h-6 w-36" />
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Skeleton className={detail ? "h-11 w-24 rounded-lg" : "h-11 w-20 rounded-none sm:w-40"} />
+          <Skeleton className={detail ? "h-11 w-16 rounded-lg" : "h-11 w-16 rounded-none sm:w-36"} />
         </div>
       </div>
     </div>
@@ -44,8 +44,8 @@ export function ShopFrontSkeleton() {
               <Skeleton tone="dark" className="h-4 w-2/3" />
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Skeleton tone="dark" className="h-12 w-44 rounded-none" />
-              <Skeleton tone="dark" className="h-12 w-52 rounded-none" />
+              <Skeleton tone="dark" className="h-12 w-36 rounded-none" />
+              <Skeleton tone="dark" className="h-12 w-36 rounded-none" />
             </div>
           </div>
           <div aria-hidden="true" className="min-h-[320px] animate-pulse bg-[#33312d] lg:min-h-full" />
