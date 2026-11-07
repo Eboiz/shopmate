@@ -625,7 +625,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const text = productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
       : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
-    reply = { text, products: [], quickReplies: [] };
+    const products = (handoff === "postcheck_failed" && tc.product)
+      ? await deps.store.productCards(ctx.shopId, [tc.product.id])
+      : [];
+    reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "created") {
