@@ -53,7 +53,7 @@ Migrations reach the shared Supabase project only after they are merged to `main
 
 ## Rate limit (PB-17)
 
-Every channel handler (web chat, Messenger, Instagram, Telegram, WhatsApp) stores the shopper's message, then calls the limit before the engine:
+`receiveChannelMessage` (`src/lib/channels/receive.ts`) already applies it for every external channel (Messenger, Telegram, and later Instagram, WhatsApp). The web chat route (PB-04) stores the shopper's message, then calls it before the engine the same way:
 
 ```ts
 import { replyIfRateLimited } from "@/lib/guard/rate-limit";
