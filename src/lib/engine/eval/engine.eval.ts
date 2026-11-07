@@ -14,10 +14,12 @@ import { createSupabaseStore, type EngineStore } from "../store";
 import { assertLocalDb, FX, seedTwoShops } from "../test/two-shops";
 import type { Db } from "../types";
 import { evalCases } from "./cases";
+import { pb09Cases } from "./cases-pb09";
 import { aggregate, scoreRun, type ActualCall, type RunScore } from "./score";
 
 const RUNS = Number(process.env.EVAL_RUNS ?? 3);
-const cases = process.env.EVAL_CASE ? evalCases.filter((c) => c.id === process.env.EVAL_CASE) : evalCases;
+const allCases = [...evalCases, ...pb09Cases];
+const cases = process.env.EVAL_CASE ? allCases.filter((c) => c.id === process.env.EVAL_CASE) : allCases;
 
 type Run = { score: RunScore; latencyMs: number; inputTokens: number; outputTokens: number; toolCalls: number };
 const results = new Map<string, Run[]>();
