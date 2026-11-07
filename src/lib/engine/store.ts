@@ -1,4 +1,5 @@
 import { toolCallLogSchema, type ConversationMode, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
 import { sortSizes } from "./text";
@@ -35,6 +36,10 @@ export type EngineStore = {
   setNeedsHuman(ctx: ToolContext): Promise<void>;
   // Runs AFTER the reply is returned (see runEngine); returns the row id.
   insertTurn(row: TablesInsert<"ai_turns">): Promise<string>;
+  // PB-10: every product of the shop with its colors and sizes, for the Jev
+  // router (product choice, size/color matching). Optional: without it the router
+  // only knows the product on screen.
+  catalog?(shopId: string): Promise<CatalogItem[]>;
 };
 
 const MAX_CARDS = 10;
@@ -115,6 +120,25 @@ export function createSupabaseStore(db: Db): EngineStore {
           return [{ productId: p.id, name: p.name, price: p.price, imageUrl: p.image_url, sizesInStock: sortSizes(sizes) }];
         })
         .slice(0, MAX_CARDS);
+    },
+
+    async catalog(shopId) {
+      const [products, variants] = await Promise.all([
+        db.from("products").select("id, name, category").eq("shop_id", shopId).order("name"),
+        db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
+      ]);
+      if (products.error) throw new Error(`products: ${products.error.message}`);
+      if (variants.error) throw new Error(`variants: ${variants.error.message}`);
+      return products.data.map((p) => {
+        const own = variants.data.filter((v) => v.product_id === p.id);
+        return {
+          id: p.id,
+          name: p.name,
+          category: p.category,
+          colors: [...new Set(own.map((v) => v.color))],
+          sizes: sortSizes(own.map((v) => v.size)),
+        };
+      });
     },
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),
