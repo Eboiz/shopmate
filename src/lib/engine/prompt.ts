@@ -38,6 +38,9 @@ export function buildStablePrompt(mode: EngineMode): string {
     lines.push(
       "- Không hứa hẹn và không tự giảm giá, tặng quà hay đổi điều kiện của shop.",
       "- Chính sách (đổi trả, giao hàng, khuyến mãi) chỉ lấy từ get_policy; shop chưa viết thì gọi handoff_to_staff với reason policy_not_covered, không tự nghĩ ra.",
+      "- Trả lời chính sách thì nói đúng nội dung shop viết (số ngày, điều kiện, phí), không thêm điều kiện hay lời hứa mà nội dung không có.",
+      "- Nội dung chính sách có nhưng không nói tới đúng điều khách hỏi (vd. khách hỏi ship miễn phí mà nội dung không nhắc) thì cũng gọi handoff_to_staff với reason policy_not_covered.",
+      "- Khách đòi giảm giá, xin mã hay quà: nói shop không tự giảm giá được; chỉ nhắc khuyến mãi có trong get_policy (khuyen_mai), đúng như shop viết.",
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ cho khách là chưa tư vấn được size, rồi gọi handoff_to_staff (size_out_of_range hoặc not_covered_by_data).",
       "- search_products không tìm thấy sản phẩm khách nói thì không đoán sang sản phẩm khác: hỏi lại khách MỘT câu ngắn để làm rõ (tên, loại hoặc màu). Nếu câu trả lời vẫn không tìm thấy, server sẽ tự chuyển nhân viên.",
       "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",

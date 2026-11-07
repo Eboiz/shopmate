@@ -15,6 +15,7 @@ import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
+import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
@@ -209,6 +210,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     called: false, failed: false, needsProduct: false, items: [],
   };
   let knownSize = knownShopperSize(input.history);
+  let discountRetried = false;
+  let discountBlocked = false;
 
   for (;;) {
     const c0 = now();
@@ -249,6 +252,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       modelReply = parseModelReply(text).reply;
       finalFirstTokenAt = firstTokenAt;
+      // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
+      // offer gets one regeneration; a second one hands off (below the loop).
+      if (mode === "customer" && modelReply && !pairingState.called
+        && findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null) {
+        if (!discountRetried) {
+          discountRetried = true;
+          messages.push(
+            { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+            { role: "user", content: DISCOUNT_RETRY_NOTE },
+          );
+          continue;
+        }
+        discountBlocked = true;
+      }
       break;
     }
 
@@ -318,6 +335,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
     && answersAiMessage(input.history) && searchMissed(logs);
   if (productMissedTwice) handoff = "misunderstood_twice";
+  else if (discountBlocked) handoff = "postcheck_failed";
 
   // A matching question must not depend on the model remembering the tool. If
   // it forgot, query the product the shopper is viewing on the server. Without
@@ -342,8 +360,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
-    if (handoff === "too_many_tool_calls" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
-    const text = productMissedTwice ? PRODUCT_NOT_FOUND_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
+    if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
+    const text = productMissedTwice
+      ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
+      : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
     reply = { text, products: [], quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
