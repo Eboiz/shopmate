@@ -8,12 +8,22 @@ import { sendToConversation } from "./send";
 // The shop's account on a channel, already looked up by the webhook
 // (Messenger by Page ID, Telegram by the id in its webhook URL).
 export type ChannelAccountRef = { id: string; shopId: string; channel: Exclude<Channel, "web"> };
+// Web chat (PB-04) has no channel account: the route resolved the shop from the slug.
+export type WebChatRef = { channel: "web"; shopId: string };
+export type MessageSource = ChannelAccountRef | WebChatRef;
 
 export type IncomingMessage = {
-  // The shopper's id on the channel, and the channel's id for this message.
+  // The shopper's id on the channel, and the channel's id for this message
+  // (web chat: the hashed cookie id and the browser's clientMessageId).
   externalId: string;
   messageId: string;
+  // The product the shopper tapped "Hỏi về món này" on (web chat), already
+  // checked by the route to belong to the shop.
+  productId?: string | null;
 } & ({ text: string } | { imageUrls: string[] });
+
+// Postgres unique_violation: web chat's (conversation_id, client_message_id) key.
+const UNIQUE_VIOLATION = "23505";
 
 export const HISTORY_LIMIT = 20;
 export const HANDOFF_TEXT = "Cảm ơn bạn! Nhân viên shop sẽ trả lời bạn ngay.";
@@ -21,11 +31,11 @@ export const PHOTO_HANDOFF_TEXT = "Cảm ơn bạn! Nhân viên shop sẽ xem �
 
 const notice = (text: string): Reply => ({ text, products: [], quickReplies: [] });
 
-// One shopper message from an external channel (Messenger, Telegram, ...):
+// One shopper message from any channel (web chat, Messenger, Telegram, ...):
 // dedupe, store it, and let the AI answer while the conversation is in `ai` mode.
-// Uses the secret key, so every query filters by the account's shop_id.
+// Uses the secret key, so every query filters by the source's shop_id.
 export async function receiveChannelMessage(
-  account: ChannelAccountRef,
+  account: MessageSource,
   incoming: IncomingMessage,
   onThinking?: () => Promise<void>,
 ): Promise<"duplicate" | "stored" | "rate_limited" | "answered" | "handed_off"> {
@@ -38,17 +48,20 @@ export async function receiveChannelMessage(
   };
 
   // A channel delivers a message again when we answer late; only the first counts.
-  const firstTime = must(
-    await db
-      .from("channel_events")
-      .upsert(
-        { channel_account_id: account.id, external_message_id: incoming.messageId, shop_id },
-        { onConflict: "channel_account_id,external_message_id", ignoreDuplicates: true },
-      )
-      .select("external_message_id"),
-    "dedupe",
-  );
-  if (firstTime.length === 0) return "duplicate";
+  // Web chat has no channel account: it dedupes on the message row itself below.
+  if (account.channel !== "web") {
+    const firstTime = must(
+      await db
+        .from("channel_events")
+        .upsert(
+          { channel_account_id: account.id, external_message_id: incoming.messageId, shop_id },
+          { onConflict: "channel_account_id,external_message_id", ignoreDuplicates: true },
+        )
+        .select("external_message_id"),
+      "dedupe",
+    );
+    if (firstTime.length === 0) return "duplicate";
+  }
 
   // Find or create the shopper and their one conversation. ignoreDuplicates leaves
   // an existing row untouched, so a conversation staff took over stays `staff`.
@@ -56,7 +69,7 @@ export async function receiveChannelMessage(
   must(
     await db
       .from("shoppers")
-      .upsert({ ...shopperKey, channel_account_id: account.id }, { onConflict: "shop_id,channel,external_id", ignoreDuplicates: true }),
+      .upsert({ ...shopperKey, channel_account_id: account.channel === "web" ? null : account.id }, { onConflict: "shop_id,channel,external_id", ignoreDuplicates: true }),
     "shopper",
   );
   const shopper = must(
@@ -73,17 +86,25 @@ export async function receiveChannelMessage(
   );
 
   const text = "text" in incoming ? incoming.text : `[Khách gửi ảnh] ${incoming.imageUrls.join(" ")}`;
+  const stored = await db.from("messages").insert({
+    shop_id,
+    conversation_id: conversation.id,
+    sender: "shopper",
+    text,
+    client_message_id: account.channel === "web" ? incoming.messageId : null,
+  });
+  // Web chat: the browser retried a message that is already stored.
+  if (account.channel === "web" && stored.error?.code === UNIQUE_VIOLATION) return "duplicate";
+  must(stored, "message");
   // A new shopper message also moves the conversation to the top of the inbox, in every mode.
-  const [stored, bumped] = await Promise.all([
-    db.from("messages").insert({ shop_id, conversation_id: conversation.id, sender: "shopper", text }),
-    db
+  must(
+    await db
       .from("conversations")
       .update({ last_message_at: new Date().toISOString() })
       .eq("id", conversation.id)
       .eq("shop_id", shop_id),
-  ]);
-  must(stored, "message");
-  must(bumped, "bump");
+    "bump",
+  );
 
   if (conversation.mode !== "ai") return "stored";
 
@@ -129,7 +150,12 @@ export async function receiveChannelMessage(
 
   let reply: Reply;
   try {
-    ({ reply } = await runEngine({ mode: "customer", conversationId: conversation.id, history }));
+    ({ reply } = await runEngine({
+      mode: "customer",
+      conversationId: conversation.id,
+      history,
+      productId: incoming.productId ?? null,
+    }));
   } catch (error) {
     console.error("engine failed, handing off", error);
     return handOff(notice(HANDOFF_TEXT));

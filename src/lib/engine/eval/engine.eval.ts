@@ -6,6 +6,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import type { TablesInsert } from "@/contract";
+import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createAnthropicModel } from "../anthropic-model";
 import { runEngine } from "../engine";
@@ -13,10 +14,14 @@ import { createSupabaseStore, type EngineStore } from "../store";
 import { assertLocalDb, FX, seedTwoShops } from "../test/two-shops";
 import type { Db } from "../types";
 import { evalCases } from "./cases";
+import { pb05EvalCases } from "./cases-pb05";
+import { pb06Cases } from "./cases-pb06";
+import { pb09Cases } from "./cases-pb09";
 import { aggregate, scoreRun, type ActualCall, type RunScore } from "./score";
 
 const RUNS = Number(process.env.EVAL_RUNS ?? 3);
-const cases = process.env.EVAL_CASE ? evalCases.filter((c) => c.id === process.env.EVAL_CASE) : evalCases;
+const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases, ...pb09Cases];
+const cases = process.env.EVAL_CASE ? allCases.filter((c) => c.id === process.env.EVAL_CASE) : allCases;
 
 type Run = { score: RunScore; latencyMs: number; inputTokens: number; outputTokens: number; toolCalls: number };
 const results = new Map<string, Run[]>();
@@ -40,6 +45,18 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
       for (let i = 0; i < RUNS; i++) {
         // handoff_to_staff moves the conversation; every run starts in mode ai.
         await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
+        // The engine reads the conversation's previous AI turn (PB-05), so earlier
+        // runs must not leak into this one: start from the case's own previous turn.
+        await db.from("ai_turns").delete().eq("conversation_id", FX.a.conversation);
+        if (c.previousTurn) {
+          await store.insertTurn({
+            shop_id: FX.a.shop,
+            conversation_id: FX.a.conversation,
+            mode: "customer",
+            latency_ms: 0,
+            tool_calls: c.previousTurn as NonNullable<Json>,
+          });
+        }
         let row: TablesInsert<"ai_turns"> | null = null;
         const capturing: EngineStore = {
           ...store,
@@ -59,8 +76,11 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
           name: t.name,
           input: t.input,
         }));
+        const outcome = { handoffReason: result.handoffReason, replyText: result.output.reply.text };
+        const score = scoreRun(c, calls, outcome);
+        if (!score.passed) console.info(`${c.id} failed:`, JSON.stringify({ calls, ...outcome, score }));
         runs.push({
-          score: scoreRun(c, calls, result.output.reply.text),
+          score,
           latencyMs: turn.latency_ms,
           inputTokens: turn.input_tokens ?? 0,
           outputTokens: turn.output_tokens ?? 0,

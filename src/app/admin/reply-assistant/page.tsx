@@ -1,3 +1,4 @@
+import { generateStaffDraft } from "./actions";
 import { ReplyAssistant } from "./reply-assistant";
 
 export default function ReplyAssistantPage() {
@@ -7,7 +8,7 @@ export default function ReplyAssistantPage() {
         <h1 className="text-xl font-semibold">Trợ lý trả lời</h1>
         <p className="mt-1 text-sm">Soạn và chỉnh sửa câu trả lời trước khi gửi cho khách.</p>
       </header>
-      <ReplyAssistant />
+      <ReplyAssistant generateDraftAction={generateStaffDraft} />
     </section>
   );
 }

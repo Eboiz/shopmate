@@ -14,13 +14,18 @@ import {
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
+import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
+import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { createLangfuseSink } from "./langfuse";
+import { normalizeSizeInput } from "./measurements";
+import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
 import { EngineError, type Db, type ToolHandlers } from "./types";
@@ -34,6 +39,7 @@ export const HANDOFF_TEXT =
 const HANDOFF_SUFFIX = "Mình đã chuyển câu hỏi của bạn cho nhân viên shop, nhân viên sẽ trả lời bạn sớm nhé!";
 export const SIZE_OUT_OF_RANGE_HANDOFF_TEXT = `Dạ, số đo của bạn nằm ngoài bảng size của shop nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
 export const NO_SIZE_CHART_HANDOFF_TEXT = `Dạ, sản phẩm này shop chưa có bảng size nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
+export const PRODUCT_NOT_FOUND_HANDOFF_TEXT = `Dạ, mình vẫn chưa tìm thấy sản phẩm bạn hỏi trong shop. ${HANDOFF_SUFFIX}`;
 
 type SizeStatus = "out_of_range" | "no_chart" | null;
 
@@ -142,7 +148,10 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
   };
 }
 
-const isWriteTool = (name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
+const lastShopperText = (history: EngineInput["history"]) =>
+  history.findLast((message) => message.sender === "shopper")?.text ?? "";
+
+const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
 
 export async function runEngine(rawInput: EngineInput, partialDeps: Partial<EngineDeps> = {}): Promise<EngineResult> {
   const deps = resolveDeps(partialDeps);
@@ -152,6 +161,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const mode = input.mode;
 
   if (mode === "staff_draft" && !deps.staffShopId) throw new EngineError("staff_shop_not_resolved");
+  // PB-20: a complaint gets "reply personally", not a draft. Decided by the server
+  // before any model call, so it costs nothing and logs no turn.
+  if (mode === "staff_draft" && isComplaint(lastShopperText(input.history))) {
+    return {
+      output: { reply: { text: PERSONAL_REPLY_TEXT, products: [], quickReplies: [] }, personalReplyNeeded: true },
+      handoffReason: null,
+      turnLogged: Promise.resolve(null),
+    };
+  }
   // ONE read for everything needed before the model call.
   const tc = await deps.store.loadTurnContext({
     conversationId: input.mode === "customer" ? input.conversationId : null,
@@ -187,12 +205,19 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let handoff: HandoffReason | null = null;
   let truncated = false;
   let sizeStatus: SizeStatus = null;
+  // PB-06 post-check: the last ok recommend_size result of this turn, the product
+  // it was for, and whether the model already got its one retry.
+  let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
+  let sizeRetried = false;
+  let sizeFallback = false;
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
   const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
     called: false, failed: false, needsProduct: false, items: [],
   };
   let knownSize = knownShopperSize(input.history);
+  let discountRetried = false;
+  let discountBlocked = false;
 
   for (;;) {
     const c0 = now();
@@ -231,8 +256,39 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
     if (res.stop_reason !== "tool_use") {
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-      modelReply = parseModelReply(text).reply;
+      const parsed = parseModelReply(text);
+      // sizeAdvice is set inside a callback; TS can't see it.
+      const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice;
+      const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
+      // A matching question gets a reply built from get_pairings, not this text.
+      const sizeOk = !advice || !parsed.ok || isMatchingQuestion(input.history)
+        || replyMatchesSize(parsed.reply.text, advice, otherSizes());
+      if (!sizeOk && !sizeRetried) {
+        // Ask once more, with the tool's size spelled out.
+        sizeRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: sizeCorrection(advice!) },
+        );
+        continue;
+      }
+      sizeFallback = !sizeOk;
+      modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
+      // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
+      // offer gets one regeneration; a second one hands off (below the loop).
+      if (mode === "customer" && modelReply && !pairingState.called
+        && findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null) {
+        if (!discountRetried) {
+          discountRetried = true;
+          messages.push(
+            { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+            { role: "user", content: DISCOUNT_RETRY_NOTE },
+          );
+          continue;
+        }
+        discountBlocked = true;
+      }
       break;
     }
 
@@ -247,9 +303,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
     const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
       const s0 = now();
+      // recommend_size gets the height and weight the shopper actually wrote
+      // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.
       const effectiveInput = u.name === "get_pairings" && u.input && typeof u.input === "object"
         ? { ...u.input, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
-        : u.input;
+        : u.name === "recommend_size"
+          ? normalizeSizeInput(u.input, input.history)
+          : u.input;
       const run = await executeTool(u.name, effectiveInput, ctx, mode, deps.handlers, deps.db);
       return { run, ms: now() - s0, startMs: s0 - t0 };
     });
@@ -260,7 +320,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       if (run.log) logs.push(run.log);
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
-      if (u.name === "recommend_size" && !run.isError) sizeStatus = sizeStatusOf(run.content);
+      if (u.name === "recommend_size" && !run.isError) {
+        sizeStatus = sizeStatusOf(run.content);
+        const out = run.log?.output as { status?: string } | undefined;
+        const productId = (run.log?.input as { productId?: string } | undefined)?.productId;
+        if (out?.status === "ok" && productId) sizeAdvice = { advice: out as SizeAdvice, productId };
+      }
       if (u.name === "recommend_size" && !run.isError && !knownSize) {
         const size = (run.log?.output as { status?: string; size?: string } | undefined);
         if (size?.status === "ok") knownSize = size.size ?? null;
@@ -292,6 +357,21 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     );
   }
 
+  // PB-05: the product name matched nothing last turn (the AI asked one
+  // clarifying question) and the shopper's answer matches nothing again. The
+  // engine hands off itself; the model's second guess is not sent.
+  const productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
+    && answersAiMessage(input.history) && searchMissed(logs);
+  if (productMissedTwice) handoff = "misunderstood_twice";
+  else if (discountBlocked) handoff = "postcheck_failed";
+
+  // PB-06 AC4: measurements outside the chart, or a product with no chart, always
+  // end in a handoff, even when the model answered instead of calling
+  // handoff_to_staff. (sizeStatus is set inside a callback; TS can't see it.)
+  const finalSizeStatus = sizeStatus as SizeStatus;
+  const sizeHandoff = mode === "customer" && !handoff && finalSizeStatus !== null;
+  if (sizeHandoff) handoff = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
+
   // A matching question must not depend on the model remembering the tool. If
   // it forgot, query the product the shopper is viewing on the server. Without
   // a product, ask which item they mean instead of showing invented matches.
@@ -315,12 +395,24 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
-    if (handoff === "too_many_tool_calls") await deps.store.setNeedsHuman(ctx);
-    reply = { text: handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
+    if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice || sizeHandoff) await deps.store.setNeedsHuman(ctx);
+    const text = productMissedTwice
+      ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
+      : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
+    reply = { text, products: [], quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
     reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+  } else if (sizeFallback && sizeAdvice) {
+    // The model named a size the size function didn't return, twice: the reply
+    // is written from the tool result, with the product's card from the database.
+    const { advice, productId } = sizeAdvice as { advice: SizeAdvice; productId: string };
+    reply = {
+      text: sizeFallbackText(advice),
+      products: await deps.store.productCards(ctx.shopId, [productId]),
+      quickReplies: [],
+    };
   } else if (pairingState.called) {
     const cards = pairingState.items.length === 0
       ? []
@@ -338,7 +430,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       quickReplies: modelReply.quickReplies,
     };
   }
-  // personalReplyNeeded belongs to PB-20.
+  // A complaint returned early above (PB-20).
   const output = engineOutputSchema.parse({ reply, personalReplyNeeded: false });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 

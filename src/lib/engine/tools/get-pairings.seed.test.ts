@@ -32,8 +32,15 @@ const variants = demo.variants.filter((variant) => variant.stock > 0).map((varia
 }));
 
 describe("PB-08 on the PB-02 demo seed", () => {
-  it("checks 60 pairing directions and size scenarios without a wrong-stock or wrong-size suggestion", () => {
-    expect(demo.pairings).toHaveLength(10);
+  it("checks every pairing direction and size scenario without a wrong-stock or wrong-size suggestion", () => {
+    expect(demo.pairings).toHaveLength(30);
+    const eligibleSizes = (code: string, size: string | undefined) => [...new Set(variants
+      .filter((variant) => variant.product_id === id(code) && (size === undefined || variant.size === size))
+      .map((variant) => variant.size))];
+    // A product may be in several pairs (SP27 goes with SP03 and SP31): all of them come back.
+    const partners = (code: string) => demo.pairings
+      .filter((pair) => pair.a === code || pair.b === code)
+      .map((pair) => ({ code: pair.a === code ? pair.b : pair.a, reason: pair.reason }));
     let scenarios = 0;
     for (const pair of demo.pairings) {
       for (const source of [pair.a, pair.b]) {
@@ -41,14 +48,15 @@ describe("PB-08 on the PB-02 demo seed", () => {
         for (const size of [undefined, "S", "M"]) {
           scenarios += 1;
           const result = resolvePairings(id(source), size, rows, products, variants);
-          const eligibleSizes = [...new Set(variants
-            .filter((variant) => variant.product_id === id(other) && (size === undefined || variant.size === size))
-            .map((variant) => variant.size))];
-          expect(result.pairings.map((item) => item.productId)).toEqual(eligibleSizes.length ? [id(other)] : []);
+          const expected = partners(source).filter((p) => eligibleSizes(p.code, size).length > 0);
+          expect(result.pairings.map((item) => item.productId)).toEqual(expected.map((p) => id(p.code)));
           for (const item of result.pairings) {
-            expect(item.reason).toBe(pair.reason);
-            expect(item.sizesInStock.every((value) => eligibleSizes.includes(value))).toBe(true);
+            const partner = expected.find((p) => id(p.code) === item.productId)!;
+            expect(item.reason).toBe(partner.reason);
+            expect(item.sizesInStock.every((value) => eligibleSizes(partner.code, size).includes(value))).toBe(true);
           }
+          const own = result.pairings.find((item) => item.productId === id(other));
+          if (own) expect(own.reason).toBe(pair.reason);
 
           const cards = result.pairings.map((item) => ({
             productId: item.productId, name: item.name, price: item.price,
@@ -56,12 +64,14 @@ describe("PB-08 on the PB-02 demo seed", () => {
           }));
           const reply = matchingReply(result.pairings, cards);
           expect(reply.products.length).toBeLessThanOrEqual(2);
-          expect(reply.products.map((item) => item.productId)).toEqual(result.pairings.map((item) => item.productId));
-          if (reply.products.length > 0) expect(reply.text).toContain(pair.reason);
+          // The reply keeps the first two suggestions, in the tool's order, with their reasons.
+          const shown = result.pairings.slice(0, 2);
+          expect(reply.products.map((item) => item.productId)).toEqual(shown.map((item) => item.productId));
+          for (const item of shown) expect(reply.text).toContain(item.reason);
         }
       }
     }
-    expect(scenarios).toBe(60);
+    expect(scenarios).toBe(demo.pairings.length * 2 * 3);
   });
 
   it("returns no suggestion for a product with no declared pairing", () => {

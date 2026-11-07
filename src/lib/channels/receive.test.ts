@@ -19,6 +19,12 @@ function query(table: string) {
       const keys = op.onConflict?.split(",") ?? [];
       const clash = keys.length > 0 && rows().some((r) => keys.every((k) => r[k] === op.row![k]));
       if (clash) return { data: [], error: null };
+      // messages: unique (conversation_id, client_message_id), web chat's dedupe key.
+      const r = op.row!;
+      if (table === "messages" && r.client_message_id != null &&
+        rows().some((m) => m.conversation_id === r.conversation_id && m.client_message_id === r.client_message_id)) {
+        return { data: null, error: { code: "23505", message: "duplicate key value" } };
+      }
       const row = { id: `${table}-${nextId++}`, created_at: String(nextId).padStart(4, "0"), ...defaults(table), ...op.row };
       rows().push(row);
       return { data: [row], error: null };
@@ -42,12 +48,12 @@ function query(table: string) {
     order: (_k: string, o: { ascending: boolean }) => ((descending = !o.ascending), chain),
     limit: (n: number) => ((limit = n), chain),
     single: async () => {
-      const { data } = run();
+      const data = run().data ?? [];
       return data.length === 1 ? { data: data[0], error: null } : { data: null, error: { message: `${data.length} rows` } };
     },
     then: (resolve: (v: unknown) => void) => {
       const result = run();
-      resolve(returning || op.kind === "select" ? result : { data: null, error: null });
+      resolve(returning || op.kind === "select" || result.error ? result : { data: null, error: null });
     },
   };
   return chain;
@@ -102,6 +108,7 @@ describe("receiveChannelMessage", () => {
       mode: "customer",
       conversationId: conversation().id,
       history: [{ sender: "shopper", text: "Váy suông linen size nào vừa 1m58?" }],
+      productId: null,
     });
     expect(thinking).toHaveBeenCalledOnce();
     expect(sent).toEqual([{ conversationId: conversation().id, reply: answer, from: "ai" }]);
@@ -140,6 +147,17 @@ describe("receiveChannelMessage", () => {
     expect(engine).toHaveBeenCalledOnce();
     expect(sent).toEqual([]);
     expect(conversation().mode).toBe(mode);
+  });
+
+  it("answers again once staff hand the conversation back to the AI (PB-13)", async () => {
+    await receiveChannelMessage(account, text("mid-1"));
+    conversation().mode = "staff";
+    expect(await receiveChannelMessage(account, text("mid-2"))).toBe("stored");
+    conversation().mode = "ai"; // "Trả lại cho AI"
+    sent.length = 0;
+    expect(await receiveChannelMessage(account, text("mid-3"))).toBe("answered");
+    expect(engine).toHaveBeenCalledTimes(2);
+    expect(sent).toEqual([{ conversationId: conversation().id, reply: answer, from: "ai" }]);
   });
 
   it("hands off to staff with a notice when the engine fails", async () => {
@@ -226,5 +244,50 @@ describe("receiveChannelMessage", () => {
     await receiveChannelMessage({ id: "acc-b", shopId: "shop-b", channel: "messenger" }, text("mid-1"));
     expect(tables.shoppers.map((s) => s.shop_id)).toEqual(["shop-a", "shop-b"]);
     expect(tables.conversations.map((c) => c.shop_id)).toEqual(["shop-a", "shop-b"]);
+  });
+});
+
+describe("receiveChannelMessage on web chat (PB-04)", () => {
+  const web = { channel: "web" as const, shopId: "shop-a" };
+  const webText = (clientMessageId: string, t = "Váy này còn size M không?", productId: string | null = null) => ({
+    externalId: "cookie-hash-1",
+    messageId: clientMessageId,
+    text: t,
+    productId,
+  });
+
+  it("creates a web shopper with no channel account and never touches channel_events", async () => {
+    expect(await receiveChannelMessage(web, webText("c-1"))).toBe("answered");
+    expect(tables.shoppers).toMatchObject([{ shop_id: "shop-a", channel: "web", external_id: "cookie-hash-1", channel_account_id: null }]);
+    expect(tables.channel_events).toBeUndefined();
+    expect(shopperMessages()).toMatchObject([{ client_message_id: "c-1", text: "Váy này còn size M không?" }]);
+  });
+
+  it("passes the product being asked about to the engine", async () => {
+    const productId = "11111111-1111-4111-8111-111111111111";
+    await receiveChannelMessage(web, webText("c-1", "Váy này còn size M không?", productId));
+    expect(engine).toHaveBeenCalledWith(expect.objectContaining({ mode: "customer", productId }));
+  });
+
+  it("dedupes a retried send by clientMessageId", async () => {
+    await receiveChannelMessage(web, webText("c-1"));
+    expect(await receiveChannelMessage(web, webText("c-1"))).toBe("duplicate");
+    expect(shopperMessages()).toHaveLength(1);
+    expect(engine).toHaveBeenCalledOnce();
+    expect(await receiveChannelMessage(web, webText("c-2"))).toBe("answered");
+    expect(shopperMessages()).toHaveLength(2);
+  });
+
+  it("stores but does not answer once staff took over", async () => {
+    await receiveChannelMessage(web, webText("c-1"));
+    conversation().mode = "staff";
+    expect(await receiveChannelMessage(web, webText("c-2"))).toBe("stored");
+    expect(engine).toHaveBeenCalledOnce();
+  });
+
+  it("applies the PB-17 rate limit", async () => {
+    rateLimited.mockResolvedValue(true);
+    expect(await receiveChannelMessage(web, webText("c-1"))).toBe("rate_limited");
+    expect(engine).not.toHaveBeenCalled();
   });
 });
