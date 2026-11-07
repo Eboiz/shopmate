@@ -1,9 +1,13 @@
-// Loads the demo shop (PB-02) from supabase/seed/demo/*.csv, plus an eval shop with
-// the same data (PB-10) and the demo owner and staff accounts (PB-19).
+// Loads one shop from supabase/seed/<data>/*.csv, plus an eval shop with the same
+// data (PB-10) and that shop's owner and staff accounts (PB-19). Two data sets:
+//   demo          Hạnh Boutique, the PO's catalog and test set (PB-28); the default.
+//                 Accounts DEMO_OWNER_* / DEMO_STAFF_*; the only shop with chat channels.
+//   may-boutique  Mây Boutique, the 60-product catalog of PR #41.
+//                 Accounts MAY_BOUTIQUE_OWNER_* / MAY_BOUTIQUE_STAFF_*.
 //
-//   pnpm db:seed                                   local Supabase (`pnpm db:start`)
+//   pnpm db:seed [--data=<name>]                   local Supabase (`pnpm db:start`)
 //   pnpm db:seed --target=shared --confirm=<ref>   the team's Supabase project
-//   pnpm db:seed --check                           only read and check the CSV files
+//   pnpm db:seed --check [--data=<name>]           only read and check the CSV files
 //   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15, PB-21)
 //     [--telegram-webhook=<base URL>]             also point the Telegram bot's webhook there
 //
@@ -19,10 +23,9 @@ import { readDemoData, SHEET_COLUMNS, type DemoData, type SheetName } from "../s
 import { checkTestQuestions } from "../src/lib/seed/questions.ts";
 
 const root = new URL("../", import.meta.url);
-const demoDir = new URL("supabase/seed/demo/", root);
 const { values: args } = parseArgs({
   options: { check: { type: "boolean" }, target: { type: "string" }, confirm: { type: "string" }, only: { type: "string" },
-    "telegram-webhook": { type: "string" }, accounts: { type: "string" } },
+    "telegram-webhook": { type: "string" }, accounts: { type: "string" }, data: { type: "string", default: "demo" } },
 });
 
 function fail(message: string): never {
@@ -30,18 +33,31 @@ function fail(message: string): never {
   process.exit(1);
 }
 
+const dataSet = args.data;
+if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(dataSet)) fail(`--data=${dataSet}: use a folder name of supabase/seed/`);
+const dataPath = `supabase/seed/${dataSet}`;
+const demoDir = new URL(`${dataPath}/`, root);
+if (!existsSync(new URL("shop.csv", demoDir))) fail(`${dataPath}/shop.csv not found`);
+// The Facebook Page and the Telegram bot can belong to one shop only: the PO's demo shop.
+const hasChannels = dataSet === "demo";
+const accountPrefix = dataSet === "demo" ? "DEMO" : dataSet.toUpperCase().replaceAll("-", "_");
+
 // 1. Read and check every sheet before touching any database.
 const csv = Object.fromEntries(
   (Object.keys(SHEET_COLUMNS) as SheetName[]).map((s) => [s, readFileSync(new URL(`${s}.csv`, demoDir), "utf8")]),
 ) as Record<SheetName, string>;
-const { data, errors, warnings } = readDemoData(csv);
+const { data, errors, warnings } = readDemoData(csv, { expectCounts: dataSet === "demo" });
 for (const w of warnings) console.warn(`! ${w}`);
-if (!data) fail(`supabase/seed/demo has ${errors.length} error(s):\n  ${errors.join("\n  ")}`);
-console.log(`✓ CSV: ${data.products.length} products, ${data.variants.length} variants, ${data.pairings.length} pairings`);
-const questionCsv = readFileSync(new URL("test_questions.csv", demoDir), "utf8");
-const questionErrors = checkTestQuestions(data, questionCsv);
-if (questionErrors.length) fail(questionErrors.join("\n  "));
-console.log("✓ PO test set: 60 question fixtures match the catalog labels");
+if (!data) fail(`${dataPath} has ${errors.length} error(s):\n  ${errors.join("\n  ")}`);
+console.log(`✓ CSV ${dataSet}: ${data.products.length} products, ${data.variants.length} variants, ${data.pairings.length} pairings`);
+// Only the PO's data set has a test set (PB-28).
+const questionFile = new URL("test_questions.csv", demoDir);
+const questionCsv = existsSync(questionFile) ? readFileSync(questionFile, "utf8") : null;
+if (questionCsv !== null) {
+  const questionErrors = checkTestQuestions(data, questionCsv);
+  if (questionErrors.length) fail(questionErrors.join("\n  "));
+  console.log("✓ PO test set: 60 question fixtures match the catalog labels");
+}
 if (args.only !== "channels") {
   for (const product of data.products) {
     const path = new URL(`images/${product.code}.jpg`, demoDir);
@@ -56,6 +72,7 @@ if (args.only !== "channels") {
 if (args.accounts !== undefined && args.accounts !== "existing") fail("use --accounts=existing to reuse the current demo accounts");
 if (args.check) process.exit(0);
 if (args.only !== undefined && args.only !== "channels") fail(`unknown --only=${args.only}; use --only=channels`);
+if (args.only === "channels" && !hasChannels) fail("chat channels belong to the demo shop: drop --data");
 
 // 2. Pick the target. Local is the default; the shared project needs its ref typed out.
 const envFile = new URL(".env.local", root);
@@ -81,12 +98,12 @@ function connection() {
 const { url, secretKey, publishableKey } = connection();
 
 const accounts = (["owner", "staff"] as const).map((role) => {
-  const prefix = `DEMO_${role.toUpperCase()}`;
+  const prefix = `${accountPrefix}_${role.toUpperCase()}`;
   const email = process.env[`${prefix}_EMAIL`]?.trim() || fail(`${prefix}_EMAIL is not set in .env.local`);
   const password = process.env[`${prefix}_PASSWORD`] || fail(`${prefix}_PASSWORD is not set in .env.local`);
   return { role, email: email.toLowerCase(), password };
 });
-if (accounts[0].email === accounts[1].email) fail("DEMO_OWNER_EMAIL and DEMO_STAFF_EMAIL must be different accounts");
+if (accounts[0].email === accounts[1].email) fail(`${accountPrefix}_OWNER_EMAIL and ${accountPrefix}_STAFF_EMAIL must be different accounts`);
 type Account = (typeof accounts)[number];
 console.log(`→ Seeding ${url}`);
 
@@ -103,12 +120,13 @@ function ok(result: { error: { message: string } | null }, what: string) {
   if (result.error) fail(`${what}: ${result.error.message}`);
 }
 
-// 3. Product photos: supabase/seed/demo/images/<code>.jpg, shared by both shops.
+// 3. Product photos: supabase/seed/<data>/images/<code>.jpg, shared by the shop and its
+// eval copy. The bucket is keyed by product code, so data sets must not share codes.
 async function uploadImages(d: DemoData) {
   const bucket = db.storage.from("product-images");
   const codes = d.products.map((p) => p.code).filter((code) => {
     const found = existsSync(new URL(`images/${code}.jpg`, demoDir));
-    if (!found) console.warn(`! ${code}: no photo in supabase/seed/demo/images/${code}.jpg`);
+    if (!found) console.warn(`! ${code}: no photo in ${dataPath}/images/${code}.jpg`);
     return found;
   });
   // 5 at a time, one retry: 30 parallel uploads to the hosted project sometimes
@@ -218,7 +236,7 @@ async function verifyCatalog(shop_id: string, slug: string, source: DemoData) {
     pairings: pairs.map((p) => ({ a: codeById.get(p.product_a_id)!, b: codeById.get(p.product_b_id)!, reason: p.reason })),
     policies,
   };
-  const errors = checkTestQuestions(actual, questionCsv);
+  const errors = questionCsv === null ? [] : checkTestQuestions(actual, questionCsv);
   if (errors.length) fail(`${slug}: ${errors.join("\n  ")}`);
   const sourceCodes = new Set(source.products.map((p) => p.code));
   const sourceRows = {
@@ -230,11 +248,11 @@ async function verifyCatalog(shop_id: string, slug: string, source: DemoData) {
   };
   const canonical = (rows: object[]) => rows.map((row) => JSON.stringify(Object.entries(row).sort())).sort().join("\n");
   for (const table of ["products", "variants", "sizeCharts", "policies"] as const) {
-    if (canonical(sourceRows[table]) !== canonical(source[table])) fail(`${slug}: ${table} differs from the PO source`);
+    if (canonical(sourceRows[table]) !== canonical(source[table])) fail(`${slug}: ${table} differs from ${dataPath}`);
   }
   const canonicalPairs = (rows: DemoData["pairings"]) => rows.map((p) => ({ pair: [p.a, p.b].sort().join("|"), reason: p.reason }));
-  if (canonical(canonicalPairs(sourceRows.pairings)) !== canonical(canonicalPairs(source.pairings))) fail(`${slug}: pairings differ from the PO source`);
-  console.log(`✓ ${slug}: every PO catalog row and all 60 question fixtures verified`);
+  if (canonical(canonicalPairs(sourceRows.pairings)) !== canonical(canonicalPairs(source.pairings))) fail(`${slug}: pairings differ from ${dataPath}`);
+  console.log(`✓ ${slug}: every catalog row${questionCsv === null ? "" : " and all 60 question fixtures"} verified`);
 }
 
 // 5. Demo accounts: create, or reset the password to the one in .env.local.
@@ -253,7 +271,7 @@ async function seedAccount(shop_id: string, a: Account) {
     // Never move a real teammate's account out of their shop: they would lose access to it.
     const { data: profile, error } = await db.from("profiles").select("shop_id,role").eq("id", user.id).maybeSingle();
     if (error) fail(`${a.role} profile: ${error.message}`);
-    if (profile && profile.shop_id !== shop_id) fail(`${a.email} already belongs to another shop; pick another DEMO_${a.role.toUpperCase()}_EMAIL`);
+    if (profile && profile.shop_id !== shop_id) fail(`${a.email} already belongs to another shop; pick another ${accountPrefix}_${a.role.toUpperCase()}_EMAIL`);
     if (args.accounts === "existing") {
       if (!profile || profile.role !== a.role) fail(`${a.role} existing profile does not match the demo shop`);
       return;
@@ -350,7 +368,7 @@ if (args.only === undefined) {
   const shops = [data.shop, { name: `${data.shop.name} (eval)`, slug: `${data.shop.slug}-eval` }];
   const [demoId, evalId] = await Promise.all(shops.map((s) => seedShop(s.name, s.slug, data, imageUrls)));
   for (const a of accounts) await seedAccount(demoId, a);
-  await seedChannels(demoId, data.shop.slug);
+  if (hasChannels) await seedChannels(demoId, data.shop.slug);
 
   // 6. Read back what is now in the database, per shop.
   async function count(table: "products" | "variants" | "size_charts" | "pairings" | "policies" | "profiles", shop_id: string, withoutPhoto = false) {

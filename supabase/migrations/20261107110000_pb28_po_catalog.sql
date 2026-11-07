@@ -11,11 +11,14 @@ begin
     ('may-boutique-eval', 'hanh-boutique-eval', 'Hạnh Boutique (eval)')
   ) as shops(old_slug, new_slug, new_name)
   loop
+    -- Rename only while the PO shop doesn't exist yet. Once it does, the old slug
+    -- is a separate shop (the team keeps may-boutique beside hanh-boutique) and
+    -- is left as it is.
+    if exists (select 1 from public.shops where slug = target.new_slug) then
+      continue;
+    end if;
     select id into legacy_shop from public.shops where slug = target.old_slug for update;
     if found then
-      if exists (select 1 from public.shops where slug = target.new_slug and id <> legacy_shop) then
-        raise exception 'Both % and % exist; resolve shop ownership before PB-28', target.old_slug, target.new_slug;
-      end if;
       update public.shops set slug = target.new_slug, name = target.new_name where id = legacy_shop;
     end if;
   end loop;

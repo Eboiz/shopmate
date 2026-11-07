@@ -83,20 +83,30 @@ Limit: 10 shopper messages per minute per conversation (one conversation per sho
 
 ## Demo shop (PB-02)
 
+The database holds two shops, each with an eval copy (`<slug>-eval`, PB-10):
+
+| `--data` | Shop | Data | Accounts (`.env.local`) | Chat channels |
+| --- | --- | --- | --- | --- |
+| `demo` (default) | Hạnh Boutique, `hanh-boutique` | the PO's workbook and its 60 test questions (PB-28) | `DEMO_OWNER_*`, `DEMO_STAFF_*` | Messenger, Telegram |
+| `may-boutique` | Mây Boutique, `may-boutique` | 60 products SP01-SP60 (PR #41) | `MAY_BOUTIQUE_OWNER_*`, `MAY_BOUTIQUE_STAFF_*` | web chat only |
+
+A Facebook Page or Telegram bot belongs to one shop, so only `demo` stores channels. Photos are stored in Storage by product code, so the two data sets never share a code.
+
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
 
 PB-28 uses the PO's workbook, version 02/11/2026. Its source checksum, counts and export procedure are in `supabase/seed/demo/SOURCE.md`. The current source has 30 products and 10 pairings; the final 60-product / 20-pairing target awaits the PO's additions. `test_questions.csv` contains all 60 fixtures. `--check` verifies their size, stock, price and available-pairing labels against the catalog, including earlier customer turns, and checks every JPEG. PB-10 evaluates the AI replies.
 
-The SP31-SP60 additions merged in PR #41 are preserved in `supabase/seed/pending-po/` for PO comparison, with their photos and credits in `supabase/seed/demo/images/`. The pending snapshot documents the legacy pairing references and the SP59 search-name collision that need review before inclusion in the PO export.
+`supabase/seed/may-boutique/` holds the Mây Boutique catalog as merged in PR #41 (SP01-SP60, 616 variants, 30 pairings), with its photos and credits. It has no test set; the PO can compare it with the workbook when extending `demo/` to 60 products.
 
-Apply migration `20261107110000_pb28_po_catalog.sql` before seeding an existing database. It keeps the shop IDs and their user/channel bindings, changes the slugs to `hanh-boutique` and `hanh-boutique-eval`, and removes SP01-SP30 with their dependent catalog rows and test draft orders. A decided order referencing those products stops the migration. SP31-SP60 are retained for PO comparison. Remove old SP01-SP30 Storage objects only after the seed succeeds and after checking that no product references those objects.
+Apply migration `20261107110000_pb28_po_catalog.sql` before seeding an existing database. It keeps the shop IDs and their user/channel bindings, changes the slugs to `hanh-boutique` and `hanh-boutique-eval` (skipped when `hanh-boutique` already exists, so `may-boutique` stays a separate shop), and removes SP01-SP30 from the Hạnh Boutique shops with their dependent catalog rows and test draft orders. A decided order referencing those products stops the migration. Keep the SP01-SP60 Storage objects: Mây Boutique uses them.
 
 ```bash
 pnpm db:start
 pnpm db:seed                                   # local Supabase
 pnpm db:seed --target=shared --confirm=<ref>   # the team's project; <ref> is the subdomain of NEXT_PUBLIC_SUPABASE_URL
 pnpm db:seed --target=shared --confirm=<ref> --accounts=existing # reuse the existing owner/staff accounts and credentials
-pnpm db:seed --check                           # only check the CSV files
+pnpm db:seed --data=may-boutique [--target=shared --confirm=<ref>]  # the second shop, Mây Boutique
+pnpm db:seed --check [--data=may-boutique]     # only check the CSV files
 pnpm db:seed --only=channels                   # only the chat channel accounts (PB-15, PB-21), safe on the shared project
 ```
 

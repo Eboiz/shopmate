@@ -34,38 +34,3 @@ All source photos are CC0 1.0 from StockSnap. Additional photos were found throu
 | AK01 | Woman Working | https://stocksnap.io/photo/woman-working-UXMLQGWQB8 | CC0 1.0 |
 | AK02 | Fashion Clothes | https://stocksnap.io/photo/fashion-clothes-0369993BB5 | CC0 1.0 |
 | AK03 | Blue Denim | https://stocksnap.io/photo/blue-denim-BWPRK5DEF0 | CC0 1.0 |
-
-Pending PO assets from PR #41. These images support the candidate rows in supabase/seed/pending-po/.
-
-| Code | Photo | Source | License |
-| --- | --- | --- | --- |
-| SP31 | Woman Dress | https://stocksnap.io/photo/woman-dress-74IDEO5GDH | CC0 1.0 |
-| SP32 | Dress People | https://stocksnap.io/photo/dress-people-VGN66GTUT0 | CC0 1.0 |
-| SP33 | Girl Dress | https://stocksnap.io/photo/girl-dress-7HIJXYHAC3 | CC0 1.0 |
-| SP34 | Woman Dress | https://stocksnap.io/photo/woman-dress-KDQ60E3BPD | CC0 1.0 |
-| SP35 | Child Dress | https://stocksnap.io/photo/child-dress-O4IJIPH4PK | CC0 1.0 |
-| SP36 | Woman Dress | https://stocksnap.io/photo/woman-dress-OO6YBBXJAB | CC0 1.0 |
-| SP37 | Woman Pointing | https://stocksnap.io/photo/woman-pointing-MRAPBJPHQQ | CC0 1.0 |
-| SP38 | Woman Shirt | https://stocksnap.io/photo/woman-shirt-HKMR42JCY2 | CC0 1.0 |
-| SP39 | People Girl | https://stocksnap.io/photo/people-girl-CI4FJFQLDU | CC0 1.0 |
-| SP40 | Young Girl | https://stocksnap.io/photo/young-girl-4B192D0EB5 | CC0 1.0 |
-| SP41 | People Girl | https://stocksnap.io/photo/people-girl-SQY6BZBEIX | CC0 1.0 |
-| SP42 | Jeans Sunglasses | https://stocksnap.io/photo/jeans-sunglasses-NPUVYUOGB1 | CC0 1.0 |
-| SP43 | Short Denim | https://stocksnap.io/photo/short-denim-OTB7CWM64K | CC0 1.0 |
-| SP44 | Woman Pose | https://stocksnap.io/photo/woman-pose-1TRSFNIMK0 | CC0 1.0 |
-| SP45 | Woman Dress | https://stocksnap.io/photo/woman-dress-FYYJCGIZDM | CC0 1.0 |
-| SP46 | Woman Sweater | https://stocksnap.io/photo/woman-sweater-40LEBVKEJ5 | CC0 1.0 |
-| SP47 | Girl Woman | https://stocksnap.io/photo/girl-woman-X0SYSO6OXF | CC0 1.0 |
-| SP48 | Jeans Denim | https://stocksnap.io/photo/jeans-denim-B60BX1Z63M | CC0 1.0 |
-| SP49 | Jeans Denim | https://stocksnap.io/photo/jeans-denim-Q00JK0KAAZ | CC0 1.0 |
-| SP50 | Fashion Jeans | https://stocksnap.io/photo/fashion-jeans-OAS8RDSTOJ | CC0 1.0 |
-| SP51 | Pants Shoes | https://stocksnap.io/photo/pants-shoes-1SW067UB3Z | CC0 1.0 |
-| SP52 | Shoes Pants | https://stocksnap.io/photo/shoes-pants-74D7E88946 | CC0 1.0 |
-| SP53 | Converse Shoes | https://stocksnap.io/photo/converse-shoes-O9UAOILDA2 | CC0 1.0 |
-| SP54 | Girl Woman | https://stocksnap.io/photo/girl-woman-KCEFFZSBIF | CC0 1.0 |
-| SP55 | Girl Woman | https://stocksnap.io/photo/girl-woman-G9O9E7E1PC | CC0 1.0 |
-| SP56 | People Woman | https://stocksnap.io/photo/people-woman-D85KN9KIDN | CC0 1.0 |
-| SP57 | Woman Model | https://stocksnap.io/photo/woman-model-3XRMDWVX8A | CC0 1.0 |
-| SP58 | Red Jacket | https://stocksnap.io/photo/red-jacket-T2SYYQPB9I | CC0 1.0 |
-| SP59 | Waiting Taxi | https://stocksnap.io/photo/waiting-taxi-VROPE3A39O | CC0 1.0 |
-| SP60 | Clothing Jacket | https://stocksnap.io/photo/clothing-jacket-7FNKYQP438 | CC0 1.0 |
