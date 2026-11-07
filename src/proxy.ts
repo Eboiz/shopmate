@@ -6,6 +6,18 @@ import { publicEnv } from "@/lib/env";
 // Refreshes the Supabase session cookie and sends signed-out visitors of
 // /admin to the login page. Admin pages check the user again on the server.
 export async function proxy(request: NextRequest) {
+  if (
+    process.env.NODE_ENV !== "production" &&
+    request.nextUrl.pathname === "/login" &&
+    (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)
+  ) {
+    return NextResponse.redirect(new URL("/dev/login", request.url));
+  }
+
+  // Local-only visual preview; production always returns 404 for this page.
+  if (process.env.NODE_ENV !== "production" && (request.nextUrl.pathname === "/dev/shop" || request.nextUrl.pathname.startsWith("/dev/shop/") || ["/dev/dashboard", "/dev/login"].includes(request.nextUrl.pathname))) {
+    return NextResponse.next({ request });
+  }
   let response = NextResponse.next({ request });
   const env = publicEnv();
 

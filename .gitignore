@@ -55,3 +55,6 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 /e2e-results.json
+
+# local visual review captures
+/.preview-*.png

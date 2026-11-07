@@ -24,8 +24,8 @@ export function ProductEditor({
   const [state, formAction, pending] = useActionState(updatePrice, INITIAL_FORM_STATE);
 
   return (
-    <section className="flex flex-col gap-3 rounded-md border border-zinc-200 p-3">
-      <h2 className="font-medium">{product.name}</h2>
+    <section className="ui-card flex flex-col gap-4 p-5 sm:p-6">
+      <h2 className="text-lg font-semibold">{product.name}</h2>
       <form action={formAction} className="flex items-start gap-2">
         <input type="hidden" name="productId" value={product.id} />
         <div className="min-w-0 flex-1">

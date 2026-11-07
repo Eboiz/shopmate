@@ -1,6 +1,8 @@
 import Image from "next/image";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatPrice, formatSizesInStock } from "@/lib/format";
+import { Icon } from "./icon";
 
 // Replace with the `products[]` item type once PB-00 merges.
 type ProductCardProps = {
@@ -10,6 +12,8 @@ type ProductCardProps = {
   sizesInStock?: string[];
   colors?: string[];
   action?: ReactNode;
+  href?: string;
+  compact?: boolean;
 };
 
 export function ProductCard({
@@ -19,36 +23,40 @@ export function ProductCard({
   sizesInStock,
   colors,
   action,
+  href,
+  compact = false,
 }: ProductCardProps) {
+  const image = imageUrl ? (
+    <Image
+      src={imageUrl}
+      alt={name}
+      fill
+      sizes={compact ? "112px" : "(max-width: 640px) 50vw, (max-width: 1024px) 33vw, 25vw"}
+      className="object-cover transition-transform duration-500 group-hover:scale-[1.06]"
+    />
+  ) : (
+    <span className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[linear-gradient(140deg,#f2eee8,#ded8ce)] text-[#171717]">
+      <span aria-hidden="true" className={compact ? "text-2xl" : "text-5xl"}>✳</span>
+      {!compact && <span className="text-[10px] font-bold uppercase tracking-[.2em]">ShopMate selection</span>}
+    </span>
+  );
+  const imageClass = `relative shrink-0 overflow-hidden bg-[#eeebe5] ${compact ? "w-24 self-stretch sm:w-28" : "aspect-[4/5] w-full"}`;
+
   return (
-    <article className="flex flex-col overflow-hidden rounded-md border border-zinc-200">
-      <div className="relative aspect-square bg-zinc-100">
-        {imageUrl ? (
-          <Image
-            src={imageUrl}
-            alt={name}
-            fill
-            sizes="(max-width: 448px) 50vw, 224px"
-            className="object-cover"
-          />
-        ) : (
-          <span className="flex h-full items-center justify-center text-sm text-zinc-500">
-            Chưa có ảnh
-          </span>
-        )}
-      </div>
-      <div className="flex flex-1 flex-col gap-1 p-3">
-        <h3 className="font-medium">{name}</h3>
-        <p className="font-semibold">{formatPrice(price)}</p>
+    <article className={`group h-full overflow-hidden border border-[#e3dfd8] bg-white transition-[transform,box-shadow] duration-300 hover:-translate-y-1 hover:shadow-[0_22px_50px_-32px_#17171788] ${compact ? "flex rounded-xl" : "flex flex-col rounded-xl"}`}>
+      {href ? <Link href={href} scroll={false} aria-label={`Xem chi tiết ${name}`} className={imageClass}>{image}</Link> : <div className={imageClass}>{image}</div>}
+      <div className={`flex min-w-0 flex-1 flex-col gap-2 ${compact ? "p-3" : "p-4"}`}>
+        <h3 className="font-semibold leading-snug text-[#171717]">{href ? <Link href={href} scroll={false} className="hover:underline">{name}</Link> : name}</h3>
+        <p className="font-bold tabular-nums text-[#e9573f]">{formatPrice(price)}</p>
         {colors && colors.length > 0 && (
-          <p className="text-sm text-zinc-500">Màu: {colors.join(", ")}</p>
+          <p className="text-xs text-[#706d67]">Màu: {colors.join(", ")}</p>
         )}
         {sizesInStock && (
-          <p className="text-sm text-zinc-500">
+          <p className="text-xs text-[#706d67]">
             {formatSizesInStock(sizesInStock)}
           </p>
         )}
-        {action && <div className="mt-auto pt-2">{action}</div>}
+        {(action || (href && !compact)) && <div className="mt-auto pt-2">{action ?? <Link href={href!} scroll={false} className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[#171717] px-2 py-2 text-xs font-semibold text-white transition-colors hover:bg-[#e9573f] sm:text-sm">Xem chi tiết <Icon name="arrow" className="size-4" /></Link>}</div>}
       </div>
     </article>
   );

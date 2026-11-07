@@ -1,9 +1,9 @@
 import type { ComponentProps } from "react";
 
 const VARIANTS = {
-  primary: "bg-zinc-900 text-white",
-  secondary: "border border-zinc-300 bg-white text-zinc-900",
-  danger: "bg-red-600 text-white",
+  primary: "bg-[#171717] text-white hover:bg-[#e9573f]",
+  secondary: "border border-[#d5d0c8] bg-white text-[#171717] hover:border-[#171717] hover:bg-[#f5f3ef]",
+  danger: "bg-[#c94332] text-white hover:bg-[#a53023]",
 };
 
 type ButtonProps = ComponentProps<"button"> & {
@@ -19,7 +19,7 @@ export function Button({
   return (
     <button
       type={type}
-      className={`min-h-11 rounded-md px-4 py-2 disabled:opacity-60 ${VARIANTS[variant]} ${className}`}
+      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-[background-color,border-color,transform] duration-200 hover:-translate-y-0.5 disabled:translate-y-0 disabled:opacity-60 ${VARIANTS[variant]} ${className}`}
       {...props}
     />
   );

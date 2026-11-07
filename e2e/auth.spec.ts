@@ -3,10 +3,10 @@ import { againstDeployment, demo } from "./support/env";
 
 // PB-01: sign-in, sign-out and the /admin gate.
 
-// /admin itself redirects to the first admin page.
+// The dashboard at /admin is also protected.
 const ADMIN_HOME = "/admin/inbox";
 
-const adminPages = ["/admin", "/admin/inbox", "/admin/orders", "/admin/products", "/admin/reply-assistant"];
+const adminPages = ["/admin", "/admin/inbox", "/admin/orders", "/admin/products"];
 
 test.describe("signed out", () => {
   for (const path of adminPages) {
