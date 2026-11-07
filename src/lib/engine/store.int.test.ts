@@ -119,6 +119,20 @@ describe("createSupabaseStore", () => {
     await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
   });
 
+  describe("catalog (PB-10)", () => {
+    it("lists only this shop's products, with their colors and sizes", async () => {
+      const a = await store.catalog!(FX.a.shop);
+      const b = await store.catalog!(FX.b.shop);
+      const vay = a.find((p) => p.id === FX.a.vay01)!;
+      expect(vay).toMatchObject({ name: "Váy suông linen", category: "váy" });
+      expect(vay.colors).toEqual(expect.arrayContaining(["be"]));
+      expect(vay.sizes).toEqual(expect.arrayContaining(["M", "L"]));
+      expect(a.some((p) => p.id === FX.b.vay01)).toBe(false);
+      expect(b.some((p) => p.id === FX.a.vay01)).toBe(false);
+      expect(await store.catalog!(randomUUID())).toEqual([]);
+    });
+  });
+
   describe("insertTurn", () => {
     it("writes the metrics columns", async () => {
       const id = await store.insertTurn({

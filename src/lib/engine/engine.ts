@@ -20,12 +20,14 @@ import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
+import { checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
-import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import { routeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -91,6 +93,9 @@ export type EngineDeps = {
   // default; LANGFUSE_CAPTURE_CONTENT=true turns it on.
   captureContent: boolean;
   toolConcurrency: number;
+  // PB-10: Jev decides the turn and the model only writes the reply (route.ts).
+  // null: every turn runs the LLM tool loop (no OPENROUTER_API_KEY, or tests).
+  jev: JevClient | null;
 };
 
 // output is ready as soon as runEngine resolves. The ai_turns write runs in the
@@ -146,6 +151,7 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
     onMetrics: deps.onMetrics ?? defaultMetricsSink(),
     captureContent: deps.captureContent ?? process.env.LANGFUSE_CAPTURE_CONTENT === "true",
     toolConcurrency: deps.toolConcurrency ?? TOOL_CONCURRENCY,
+    jev: deps.jev !== undefined ? deps.jev : jevFromEnv(),
   };
 }
 
@@ -225,6 +231,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     called: false, failed: false, needsProduct: false, items: [],
   };
   let knownSize = knownShopperSize(input.history);
+  let reply: Reply | null = null;
+  let quotedOrderPresented = false;
+  let personalReplyNeeded = false;
+  let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
   const previousQuote = tc.previousQuote ?? null;
@@ -233,6 +243,164 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let orderIssue: { code: string; missing?: string[] } | null = null;
   let createAttempted = false;
 
+  // PB-10: Jev routes the turn; orders, unsure turns and Jev failures fall back
+  // to the LLM tool loop below.
+  let route: NonNullable<TurnMetrics["route"]> = { path: "llm_loop", fallbackReason: deps.jev ? undefined : "no_jev" };
+  let routed: RouteOutcome | null = null;
+  // PB-11: an order in progress (the last turn read back a quote) stays in the
+  // tool loop, so "ok" / "đồng ý" is never routed as a greeting or unclear turn.
+  const orderInProgress = mode === "customer" && (tc.previousQuote ?? null) !== null;
+  if (deps.jev && orderInProgress) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
+  if (deps.jev && !orderInProgress) {
+    const runTool: ToolRunner = async (name, toolInput) => {
+      calls += 1;
+      const s0 = now();
+      const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
+      if (run.log) logs.push(run.log);
+      toolMetrics.push({ name, startMs: s0 - t0, ms: now() - s0, outcome: toolOutcome(run) });
+      seen.push({ name, input: toolInput });
+      return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
+    };
+    try {
+      const catalog: CatalogItem[] = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
+      const decision = await decideTurn(deps.jev, { history: input.history, viewing: tc.product, catalog, now });
+      route = {
+        path: "router",
+        jevModel: decision.model,
+        jevMs: decision.ms,
+        jevCost: decision.cost,
+        intent: decision.intent,
+        confidence: decision.confidence,
+        product: decision.product.kind,
+        discountTrick: decision.discountTrick,
+      };
+      routed = await routeTurn({
+        mode,
+        history: input.history,
+        decision,
+        viewing: tc.product,
+        catalog,
+        runTool,
+        cards: (ids) => deps.store.productCards(ctx.shopId, ids),
+        policyCovers: (policy) => checkPolicyCovers(deps.jev!, { history: input.history, policy }),
+      });
+      if (routed.kind === "fallback") {
+        route = { ...route, path: "llm_loop", fallbackReason: routed.reason };
+        routed = null;
+      }
+    } catch (e) {
+      console.error("engine: jev routing failed, using the tool loop", e);
+      route = { ...route, path: "llm_loop", fallbackReason: "jev_error" };
+      routed = null;
+    }
+  }
+
+  if (routed) {
+    switch (routed.kind) {
+      case "handoff":
+        handoff = routed.reason;
+        sizeStatus = routed.sizeStatus;
+        // handoff_to_staff moved the conversation already, unless it failed.
+        if (!routed.viaTool) await deps.store.setNeedsHuman(ctx);
+        reply = { text: handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
+        break;
+      case "personal":
+        personalReplyNeeded = true;
+        reply = { text: PERSONAL_REPLY_TEXT, products: [], quickReplies: [] };
+        break;
+      case "fixed":
+        reply = routed.reply;
+        break;
+      case "write": {
+        // Same post-checks as the tool loop: an unreadable reply, a size other
+        // than recommend_size's (PB-06) or an unbacked discount (PB-09) gets one
+        // more try with the reason added to the task; after that the server's
+        // own text (size) or a handoff (discount) is sent.
+        const write = routed;
+        const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
+        let task = write.task;
+        for (let attempt = 1; ; attempt++) {
+          const replySystem = buildReplySystemPrompt({ mode, product: tc.product, facts: write.facts, task });
+          detail.system = replySystem.map((b) => b.text).join("\n\n");
+          const c0 = now();
+          let firstTokenAt: number | null = null;
+          const res = await deps.model.create(
+            {
+              model: deps.modelName,
+              max_tokens: MAX_OUTPUT_TOKENS,
+              system: replySystem,
+              messages,
+              output_config: { effort: "low", format: { type: "json_schema", schema: MODEL_REPLY_JSON_SCHEMA } },
+            },
+            { onFirstToken: () => (firstTokenAt ??= now()) },
+          );
+          modelCalls.push({
+            startMs: c0 - t0,
+            ms: now() - c0,
+            ttftMs: firstTokenAt === null ? null : firstTokenAt - c0,
+            inputTokens: res.usage.input_tokens,
+            outputTokens: res.usage.output_tokens,
+            cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: res.usage.cache_creation_input_tokens ?? 0,
+            stopReason: res.stop_reason,
+          });
+          if (deps.captureContent) detail.calls.push({ messages: messages.slice(), output: res.content });
+          inputTokens += res.usage.input_tokens;
+          outputTokens += res.usage.output_tokens;
+          const canRetry = attempt < 2;
+          if (res.stop_reason === "max_tokens") {
+            console.error("engine: reply truncated at max_tokens");
+            if (canRetry) continue;
+            truncated = true;
+            reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+            break;
+          }
+          const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+          const parsed = parseModelReply(text);
+          if (!parsed.ok) {
+            // Seen with the gateway cutting a stream short: ask once more.
+            console.error(`engine: unreadable reply (stop ${res.stop_reason}, ${text.length} chars)`);
+            if (canRetry) continue;
+            reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+            break;
+          }
+          if (write.sizeAdvice && !replyMatchesSize(parsed.reply.text, write.sizeAdvice, otherSizes())) {
+            if (canRetry) {
+              task = `${write.task}\n${sizeCorrection(write.sizeAdvice)}`;
+              continue;
+            }
+            reply = {
+              text: sizeFallbackText(write.sizeAdvice),
+              products: await deps.store.productCards(ctx.shopId, write.productIds),
+              quickReplies: [],
+            };
+            break;
+          }
+          if (mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null) {
+            if (canRetry) {
+              task = `${write.task}\n${DISCOUNT_RETRY_NOTE}`;
+              continue;
+            }
+            handoff = "postcheck_failed";
+            await deps.store.setNeedsHuman(ctx);
+            reply = { text: DISCOUNT_HANDOFF_TEXT, products: [], quickReplies: [] };
+            break;
+          }
+          finalFirstTokenAt = firstTokenAt;
+          // Cards are the server's choice (graded by PB-10), never the model's ids.
+          reply = {
+            text: parsed.reply.text,
+            products: await deps.store.productCards(ctx.shopId, write.productIds),
+            quickReplies: parsed.reply.quickReplies,
+          };
+          break;
+        }
+        break;
+      }
+    }
+  }
+
+  if (!routed) {
   for (;;) {
     const c0 = now();
     let firstTokenAt: number | null = null;
@@ -415,7 +583,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // PB-05: the product name matched nothing last turn (the AI asked one
   // clarifying question) and the shopper's answer matches nothing again. The
   // engine hands off itself; the model's second guess is not sent.
-  const productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
+  productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
     && answersAiMessage(input.history) && searchMissed(logs);
   if (productMissedTwice) handoff = "misunderstood_twice";
   else if (discountBlocked) handoff = "postcheck_failed";
@@ -450,8 +618,6 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const finalOrderResult = orderResult as ToolOutput<"create_draft_order"> | null;
   const finalQuote = currentQuote as PendingQuote | null;
   const finalOrderIssue = orderIssue as { code: string; missing?: string[] } | null;
-  let reply: Reply;
-  let quotedOrderPresented = false;
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
@@ -459,7 +625,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const text = productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
       : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
-    reply = { text, products: [], quickReplies: [] };
+    const products = (handoff === "postcheck_failed" && tc.product)
+      ? await deps.store.productCards(ctx.shopId, [tc.product.id])
+      : [];
+    reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "created") {
@@ -529,8 +698,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       quickReplies: modelReply.quickReplies,
     };
   }
-  // A complaint returned early above (PB-20).
-  const output = engineOutputSchema.parse({ reply, personalReplyNeeded: false });
+  } // end of the LLM tool loop path
+  // A complaint the word list catches returned early above (PB-20); one only Jev
+  // caught sets personalReplyNeeded here.
+  const output = engineOutputSchema.parse({ reply: reply!, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 
   const metrics: TurnMetrics = {
@@ -549,6 +720,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     outputTokens,
     handoffReason: handoff,
     truncated,
+    route,
   };
   let sinkDone: Promise<unknown> = Promise.resolve();
   try {

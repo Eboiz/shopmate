@@ -165,14 +165,21 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 - More than 5 tool calls in one turn hands the conversation to staff (`too_many_tool_calls`). A conversation not in mode `ai` is refused with `conversation_not_found`; routes must still gate before calling.
 - The reply is returned before the turn is written to `ai_turns`: `result.turnLogged` resolves with the row id or `null` and never rejects. On Vercel, pass it to `after()`.
 
+### Jev router (PB-10)
+
+With `OPENROUTER_API_KEY` set, each turn is first decided by Jev (`typesafe/jev-1.13`, OpenRouter Decisions API; `src/lib/engine/jev.ts`): the intent, which shop product, the policy kind, and whether it is a discount trick. Jev returns probabilities only, so code fills the tool arguments (size, color, height/weight) and runs a fixed tool sequence per intent (`route.ts`); the model then only writes the reply from those facts, with no tools, and the server picks the product cards. The same post-checks as the tool loop apply (PB-06 size, PB-09 discount, one retry each). Orders, unsure intents (confidence < 0.6) and any Jev error fall back to the LLM tool loop; without the key every turn uses it. Each turn's metrics line has a `route` field (`router` or `llm_loop`, the intent, Jev latency and cost). The recent conversation is sent to OpenRouter/TypeSafe.
+
 `pnpm test:int` includes `src/lib/engine/engine.int.test.ts`: the engine end to end on the two-shop fixture with a scripted model, plus a live Claude smoke test that runs only when `ANTHROPIC_API_KEY` is in `.env.test.local` (it costs real money; CI never runs it) and prints latency, TTFT, tokens and call counts.
 
 ### Engine eval
 
 ```bash
-pnpm engine:eval                      # 8 cases x 3 runs
+pnpm engine:eval                      # every case x 3 runs, LLM tool loop
 EVAL_RUNS=1 EVAL_CASE=size-advice pnpm engine:eval
+OPENROUTER_API_KEY=... JEV_IN_TESTS=true EVAL_LABEL=jev-router pnpm engine:eval   # Jev router
 ```
+
+Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared. Jev is off under vitest unless `JEV_IN_TESTS=true`.
 
 Labeled basic cases (`src/lib/engine/eval/cases.ts`) on shop A of the two-shop fixture: for each case, which tools the model must call, with which arguments, and when it must call none. The table shows per case the pass rate, recall of required calls, argument accuracy and necessity precision (no extra or repeated calls), plus average latency, tokens and tool calls. Needs local Supabase running (`pnpm db:start`) and `ANTHROPIC_API_KEY` in `.env.test.local`. **Every run costs real money** (8 cases x 3 runs = 24 turns by default). It only reports, never fails on a low score, and CI doesn't run it.
 

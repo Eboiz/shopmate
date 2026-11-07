@@ -51,6 +51,19 @@ export type TurnMetrics = {
   outputTokens: number;
   handoffReason: HandoffReason | null;
   truncated: boolean;
+  // PB-10: how the turn was decided. "router": Jev picked the intent and the
+  // tools ran in a fixed order (route.ts); "llm_loop": the model chose the tools.
+  route?: {
+    path: "router" | "llm_loop";
+    fallbackReason?: string;
+    jevModel?: string;
+    jevMs?: number;
+    jevCost?: number | null;
+    intent?: string;
+    confidence?: number | null;
+    product?: string;
+    discountTrick?: number;
+  };
 };
 
 export function toolOutcome(run: ToolRun): ToolOutcome {
