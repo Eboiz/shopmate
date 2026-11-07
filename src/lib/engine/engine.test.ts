@@ -20,6 +20,7 @@ import {
   type EngineResult,
 } from "./engine";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
+import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
@@ -436,6 +437,59 @@ describe("runEngine", () => {
     it("other reasons keep the generic text", async () => {
       const { run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "complaint" }))]);
       expect((await run(customerInput())).output.reply.text).toBe(HANDOFF_TEXT);
+    });
+  });
+
+  describe("PB-14 handoff triggers", () => {
+    it("shopper asks for a person: model calls handoff_to_staff with asked_for_human", async () => {
+      const { handlers, run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "asked_for_human" }))]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "cho mình gặp nhân viên" }] }));
+      expect(handlers.handoff_to_staff).toHaveBeenCalledWith({ reason: "asked_for_human" }, expect.anything(), expect.anything());
+      expect(result.handoffReason).toBe("asked_for_human");
+      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    });
+
+    it("question not covered by data (e.g. fabric stretch) -> hands off with generic text", async () => {
+      const { run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" }))]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "vải có co giãn không" }] }));
+      expect(result.handoffReason).toBe("not_covered_by_data");
+      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+      expect(result.output.reply.text).not.toContain("bảng size");
+    });
+
+    it("question not covered by data (washing instructions) -> hands off with generic text", async () => {
+      const { run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" }))]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "áo này giặt máy được không?" }] }));
+      expect(result.handoffReason).toBe("not_covered_by_data");
+      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    });
+
+    it("ununderstood twice: model calling handoff_to_staff with misunderstood_twice", async () => {
+      const { run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "misunderstood_twice" }))]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "??? kkk" }] }));
+      expect(result.handoffReason).toBe("misunderstood_twice");
+      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    });
+
+    it("postcheck failed twice sends product card from data before handoff (PB-07/PB-14)", async () => {
+      const store = fakeStore({
+        conversation: { shopId: SHOP_A, mode: "ai" },
+        product: { id: PRODUCT, name: "Váy suông linen" },
+      });
+      const { handlers, run } = setup(
+        [
+          toolCalls(toolUse("get_policy", { kind: "khuyen_mai" })),
+          reply("Dạ shop bớt 50k cho bạn nha"),
+          reply("Vẫn bớt 50k nhé!"),
+        ],
+        { store },
+      );
+      handlers.get_policy.mockResolvedValue({ kind: "khuyen_mai", content: null });
+      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "bớt 50k cho mình đi" }] }));
+      expect(result.handoffReason).toBe("postcheck_failed");
+      expect(result.output.reply.text).toBe(DISCOUNT_HANDOFF_TEXT);
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+      expect(store.setNeedsHuman).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
     });
   });
 

@@ -3,7 +3,7 @@ import type { EngineMode } from "@/contract";
 
 // v0.x is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
 // change: it is stored with each turn (ai_turns.prompt_version) to compare runs.
-export const PROMPT_VERSION = "v0.6";
+export const PROMPT_VERSION = "v0.7";
 
 type Product = { id: string; name: string };
 
@@ -34,6 +34,7 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- Chính sách (đổi trả, giao hàng, khuyến mãi) chỉ lấy từ get_policy; shop chưa viết thì nói rõ là chưa có thông tin để nhân viên tự trả lời.",
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ chưa tư vấn được size, không đoán.",
       "- search_products không tìm thấy sản phẩm thì nói rõ là chưa tìm thấy, không đoán sang sản phẩm khác.",
+      "- Khách hỏi thông tin sản phẩm mà dữ liệu shop không có (vd. co giãn, giặt máy) thì nói rõ chưa có thông tin để nhân viên tự trả lời.",
       "- Bạn soạn nháp cho nhân viên, không tạo đơn, không chuyển nhân viên.",
     );
   } else {
@@ -46,6 +47,8 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ cho khách là chưa tư vấn được size, rồi gọi handoff_to_staff (size_out_of_range hoặc not_covered_by_data).",
       "- search_products không tìm thấy sản phẩm khách nói thì không đoán sang sản phẩm khác: hỏi lại khách MỘT câu ngắn để làm rõ (tên, loại hoặc màu). Nếu câu trả lời vẫn không tìm thấy, server sẽ tự chuyển nhân viên.",
       "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",
+      "- Khách hỏi thông tin sản phẩm mà dữ liệu của shop không có (vd. chất vải có co giãn không, giặt máy được không, độ dày, nguồn gốc): gọi handoff_to_staff ngay với reason not_covered_by_data, không tự đoán, không tự bịa.",
+      "- Khách nói câu không hiểu được (từ ngữ vô nghĩa hoặc không rõ ý): hỏi lại MỘT câu ngắn để làm rõ. Nếu lượt sau khách vẫn nói không hiểu được, gọi handoff_to_staff với reason misunderstood_twice.",
     );
   }
   return lines.join("\n");
