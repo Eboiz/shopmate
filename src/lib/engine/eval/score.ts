@@ -1,8 +1,11 @@
 // Scores one engine run against a labeled case. Pure: no IO.
+import type { HandoffReason } from "@/contract";
 import { callKey } from "../metrics";
 import type { ArgMatcher, EvalCase, ExpectedCall } from "./cases";
 
 export type ActualCall = { name: string; input: unknown };
+// What the shopper got. Needed only for cases with a `handoff` or `reply` label.
+export type RunOutcome = { handoffReason: HandoffReason | null; replyText: string };
 
 export type RunScore = {
   requiredTotal: number;
@@ -13,7 +16,12 @@ export type RunScore = {
   paramMismatched: number;
   // Calls to a tool not in expected, or repeating the same name + input.
   unnecessary: number;
-  passed: boolean; // requiredHit === requiredTotal && paramMismatched === 0 && unnecessary === 0
+  // The case's handoff / reply labels: null when the case has none.
+  handoffOk: boolean | null;
+  replyOk: boolean | null;
+  // requiredHit === requiredTotal && paramMismatched === 0 && unnecessary === 0,
+  // and handoffOk / replyOk are not false.
+  passed: boolean;
 };
 
 function argsMatch(args: ArgMatcher | undefined, input: unknown): boolean {
@@ -26,7 +34,7 @@ function argsMatch(args: ArgMatcher | undefined, input: unknown): boolean {
 
 const matches = (e: ExpectedCall, call: ActualCall) => e.tool === call.name && argsMatch(e.args, call.input);
 
-export function scoreRun(c: EvalCase, calls: ActualCall[]): RunScore {
+export function scoreRun(c: EvalCase, calls: ActualCall[], outcome?: RunOutcome): RunScore {
   const seen = new Set<string>();
   let paramMatched = 0;
   let paramMismatched = 0;
@@ -45,6 +53,9 @@ export function scoreRun(c: EvalCase, calls: ActualCall[]): RunScore {
   }
   const required = c.expected.filter((e) => e.required);
   const requiredHit = required.filter((e) => calls.some((call) => matches(e, call))).length;
+  // A label with no outcome to check against fails rather than passing silently.
+  const handoffOk = c.handoff === undefined ? null : outcome?.handoffReason === c.handoff;
+  const replyOk = c.reply === undefined ? null : outcome !== undefined && c.reply.ok(outcome.replyText);
   return {
     requiredTotal: required.length,
     requiredHit,
@@ -52,7 +63,10 @@ export function scoreRun(c: EvalCase, calls: ActualCall[]): RunScore {
     paramMatched,
     paramMismatched,
     unnecessary,
-    passed: requiredHit === required.length && paramMismatched === 0 && unnecessary === 0,
+    handoffOk,
+    replyOk,
+    passed:
+      requiredHit === required.length && paramMismatched === 0 && unnecessary === 0 && handoffOk !== false && replyOk !== false,
   };
 }
 

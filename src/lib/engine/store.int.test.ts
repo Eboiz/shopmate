@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it } from "vitest";
 import { productCardSchema } from "@/contract";
+import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseStore } from "./store";
 import { FX, seedTwoShops } from "./test/two-shops";
@@ -18,7 +19,28 @@ describe("createSupabaseStore", () => {
       ).toEqual({
         conversation: { shopId: FX.a.shop, mode: "ai" },
         product: { id: FX.a.vay01, name: "Váy suông linen" },
+        previousTurnMissedProduct: false,
       });
+    });
+
+    it("says whether the conversation's latest AI turn searched and found nothing (PB-05)", async () => {
+      const turn = (tool_calls: Json[], handoff_reason: "misunderstood_twice" | null = null) =>
+        store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls, handoff_reason });
+      const missed = () =>
+        store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null }).then((tc) => tc.previousTurnMissedProduct);
+      const emptySearch = { name: "search_products", input: { query: "áo khoác da", limit: 5 }, output: { products: [] } };
+
+      await turn([emptySearch]);
+      expect(await missed()).toBe(true);
+      // Staff draft turns of the same shop don't count; only the conversation's own.
+      await store.insertTurn({ shop_id: FX.a.shop, mode: "staff_draft", latency_ms: 1, tool_calls: [] });
+      expect(await missed()).toBe(true);
+      await turn([emptySearch, { name: "get_stock", input: { productId: FX.a.vay01 }, output: {} }]);
+      expect(await missed()).toBe(false);
+      await turn([emptySearch], "misunderstood_twice");
+      expect(await missed()).toBe(false);
+      await turn([]);
+      expect(await missed()).toBe(false);
     });
 
     it("returns nulls for an unknown conversation", async () => {
