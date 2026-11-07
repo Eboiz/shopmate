@@ -22,9 +22,17 @@ describe("prompt", () => {
 
   it("customer prompt has the four handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v0.6");
+    expect(PROMPT_VERSION).toBe("v0.7");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
+  });
+
+  it("requires the PB-11 confirmation and valid phone before a draft order", () => {
+    const prompt = buildStablePrompt("customer");
+    for (const phrase of ["Chỉ hỏi thông tin còn thiếu", "10 chữ số bắt đầu bằng 0", "quote_order", "get_policy(giao_hang)", "Chỉ ở lượt SAU", "create_draft_order", "COD hoặc chuyển khoản", "hết hàng trong lúc chat"]) {
+      expect(prompt).toContain(phrase);
+    }
+    expect(buildStablePrompt("staff_draft")).not.toContain("Chỉ ở lượt SAU");
   });
 
   it("asks for declared pairings with the shopper's size and at most two suggestions", () => {
