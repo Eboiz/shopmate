@@ -8,9 +8,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { ProductCard } from "@/components/ui/product-card";
 import { Icon } from "@/components/ui/icon";
+import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
 import { ProductDetailView } from "./product-detail-view";
+import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
 
 type Props = { slug: string; previewCatalog?: ShopCatalog; detailProductId?: string };
 
@@ -166,7 +168,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   const lastReply = messages.at(-1)?.reply;
   if (catalogLoading) {
-    return <main className="flex-1 p-6 text-center text-sm text-zinc-500">Đang tải sản phẩm…</main>;
+    return <main className="flex flex-1 flex-col">{detailProductId ? <ProductDetailSkeleton /> : <ShopFrontSkeleton />}</main>;
   }
   if (catalogError) {
     return (
@@ -176,7 +178,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           setCatalogError("");
           setCatalogLoading(true);
           setCatalogRetry((value) => value + 1);
-        }}>Thử lại</Button>
+        }}><Icon name="refresh" className="size-4" /> Thử lại</Button>
       </main>
     );
   }
@@ -279,7 +281,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
           <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f3ef] px-4 py-5" aria-live="polite">
             {loading ? (
-              <p className="text-center text-sm text-zinc-500">Đang tải cuộc trò chuyện…</p>
+              <LoadingRegion label="Đang tải cuộc trò chuyện…"><ChatSkeleton /></LoadingRegion>
             ) : messages.length === 0 ? (
               <div className="space-y-5"><div className="ui-card p-5"><span className="flex size-10 items-center justify-center rounded-lg bg-[#e9573f] text-white"><Icon name="spark" className="size-5" /></span><h3 className="mt-4 text-lg font-bold">Xin chào! Mình giúp gì cho bạn?</h3><p className="mt-2 text-sm leading-6 text-[#706d67]">Hỏi về sản phẩm, size, màu sắc hoặc một set đồ hợp với bạn.</p></div><div><p className="mb-3 text-[10px] font-bold uppercase tracking-[.16em] text-[#706d67]">Gợi ý câu hỏi</p><div className="flex flex-wrap gap-2">{["Shop còn size M không?", "Tư vấn size giúp mình", "Gợi ý phối đồ"].map((text) => <button key={text} type="button" onClick={() => void send(text)} disabled={sending || loading} className="rounded-full border border-[#d5d0c8] bg-white px-3 py-2 text-xs font-medium transition-colors hover:border-[#171717] disabled:opacity-50">{text} ↗</button>)}</div></div></div>
             ) : (
@@ -311,7 +313,11 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 ))}
               </div>
             )}
-            {(sending || awaitingReply) && <p role="status" className="mt-4 text-sm text-zinc-500">Shop đang trả lời…</p>}
+            {(sending || awaitingReply) && (
+              <p role="status" className="mt-4 inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-[#e3dfd8] bg-white px-3 py-2 text-sm text-[#706d67]">
+                <TypingDots /> Shop đang trả lời…
+              </p>
+            )}
             <div ref={endRef} />
           </div>
 
@@ -338,7 +344,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 placeholder="Nhập câu hỏi của bạn"
                 disabled={sending || loading}
               />
-              <Button type="submit" disabled={sending || loading || !draft.trim()} aria-label="Gửi tin nhắn"><Icon name="send" className="size-4" /><span className="hidden sm:inline">Gửi</span></Button>
+              <Button type="submit" disabled={loading || !draft.trim()} loading={sending} loadingText={<span className="hidden sm:inline">Gửi</span>} aria-label="Gửi tin nhắn"><Icon name="send" className="size-4" /><span className="hidden sm:inline">Gửi</span></Button>
             </form>
           </div>
         </section>

@@ -61,3 +61,18 @@ export function ProductCard({
     </article>
   );
 }
+
+// Same frame as ProductCard while the catalog loads, so the grid doesn't jump.
+export function ProductCardSkeleton() {
+  return (
+    <div aria-hidden="true" className="flex h-full flex-col overflow-hidden rounded-xl border border-[#e3dfd8] bg-white">
+      <div className="aspect-[4/5] w-full animate-pulse bg-[#e6e1d8]" />
+      <div className="flex flex-1 flex-col gap-2 p-4">
+        <div className="h-4 w-4/5 animate-pulse rounded-md bg-[#e6e1d8]" />
+        <div className="h-4 w-1/3 animate-pulse rounded-md bg-[#e6e1d8]" />
+        <div className="h-3 w-2/3 animate-pulse rounded-md bg-[#e6e1d8]" />
+        <div className="mt-auto h-11 w-full animate-pulse rounded-lg bg-[#e6e1d8]" />
+      </div>
+    </div>
+  );
+}

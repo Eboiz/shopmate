@@ -1,11 +1,12 @@
 import { Suspense, type ReactNode } from "react";
 import { findStaffProfile, requireUser } from "@/lib/auth";
+import { LoadingRegion, PageHeaderSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { AdminShell } from "./admin-shell";
 
 export default function AdminLayout({ children }: LayoutProps<"/admin">) {
   return (
     <div className="flex min-h-dvh flex-1 flex-col bg-[#f5f3ef]">
-      <Suspense fallback={<p className="px-4 py-6 text-[#706d67]">Đang tải...</p>}>
+      <Suspense fallback={<AdminShellSkeleton />}>
         <AdminGate>{children}</AdminGate>
       </Suspense>
     </div>
@@ -31,5 +32,36 @@ function NoShopNotice() {
         Hãy nhờ chủ shop thêm tài khoản của bạn, hoặc đăng xuất rồi đăng nhập bằng tài khoản của shop.
       </p>
     </section>
+  );
+}
+
+// The admin frame (header, nav, a page of cards) while the session is checked,
+// so the screen keeps its layout instead of flashing a line of text.
+function AdminShellSkeleton() {
+  return (
+    <LoadingRegion label="Đang tải trang quản lý…" className="flex flex-1 flex-col">
+      <div className="flex min-h-18 items-center justify-between gap-4 border-b border-[#e3dfd8] bg-white px-4 py-3 sm:px-7 lg:px-9">
+        <div className="flex items-center gap-3">
+          <Skeleton className="size-10 rounded-lg" />
+          <Skeleton className="h-6 w-28" />
+        </div>
+        <Skeleton className="h-10 w-36 rounded-lg" />
+      </div>
+      <div className="mx-auto flex w-full max-w-[1700px] flex-1">
+        <div className="hidden w-60 shrink-0 space-y-2 bg-[#171717] px-3 py-7 lg:block">
+          {[0, 1, 2, 3].map((item) => (
+            <div key={item} aria-hidden="true" className="h-12 w-full animate-pulse rounded-lg bg-[#292929]" />
+          ))}
+        </div>
+        <div className="min-w-0 flex-1 px-4 py-8 sm:px-7 lg:px-10 lg:py-10">
+          <PageHeaderSkeleton />
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {[0, 1, 2, 3].map((card) => (
+              <Skeleton key={card} className="h-44 rounded-2xl" />
+            ))}
+          </div>
+        </div>
+      </div>
+    </LoadingRegion>
   );
 }

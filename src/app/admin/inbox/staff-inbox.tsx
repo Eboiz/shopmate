@@ -5,6 +5,7 @@ import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
+import { ChatSkeleton, LoadingRegion, Skeleton } from "@/components/ui/skeleton";
 import { TextArea } from "@/components/ui/text-area";
 import {
   historyLimit, listInboxMessages, listLiveConversations, setLiveInboxMode, subscribeInbox,
@@ -57,6 +58,7 @@ function ModeBadge({ mode }: { mode: ConversationMode }) {
 export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMessageAction }) {
   const [state, setState] = useState<InboxState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const onMessage = useEffectEvent((conversationId?: string) => {
@@ -74,10 +76,16 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
       const id = ++requestId;
       void listLiveConversations().then(
         (conversations) => {
-          if (active && id === requestId) setState({ status: "ready", conversations });
+          if (active && id === requestId) {
+            setState({ status: "ready", conversations });
+            setRefreshing(false);
+          }
         },
         () => {
-          if (active && id === requestId) setState((current) => current.status === "ready" ? current : { status: "error" });
+          if (active && id === requestId) {
+            setState((current) => current.status === "ready" ? current : { status: "error" });
+            setRefreshing(false);
+          }
         },
       );
     }
@@ -103,11 +111,30 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
 
   function reload() {
     if (state.status === "error") setState({ status: "loading" });
+    else setRefreshing(true);
     setAttempt((current) => current + 1);
     setHistoryVersion((version) => version + 1);
   }
 
-  if (state.status === "loading") return <p role="status" className="ui-card p-6 text-sm text-[#706d67]">Đang tải hộp thư…</p>;
+  if (state.status === "loading") {
+    return (
+      <LoadingRegion label="Đang tải hộp thư…">
+        <Skeleton className="mb-4 h-11 w-28 rounded-lg" />
+        <div className="space-y-2 md:w-80">
+          {[0, 1, 2, 3].map((row) => (
+            <div key={row} className="ui-card space-y-2 p-4">
+              <div className="flex justify-between gap-2">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-3 w-14" />
+              </div>
+              <Skeleton className="h-5 w-36 rounded-full" />
+              <Skeleton className="h-4 w-full" />
+            </div>
+          ))}
+        </div>
+      </LoadingRegion>
+    );
+  }
 
   if (state.status === "error") {
     return (
@@ -125,7 +152,7 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
 
   return (
     <>
-      <Button variant="secondary" className="mb-4" onClick={reload}>↻ Làm mới</Button>
+      <Button variant="secondary" className="mb-4" loading={refreshing} loadingText="Đang làm mới…" onClick={reload}>↻ Làm mới</Button>
       {conversations.length ? (
         <InboxConversations
           conversations={conversations}
@@ -283,8 +310,9 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
             </div>
           </div>
           <Button variant={isStaff ? "secondary" : "primary"} disabled={pending !== null}
+            loading={pending === "mode"} loadingText="Đang cập nhật…"
             onClick={() => void runAction("mode", changeMode)}>
-            {pending === "mode" ? "Đang cập nhật…" : isStaff ? "Trả lại cho AI" : "Tiếp quản"}
+            {isStaff ? "Trả lại cho AI" : "Tiếp quản"}
           </Button>
         </header>
 
@@ -307,7 +335,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
             </ol>
           ) : messages ? (
             <p className="text-sm">Chưa có tin nhắn trong cuộc trò chuyện này.</p>
-          ) : !historyError && <p role="status" className="text-sm">Đang tải tin nhắn…</p>}
+          ) : !historyError && <LoadingRegion label="Đang tải tin nhắn…"><ChatSkeleton /></LoadingRegion>}
         </div>
 
         {error && <ErrorMessage>{error}</ErrorMessage>}
@@ -319,8 +347,8 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
             void runAction("send", () => sendReply(text));
           }}>
             <TextArea label="Tin nhắn cho khách" rows={2} maxLength={1000} value={reply} disabled={pending !== null} onChange={(event) => setReply(event.target.value)} />
-            <Button type="submit" disabled={pending !== null || !reply.trim()}>
-              {pending === "send" ? "Đang gửi…" : "Gửi tin nhắn"}
+            <Button type="submit" disabled={pending !== null || !reply.trim()} loading={pending === "send"} loadingText="Đang gửi…">
+              Gửi tin nhắn
             </Button>
           </form>
         )}
