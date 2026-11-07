@@ -34,6 +34,14 @@ describe("prompt", () => {
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
   });
 
+  it("requires the PB-11 confirmation and valid phone before a draft order", () => {
+    const prompt = buildStablePrompt("customer");
+    for (const phrase of ["Chỉ hỏi thông tin còn thiếu", "10 chữ số bắt đầu bằng 0", "quote_order", "get_policy(giao_hang)", "Chỉ ở lượt SAU", "create_draft_order", "COD hoặc chuyển khoản", "hết hàng trong lúc chat"]) {
+      expect(prompt).toContain(phrase);
+    }
+    expect(buildStablePrompt("staff_draft")).not.toContain("Chỉ ở lượt SAU");
+  });
+
   it("asks for declared pairings with the shopper's size and at most two suggestions", () => {
     const prompt = buildStablePrompt("customer");
     for (const phrase of ["get_pairings", "size khách đã nói", "tối đa 2 món", "lý do shop đã khai báo"]) {
@@ -103,9 +111,9 @@ describe("prompt", () => {
     }
   });
 
-  it("v1 tool-loop prompt: one search per turn, viewed product first, PB-14 handoffs, orders after confirmation", () => {
+  it("v1 tool-loop prompt: one search per turn, viewed product first, PB-14 handoffs", () => {
     const customer = buildStablePrompt("customer");
-    for (const phrase of ["không search_products lại", "chỉ gọi một lần mỗi lượt", "not_covered_by_data", "misunderstood_twice", "sau khi khách xác nhận"]) {
+    for (const phrase of ["không search_products lại", "chỉ gọi một lần mỗi lượt", "not_covered_by_data", "misunderstood_twice"]) {
       expect(customer).toContain(phrase);
     }
     expect(buildStablePrompt("staff_draft")).not.toContain("misunderstood_twice");

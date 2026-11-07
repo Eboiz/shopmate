@@ -67,6 +67,102 @@ describe("runEngine on the real database", () => {
     expect(row.model_calls).toBe(m.modelCalls.length);
   });
 
+  it("PB-11 quotes two items, waits for confirmation, then stores two draft lines without taking stock", async () => {
+    const items = [
+      { variantId: FX.a.vay01MBe, quantity: 1 },
+      { variantId: FX.a.ao03STrang, quantity: 1 },
+    ];
+    const shopperText = "Mình lấy váy linen be size M và áo sơ mi trắng size S, mỗi món 1 cái. Tên Thảo, số 0912345678, địa chỉ 12 Nguyễn Huệ, Q1.";
+    const { error: policyError } = await db.from("policies").update({ content: "Nội thành phí 20.000đ; tỉnh khác 30.000đ." }).eq("shop_id", FX.a.shop).eq("kind", "giao_hang");
+    if (policyError) throw policyError;
+    const first = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text: shopperText }] },
+      { model: scriptedModel([toolCalls(toolUse("quote_order", { items }))]), db, store, onMetrics: () => {} },
+    );
+    expect(first.output.reply.text).toContain("Tổng tiền hàng: 600.000đ (chưa gồm phí giao hàng)");
+    expect(first.output.reply.text).toContain("Nội thành phí 20.000đ");
+    expect(await first.turnLogged).not.toBeNull();
+    const { count: before } = await db.from("orders").select("*", { count: "exact", head: true }).eq("shop_id", FX.a.shop);
+    expect(before).toBe(0);
+
+    const second = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [
+        { sender: "shopper", text: shopperText },
+        { sender: "ai", text: first.output.reply.text },
+        { sender: "shopper", text: "Dạ mình xác nhận nha" },
+      ] },
+      { model: scriptedModel([toolCalls(toolUse("create_draft_order", {
+        items, customerName: "Thảo", customerPhone: "0912345678", customerAddress: "12 Nguyễn Huệ, Q1",
+      }))]), db, store, onMetrics: () => {} },
+    );
+    expect(second.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
+    const { data: order, error } = await db.from("orders").select("id, status, total, customer_name, customer_phone, customer_address").eq("shop_id", FX.a.shop).single();
+    if (error) throw error;
+    expect(order).toMatchObject({ status: "draft", total: 600000, customer_name: "Thảo", customer_phone: "0912345678", customer_address: "12 Nguyễn Huệ, Q1" });
+    const { data: lines } = await db.from("order_items").select("variant_id, quantity, unit_price").eq("order_id", order.id);
+    expect(lines).toEqual(expect.arrayContaining([
+      { variant_id: FX.a.vay01MBe, quantity: 1, unit_price: 350000 },
+      { variant_id: FX.a.ao03STrang, quantity: 1, unit_price: 250000 },
+    ]));
+    expect(lines).toHaveLength(2);
+    const { data: stocks } = await db.from("variants").select("id, stock").in("id", items.map((item) => item.variantId));
+    expect(stocks).toEqual(expect.arrayContaining([{ id: FX.a.vay01MBe, stock: 2 }, { id: FX.a.ao03STrang, stock: 3 }]));
+  });
+
+  it("PB-11 refuses a variant sold out after the quote and suggests only in-stock alternatives", async () => {
+    const items = [{ variantId: FX.a.vay01MBe, quantity: 1 }];
+    const shopperText = "Mình lấy váy linen be size M 1 cái. Tên Thảo, số 0912345678, địa chỉ Q1.";
+    const quoted = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text: shopperText }] },
+      { model: scriptedModel([toolCalls(toolUse("quote_order", { items }))]), db, store, onMetrics: () => {} },
+    );
+    await quoted.turnLogged;
+    const { error: stockError } = await db.from("variants").update({ stock: 0 }).eq("id", FX.a.vay01MBe).eq("shop_id", FX.a.shop);
+    if (stockError) throw stockError;
+    const result = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [
+        { sender: "shopper", text: shopperText },
+        { sender: "ai", text: quoted.output.reply.text },
+        { sender: "shopper", text: "xác nhận" },
+      ] },
+      { model: scriptedModel([toolCalls(toolUse("create_draft_order", {
+        items, customerName: "Thảo", customerPhone: "0912345678", customerAddress: "Q1",
+      }))]), db, store, onMetrics: () => {} },
+    );
+    expect(result.output.reply.text).toContain("chưa tạo đơn");
+    expect(result.output.reply.text).toContain("size M màu đen");
+    const { count } = await db.from("orders").select("*", { count: "exact", head: true }).eq("shop_id", FX.a.shop);
+    expect(count).toBe(0);
+  });
+
+  it("PB-11 asks again for an invalid Vietnamese mobile number and writes no order", async () => {
+    const items = [{ variantId: FX.a.vay01MBe, quantity: 1 }];
+    const shopperText = "Mình lấy váy linen be size M 1 cái. Tên Thảo, số 912345678, địa chỉ Q1.";
+    const quoted = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text: shopperText }] },
+      { model: scriptedModel([toolCalls(toolUse("quote_order", { items }))]), db, store, onMetrics: () => {} },
+    );
+    await quoted.turnLogged;
+    const model = scriptedModel([
+      toolCalls(toolUse("create_draft_order", {
+        items, customerName: "Thảo", customerPhone: "912345678", customerAddress: "Q1",
+      })),
+      finalJson({ text: "Đã tạo đơn", productIds: [], quickReplies: [] }),
+    ]);
+    const result = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [
+        { sender: "shopper", text: shopperText },
+        { sender: "ai", text: quoted.output.reply.text },
+        { sender: "shopper", text: "xác nhận" },
+      ] },
+      { model, db, store, onMetrics: () => {} },
+    );
+    expect(result.output.reply.text).toContain("10 chữ số");
+    expect(result.output.reply.text).not.toContain("Đã tạo đơn");
+    const { count } = await db.from("orders").select("*", { count: "exact", head: true }).eq("shop_id", FX.a.shop);
+    expect(count).toBe(0);
+  });
+
   it("too many tool calls on real DB", async () => {
     const model = scriptedModel(Array.from({ length: 6 }, () => toolCalls(toolUse("get_policy", { kind: "doi_tra" }))));
     try {

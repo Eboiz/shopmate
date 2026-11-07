@@ -20,7 +20,28 @@ describe("createSupabaseStore", () => {
         conversation: { shopId: FX.a.shop, mode: "ai" },
         product: { id: FX.a.vay01, name: "Váy suông linen" },
         previousTurnMissedProduct: false,
+        previousQuote: null,
       });
+    });
+
+    it("loads the last quoted order only from this customer's conversation", async () => {
+      const items = [{ variantId: FX.a.vay01MBe, quantity: 1 }];
+      const quote = { lines: [{
+        variantId: FX.a.vay01MBe, productId: FX.a.vay01, name: "Váy suông linen",
+        size: "M", color: "be", quantity: 1, unitPrice: 350000, lineTotal: 350000,
+      }], total: 350000 };
+      const id = await store.insertTurn({
+        shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1,
+        tool_calls: [{ name: "quote_order", input: { items }, output: quote }],
+      });
+      try {
+        const own = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
+        expect(own.previousQuote).toEqual({ items, quote });
+        const other = await store.loadTurnContext({ conversationId: FX.b.conversation, shopId: null, productId: null });
+        expect(other.previousQuote).toBeNull();
+      } finally {
+        await db.from("ai_turns").delete().eq("id", id);
+      }
     });
 
     it("says whether the conversation's latest AI turn searched and found nothing (PB-05)", async () => {

@@ -56,7 +56,7 @@ Migrations reach the shared Supabase project only after they are merged to `main
 
 ## Main flow test (PB-19)
 
-`e2e/main-flow.spec.ts` plays the demo: a shopper on `/s/may-boutique` asks for a size (158 cm, 50 kg: the reply must name **M**), orders "Váy suông linen" Trắng / M in the chat, the demo staff account finds that order on `/admin/orders` (one line: name, `Trắng · Cỡ M · SL 1`), confirms it, and the stock shown on `/admin/products` is exactly one lower.
+`e2e/main-flow.spec.ts` plays the demo: a shopper on `/s/hanh-boutique` asks for a size (150 cm, 44 kg: the reply must name **S**), orders "Váy suông linen" be / S in the chat, the demo staff account finds that order on `/admin/orders` (one line: name, `be · Cỡ S · SL 1`), confirms it, and the stock shown on `/admin/products` is exactly one lower.
 
 ```bash
 pnpm exec playwright install chromium                     # once
@@ -67,7 +67,7 @@ E2E_BASE_URL=https://<preview-url> pnpm test:e2e:main      # before each Sprint 
 - `test:e2e:main` runs the file three times with **one worker**: runs in parallel would confirm orders at the same time and make the stock check wrong.
 - It talks to the real AI, so it checks facts (size M in the reply text, the order line, stock one lower), not sentences. The nightly job skips it (no Claude key there).
 - Until the chat API (PB-03, PB-04, PB-11) and the orders API (PB-12) are deployed, it is reported as **skipped** with what is missing. Skipped is not passed.
-- **Cleanup:** each run confirms one order, so stock of Váy suông linen Trắng / M drops by 3 per `test:e2e:main`. `pnpm db:seed` (or `--target=shared` for the team project) puts stock back to the CSV. The confirmed orders and their conversations stay, under customer names starting with `E2E-`, so they are easy to tell apart from real ones.
+- **Cleanup:** each run confirms one order, so stock of Váy suông linen be / S drops by 3 per `test:e2e:main`. `pnpm db:seed` (or `--target=shared` for the team project) puts stock back to the CSV. The confirmed orders and their conversations stay, under customer names starting with `E2E-`, so they are easy to tell apart from real ones.
 
 ## Rate limit (PB-17)
 
@@ -83,20 +83,41 @@ Limit: 10 shopper messages per minute per conversation (one conversation per sho
 
 ## Demo shop (PB-02)
 
+The database holds two shops, each with an eval copy (`<slug>-eval`, PB-10):
+
+| `--data` | Shop | Data | Accounts (`.env.local`) | Chat channels |
+| --- | --- | --- | --- | --- |
+| `demo` (default) | Hạnh Boutique, `hanh-boutique` | the PO's workbook and its 60 test questions (PB-28) | `DEMO_OWNER_*`, `DEMO_STAFF_*` | Messenger, Telegram |
+| `may-boutique` | Mây Boutique, `may-boutique` | 60 products SP01-SP60 (PR #41) | `MAY_BOUTIQUE_OWNER_*`, `MAY_BOUTIQUE_STAFF_*` | web chat only |
+
+A Facebook Page or Telegram bot belongs to one shop, so only `demo` stores channels. Photos are stored in Storage by product code, so the two data sets never share a code.
+
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
+
+PB-28 uses the PO's workbook, version 02/11/2026. Its source checksum, counts and export procedure are in `supabase/seed/demo/SOURCE.md`. The current source has 30 products and 10 pairings; the final 60-product / 20-pairing target awaits the PO's additions. `test_questions.csv` contains all 60 fixtures. `--check` verifies their size, stock, price and available-pairing labels against the catalog, including earlier customer turns, and checks every JPEG. PB-10 evaluates the AI replies.
+
+`supabase/seed/may-boutique/` holds the Mây Boutique catalog as merged in PR #41 (SP01-SP60, 616 variants, 30 pairings), with its photos and credits. It has no test set; the PO can compare it with the workbook when extending `demo/` to 60 products.
+
+Apply migration `20261107110000_pb28_po_catalog.sql` before seeding an existing database. It keeps the shop IDs and their user/channel bindings, changes the slugs to `hanh-boutique` and `hanh-boutique-eval` (skipped when `hanh-boutique` already exists, so `may-boutique` stays a separate shop), and removes SP01-SP30 from the Hạnh Boutique shops with their dependent catalog rows and test draft orders. A decided order referencing those products stops the migration. Keep the SP01-SP60 Storage objects: Mây Boutique uses them.
 
 ```bash
 pnpm db:start
 pnpm db:seed                                   # local Supabase
 pnpm db:seed --target=shared --confirm=<ref>   # the team's project; <ref> is the subdomain of NEXT_PUBLIC_SUPABASE_URL
-pnpm db:seed --check                           # only check the CSV files
+pnpm db:seed --target=shared --confirm=<ref> --accounts=existing # reuse the existing owner/staff accounts and credentials
+pnpm db:seed --data=may-boutique [--target=shared --confirm=<ref>]  # the second shop, Mây Boutique
+pnpm db:seed --check [--data=may-boutique]     # only check the CSV files
 pnpm db:seed --only=channels                   # only the chat channel accounts (PB-15, PB-21), safe on the shared project
 ```
 
-- It writes two shops with the same data: `may-boutique` (demo) and `may-boutique-eval` (PB-10 eval runs, so their draft orders never mix with the demo). It also creates the accounts in `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` and `DEMO_STAFF_EMAIL` / `DEMO_STAFF_PASSWORD` (`.env.local`) as owner and staff of the demo shop.
+- It writes the PO catalog to `hanh-boutique` (demo) and `hanh-boutique-eval` (PB-10 eval runs, so their draft orders never mix with the demo). It also creates the accounts in `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` and `DEMO_STAFF_EMAIL` / `DEMO_STAFF_PASSWORD` (`.env.local`) as owner and staff of the demo shop. `--accounts=existing` verifies and reuses their existing profiles and credentials.
 - Wrong data stops the seed before anything is written, with the sheet, row and column of each error.
 - It can run any number of times: rows are upserted, never deleted. Each run resets names, prices, descriptions, photos and stock to the CSV, so on the shared project it also undoes edits made in the app and stock taken by confirmed orders. Rows that are in the database but not in the CSV are reported, not removed. It never moves an existing account that belongs to another shop.
 - It ends by signing in as the demo owner and staff and checking that the demo shop can't read or change the eval shop.
+
+Optional activity fixtures are in `supabase/seed/demo-activity.sql`. After the catalog seed, execute this file with `pnpm exec supabase db query --db-url "$DATABASE_URL" --file supabase/seed/demo-activity.sql` from a shell with `DATABASE_URL` loaded. It uses the existing `owner@shopmate.test` and `staff@shopmate.test` profiles of `hanh-boutique` and fills the shop to totals of 100 customers, 100 conversations, 500 messages, 50 orders and 150 order lines. Conversations total 60 AI, 30 staff and 10 awaiting staff. Orders total 20 draft, 25 confirmed and 5 cancelled. Two mock conversations have 60 messages each. Fixtures cover web chat over 90 days and use the `demo-activity-v1-` customer prefix for identification.
+
+Confirmed and cancelled fixtures represent historical orders before the PO's current inventory snapshot. The transaction verifies inventory equality before committing. Existing activity counts determine how many new rows are needed. A second execution detects the reserved customer prefix and retains the existing fixtures. Requests that exceed the configured totals fail for review.
 
 ## Messenger channel (PB-15)
 

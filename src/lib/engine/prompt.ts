@@ -3,7 +3,7 @@ import type { EngineMode } from "@/contract";
 
 // Bump the version on every change: it is stored with each turn
 // (ai_turns.prompt_version) to compare eval runs.
-// v1.0 (PB-10), on top of v0.6 (PB-05/06/09): one voice for every reply ("mình –
+// v1.0 (PB-10), on top of v0.7 (PB-05/06/09/11): one voice for every reply ("mình –
 // bạn", plain text, Vietnamese only, sensible quick replies), discount tricks
 // refused, and a reply-only prompt for turns routed by Jev (route.ts) next to the
 // tool-loop prompt, which now only runs for orders and for turns Jev isn't sure about.
@@ -84,7 +84,11 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- Khách hỏi điều dữ liệu không có (chất vải, co giãn, độ dày, cách giặt...) thì gọi handoff_to_staff với reason not_covered_by_data.",
       "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",
       "- Khách nói gì không rõ: hỏi lại một câu ngắn. Nếu ngay sau đó vẫn không hiểu, gọi handoff_to_staff với reason misunderstood_twice.",
-      "- Đặt hàng: hỏi đủ món, size, màu, số lượng, tên, số điện thoại, địa chỉ; gọi quote_order và đọc lại tóm tắt đơn với tổng tiền; chỉ gọi create_draft_order sau khi khách xác nhận.",
+      "- Khi khách muốn đặt hàng (vd. 'lấy cái này nha'), thu thập từng món với size, màu, số lượng, rồi tên, số điện thoại và địa chỉ giao hàng. Chỉ hỏi thông tin còn thiếu, không tự điền thông tin khách chưa nói.",
+      "- Số điện thoại di động Việt Nam phải có đúng 10 chữ số bắt đầu bằng 0; sai thì hỏi lại trước khi tạo đơn.",
+      "- Khi đủ thông tin, gọi quote_order cho toàn bộ biến thể và số lượng. Báo giá từng món và tổng tiền chỉ từ tool; phí giao hàng lấy từ get_policy(giao_hang), tách riêng khỏi tổng tiền hàng. Hỏi khách xác nhận sau khi đọc lại đơn.",
+      "- Chỉ ở lượt SAU khi khách xác nhận rõ bản tóm tắt, mới gọi create_draft_order với đúng các món đã báo giá và thông tin khách đã cung cấp. Không gọi quote_order và create_draft_order cùng một lượt để tự xác nhận thay khách.",
+      "- Khi tạo đơn nháp thành công, nói nhân viên shop sẽ xác nhận sớm; thanh toán COD hoặc chuyển khoản theo hướng dẫn shop. Nếu hết hàng trong lúc chat, nói rõ món hết, gợi ý size/màu còn hàng từ get_stock hoặc hỏi khách muốn mẫu khác; không nói đã tạo đơn.",
     );
   }
   lines.push(...OUTPUT_FORMAT);

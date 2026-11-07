@@ -186,4 +186,23 @@ describe("runEngine with Jev routing", () => {
     expect((await twice.run(input("chào"))).output.reply.text).toBe(FALLBACK_TEXT);
     error.mockRestore();
   });
+
+  it("an order in progress (last turn read back a quote) skips Jev and stays in the tool loop (PB-11)", async () => {
+    const jev = jevSaying({ intent: { type: "choice", choice: "greeting", confidence: 0.99 } });
+    const { store, metrics, run } = setup(jev, [reply("Dạ mình tạo đơn nhé")]);
+    store.loadTurnContext.mockResolvedValueOnce({
+      conversation: { shopId: SHOP, mode: "ai" },
+      product: { id: VAY, name: "Váy suông linen" },
+      previousQuote: {
+        items: [{ variantId: VARIANT, quantity: 1 }],
+        quote: {
+          lines: [{ variantId: VARIANT, productId: VAY, name: "Váy suông linen", size: "M", color: "Be", quantity: 1, unitPrice: 389000, lineTotal: 389000 }],
+          total: 389000,
+        },
+      },
+    } as never);
+    await run(input("ok"));
+    expect(jev.decide).not.toHaveBeenCalled();
+    expect(metrics[0].route).toEqual({ path: "llm_loop", fallbackReason: "order_in_progress" });
+  });
 });
