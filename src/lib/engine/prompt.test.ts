@@ -27,6 +27,14 @@ describe("prompt", () => {
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
   });
 
+  it("requires the PB-11 confirmation and valid phone before a draft order", () => {
+    const prompt = buildStablePrompt("customer");
+    for (const phrase of ["Chỉ hỏi thông tin còn thiếu", "10 chữ số bắt đầu bằng 0", "quote_order", "get_policy(giao_hang)", "Chỉ ở lượt SAU", "create_draft_order", "COD hoặc chuyển khoản", "hết hàng trong lúc chat"]) {
+      expect(prompt).toContain(phrase);
+    }
+    expect(buildStablePrompt("staff_draft")).not.toContain("Chỉ ở lượt SAU");
+  });
+
   it("asks for declared pairings with the shopper's size and at most two suggestions", () => {
     const prompt = buildStablePrompt("customer");
     for (const phrase of ["get_pairings", "size khách đã nói", "tối đa 2 món", "lý do shop đã khai báo"]) {

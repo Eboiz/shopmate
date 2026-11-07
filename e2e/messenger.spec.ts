@@ -38,7 +38,7 @@ test.describe("with the local database", () => {
     expect(res.status()).toBe(200);
 
     const conversation = await waitForConversation("messenger", psid, (c) => c.messages.some((m) => answered(m.sender)));
-    expect(conversation.shopId).toBe(await shopIdBySlug("may-boutique"));
+    expect(conversation.shopId).toBe(await shopIdBySlug("hanh-boutique"));
     expect(conversation.messages[0]).toEqual({ sender: "shopper", text: "Váy suông linen size nào vừa 1m58 50kg?" });
     expect(conversation.messages.filter((m) => answered(m.sender))).toHaveLength(1);
   });

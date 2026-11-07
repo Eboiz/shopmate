@@ -23,6 +23,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
+import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
@@ -153,6 +154,14 @@ const lastShopperText = (history: EngineInput["history"]) =>
 
 const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
 
+function blockedOrderRun(input: unknown, code: string, extra: object = {}): ToolRun {
+  return {
+    log: { name: "create_draft_order", input, error: code },
+    content: JSON.stringify({ error: code, ...extra }),
+    isError: true,
+  };
+}
+
 export async function runEngine(rawInput: EngineInput, partialDeps: Partial<EngineDeps> = {}): Promise<EngineResult> {
   const deps = resolveDeps(partialDeps);
   const { now } = deps;
@@ -218,6 +227,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let knownSize = knownShopperSize(input.history);
   let discountRetried = false;
   let discountBlocked = false;
+  const previousQuote = tc.previousQuote ?? null;
+  let currentQuote: PendingQuote | null = null;
+  let orderResult: ToolOutput<"create_draft_order"> | null = null;
+  let orderIssue: { code: string; missing?: string[] } | null = null;
+  let createAttempted = false;
 
   for (;;) {
     const c0 = now();
@@ -303,6 +317,40 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
     const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
       const s0 = now();
+      if (u.name === "create_draft_order" && mode === "customer") {
+        const issue = orderWriteError(u.input, input.history, previousQuote);
+        if (issue) {
+          orderIssue = issue;
+          return { run: blockedOrderRun(u.input, issue.code, issue.missing ? { missing: issue.missing } : {}), ms: now() - s0, startMs: s0 - t0 };
+        }
+        if (createAttempted) {
+          orderIssue = { code: "duplicate_order_call" };
+          return { run: blockedOrderRun(u.input, "duplicate_order_call"), ms: now() - s0, startMs: s0 - t0 };
+        }
+        createAttempted = true;
+        const candidate = u.input as { customerPhone?: unknown } | null;
+        if (typeof candidate?.customerPhone === "string" && !/^0\d{9}$/.test(candidate.customerPhone)) {
+          orderIssue = { code: "invalid_phone" };
+        }
+        if (tools.create_draft_order.input.safeParse(u.input).success) {
+          // Prices may change between the summary and confirmation. Re-read the
+          // same variants before writing; a changed quote needs a new approval.
+          const quotedAt = now();
+          const freshRun = await executeTool("quote_order", { items: previousQuote!.items }, ctx, mode, deps.handlers, deps.db);
+          toolMetrics.push({ name: "quote_order", startMs: quotedAt - t0, ms: now() - quotedAt, outcome: toolOutcome(freshRun) });
+          if (freshRun.log) logs.push(freshRun.log);
+          const freshQuote = freshRun.log ? latestQuote([freshRun.log]) : null;
+          if (freshRun.isError || !freshQuote) {
+            orderIssue = { code: "quote_unavailable" };
+            return { run: blockedOrderRun(u.input, "quote_unavailable"), ms: now() - s0, startMs: s0 - t0 };
+          }
+          if (!sameQuote(previousQuote!.quote, freshQuote.quote)) {
+            currentQuote = freshQuote;
+            orderIssue = { code: "quote_changed" };
+            return { run: blockedOrderRun(u.input, "quote_changed"), ms: now() - s0, startMs: s0 - t0 };
+          }
+        }
+      }
       // recommend_size gets the height and weight the shopper actually wrote
       // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.
       const effectiveInput = u.name === "get_pairings" && u.input && typeof u.input === "object"
@@ -335,6 +383,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         if (run.isError) pairingState.failed = true;
         if (!run.isError) pairingState.items.push(...tools.get_pairings.output.parse(run.log?.output).pairings);
       }
+      if (mode === "customer" && u.name === "quote_order" && !run.isError && run.log && isOrderIntent(input.history)) {
+        currentQuote = latestQuote([run.log]);
+      }
+      if (mode === "customer" && u.name === "create_draft_order" && !run.isError) {
+        orderResult = tools.create_draft_order.output.parse(run.log?.output);
+      }
     });
 
     const handedOff = uses.find((u, i) => u.name === "handoff_to_staff" && !runs[i].run.isError);
@@ -342,6 +396,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       handoff = (handedOff.input as { reason: HandoffReason }).reason;
       break;
     }
+    if (orderResult || currentQuote) break;
 
     messages.push(
       { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
@@ -391,7 +446,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
   }
 
+  // These are assigned inside the runBatch callback; TypeScript cannot see it.
+  const finalOrderResult = orderResult as ToolOutput<"create_draft_order"> | null;
+  const finalQuote = currentQuote as PendingQuote | null;
+  const finalOrderIssue = orderIssue as { code: string; missing?: string[] } | null;
   let reply: Reply;
+  let quotedOrderPresented = false;
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
@@ -405,6 +465,45 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
+  } else if (finalOrderResult?.status === "created") {
+    reply = { text: orderCreatedText(), products: [], quickReplies: [] };
+  } else if (finalOrderResult?.status === "out_of_stock") {
+    const soldOutVariantIds = finalOrderResult.variantIds;
+    const productIds = [...new Set((previousQuote?.quote.lines ?? [])
+      .filter((line) => soldOutVariantIds.includes(line.variantId)).map((line) => line.productId))];
+    const alternatives: ToolOutput<"get_stock">[] = [];
+    for (const productId of productIds) {
+      const started = now();
+      const run = await executeTool("get_stock", { productId }, ctx, mode, deps.handlers, deps.db);
+      toolMetrics.push({ name: "get_stock", startMs: started - t0, ms: now() - started, outcome: toolOutcome(run) });
+      if (run.log) logs.push(run.log);
+      if (!run.isError) alternatives.push(tools.get_stock.output.parse(run.log?.output));
+    }
+    reply = { text: orderOutOfStockText(soldOutVariantIds, previousQuote, alternatives), products: [], quickReplies: [] };
+  } else if (finalQuote) {
+    const previousShipping = logs.findLast((log) => log.name === "get_policy" && !log.error &&
+      (log.input as { kind?: string } | null)?.kind === "giao_hang");
+    let shippingPolicy = previousShipping
+      ? tools.get_policy.output.parse(previousShipping.output).content
+      : null;
+    if (!previousShipping) {
+      const started = now();
+      const run = await executeTool("get_policy", { kind: "giao_hang" }, ctx, mode, deps.handlers, deps.db);
+      toolMetrics.push({ name: "get_policy", startMs: started - t0, ms: now() - started, outcome: toolOutcome(run) });
+      if (run.log) logs.push(run.log);
+      if (!run.isError) shippingPolicy = tools.get_policy.output.parse(run.log?.output).content;
+    }
+    const summary = orderSummary(finalQuote.quote, shippingPolicy);
+    quotedOrderPresented = summary !== null;
+    reply = { text: summary ?? "Đơn có quá nhiều món để đọc lại trong một tin. Bạn chia thành các đơn nhỏ hơn giúp mình nhé.", products: [], quickReplies: [] };
+  } else if (finalOrderIssue?.code === "invalid_phone") {
+    reply = { text: "Số điện thoại chưa hợp lệ. Bạn gửi lại số di động Việt Nam gồm 10 chữ số, bắt đầu bằng 0 nhé.", products: [], quickReplies: [] };
+  } else if (finalOrderIssue?.code === "customer_details_missing") {
+    reply = { text: `Mình còn thiếu ${finalOrderIssue.missing?.join(", ")}. Bạn gửi giúp mình để tiếp tục đặt hàng nhé.`, products: [], quickReplies: [] };
+  } else if (finalOrderIssue?.code === "quote_unavailable") {
+    reply = { text: "Mình chưa kiểm tra lại được giá của đơn. Mình chưa tạo đơn; bạn thử lại sau nhé.", products: [], quickReplies: [] };
+  } else if (finalOrderIssue?.code === "confirmation_required" || finalOrderIssue?.code === "order_items_changed") {
+    reply = { text: "Mình cần báo giá đúng các món và xin bạn xác nhận bản tóm tắt trước khi tạo đơn. Bạn cho mình biết món, size, màu và số lượng muốn đặt nhé.", products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
     reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
   } else if (sizeFallback && sizeAdvice) {
@@ -484,5 +583,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
   })();
 
+  if (quotedOrderPresented && await turnLogged === null) {
+    return {
+      output: engineOutputSchema.parse({
+        reply: { text: "Mình chưa lưu được báo giá lúc này. Bạn thử lại giúp mình nhé.", products: [], quickReplies: [] },
+        personalReplyNeeded: false,
+      }),
+      handoffReason: handoff,
+      turnLogged,
+    };
+  }
   return { output, handoffReason: handoff, turnLogged };
 }

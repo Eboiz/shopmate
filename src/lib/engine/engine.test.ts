@@ -61,6 +61,19 @@ function fakeStore(context: TurnContext = { conversation: { shopId: SHOP_A, mode
 
 const stockOut = { productId: PRODUCT, name: "Váy suông linen", price: 350000, variants: [] };
 const quoteOut = { lines: [], total: 0 };
+const orderQuote = { lines: [{
+  variantId: VARIANT, productId: PRODUCT, name: "Váy suông linen", size: "M", color: "be",
+  quantity: 1, unitPrice: 350000, lineTotal: 350000,
+}], total: 350000 };
+const orderHistory: EngineInput["history"] = [
+  { sender: "shopper", text: "Mình lấy váy size M màu be, tên Thảo, số 0912345678, giao tới Q1." },
+  { sender: "ai", text: "Dạ, đơn hàng dự kiến:\n1. Váy suông linen...\nBạn xác nhận đơn này chứ?" },
+  { sender: "shopper", text: "Dạ mình xác nhận nha" },
+];
+const orderStore = () => fakeStore({
+  conversation: { shopId: SHOP_A, mode: "ai" }, product: null,
+  previousQuote: { items: draftOrder.items, quote: orderQuote },
+});
 
 function fakeHandlers() {
   return {
@@ -128,6 +141,82 @@ describe("runEngine", () => {
     expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
     expect(result.handoffReason).toBeNull();
     expect(result.output.personalReplyNeeded).toBe(false);
+  });
+
+  describe("PB-11 ordering in chat", () => {
+    it("reads back only quote_order prices and the separate shipping policy before confirmation", async () => {
+      const { handlers, store, model, run } = setup([
+        toolCalls(toolUse("quote_order", { items: draftOrder.items }), toolUse("create_draft_order", draftOrder)),
+      ]);
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: "Nội thành 20.000đ, miễn phí từ 500.000đ." });
+      const result = await run(customerInput({ history: [
+        { sender: "shopper", text: "Mình lấy váy size M màu be, tên Thảo, số 0912345678, giao tới Q1." },
+      ] }));
+      expect(handlers.create_draft_order).not.toHaveBeenCalled();
+      expect(handlers.get_policy).toHaveBeenCalledWith({ kind: "giao_hang" }, expect.anything(), expect.anything());
+      expect(result.output.reply.text).toContain("350.000đ/món");
+      expect(result.output.reply.text).toContain("Tổng tiền hàng: 350.000đ (chưa gồm phí giao hàng)");
+      expect(result.output.reply.text).toContain("Nội thành 20.000đ");
+      expect(result.output.reply.text).toContain("Bạn xác nhận đơn này chứ?");
+      expect(model.calls).toHaveLength(1);
+      expect(store.insertTurn).toHaveBeenCalledTimes(1);
+    });
+
+    it("creates one draft after explicit confirmation, using the quoted items", async () => {
+      const { handlers, run } = setup([toolCalls(toolUse("create_draft_order", draftOrder))], { store: orderStore() });
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      const result = await run(customerInput({ history: orderHistory }));
+      expect(handlers.create_draft_order).toHaveBeenCalledTimes(1);
+      expect(result.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
+      expect(result.output.reply.text).toContain("COD");
+    });
+
+    it("blocks a write before confirmation or when the customer changes the items", async () => {
+      const before = setup([toolCalls(toolUse("create_draft_order", draftOrder)), reply()], { store: orderStore() });
+      const first = await before.run(customerInput({ history: [orderHistory[0]] }));
+      expect(before.handlers.create_draft_order).not.toHaveBeenCalled();
+      expect(first.output.reply.text).toContain("xin bạn xác nhận");
+
+      const changed = setup([toolCalls(toolUse("create_draft_order", { ...draftOrder, items: [{ variantId: VARIANT, quantity: 2 }] })), reply()], { store: orderStore() });
+      const second = await changed.run(customerInput({ history: orderHistory }));
+      expect(changed.handlers.create_draft_order).not.toHaveBeenCalled();
+      expect(second.output.reply.text).toContain("báo giá đúng các món");
+    });
+
+    it("asks again for an invalid phone and never writes", async () => {
+      const invalid = { ...draftOrder, customerPhone: "912345678" };
+      const { handlers, run } = setup([toolCalls(toolUse("create_draft_order", invalid)), reply()], { store: orderStore() });
+      const result = await run(customerInput({ history: orderHistory }));
+      expect(handlers.create_draft_order).not.toHaveBeenCalled();
+      expect(result.output.reply.text).toContain("10 chữ số");
+    });
+
+    it("re-quotes a changed price and requires a new confirmation before writing", async () => {
+      const { handlers, run } = setup([toolCalls(toolUse("create_draft_order", draftOrder))], { store: orderStore() });
+      handlers.quote_order.mockResolvedValue({
+        lines: [{ ...orderQuote.lines[0], unitPrice: 360000, lineTotal: 360000 }], total: 360000,
+      });
+      handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: "Phí 20.000đ" });
+      const result = await run(customerInput({ history: orderHistory }));
+      expect(handlers.create_draft_order).not.toHaveBeenCalled();
+      expect(result.output.reply.text).toContain("360.000đ");
+      expect(result.output.reply.text).toContain("Bạn xác nhận đơn này chứ?");
+    });
+
+    it("reports a sold-out item and offers only variants still in stock", async () => {
+      const { handlers, run } = setup([toolCalls(toolUse("create_draft_order", draftOrder))], { store: orderStore() });
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      handlers.create_draft_order.mockResolvedValue({ status: "out_of_stock", variantIds: [VARIANT] });
+      handlers.get_stock.mockResolvedValue({ productId: PRODUCT, name: "Váy suông linen", price: 350000, variants: [
+        { variantId: VARIANT, size: "M", color: "be", stock: 0 },
+        { variantId: "a0000000-0000-4000-8000-000000000022", size: "L", color: "be", stock: 3 },
+      ] });
+      const result = await run(customerInput({ history: orderHistory }));
+      expect(result.output.reply.text).toContain("chưa tạo đơn");
+      expect(result.output.reply.text).toContain("size L màu be");
+      expect(handlers.get_stock).toHaveBeenCalledWith({ productId: PRODUCT }, expect.anything(), expect.anything());
+    });
   });
 
   it("enforces the shopper's size and builds pairing cards and reasons from tool data", async () => {
@@ -980,12 +1069,12 @@ describe("runEngine", () => {
     it("write tools never run concurrently", async () => {
       const { handlers, run } = setup(
         [toolCalls(toolUse("quote_order", { items: draftOrder.items }), toolUse("create_draft_order", draftOrder)), reply()],
-        { deps: { toolConcurrency: 3 } },
+        { store: orderStore(), deps: { toolConcurrency: 3 } },
       );
       const t = tracker();
-      handlers.quote_order.mockImplementation(() => t.track(5, quoteOut));
+      handlers.quote_order.mockImplementation(() => t.track(5, orderQuote));
       handlers.create_draft_order.mockImplementation(() => t.track(5, { status: "created", orderId: ORDER, total: 1 }));
-      await run(customerInput());
+      await run(customerInput({ history: orderHistory }));
       expect(handlers.create_draft_order).toHaveBeenCalledTimes(1);
       expect(t.max()).toBe(1);
     });

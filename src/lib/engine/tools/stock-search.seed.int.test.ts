@@ -67,8 +67,8 @@ describe("search_products and get_stock on the PB-02 demo seed (PB-05)", () => {
   it('AC4: "vay suong linen" finds "Váy suông linen" with its price from the data', async () => {
     const { products } = await searchProducts({ query: "vay suong linen", limit: 5 }, ctx, db);
     expect(products.map((p) => p.name)).toEqual(["Váy suông linen"]);
-    expect(products[0].productId).toBe(id("SP01"));
-    expect(products[0].price).toBe(product("SP01").price);
+    expect(products[0].productId).toBe(id("VAY01"));
+    expect(products[0].price).toBe(product("VAY01").price);
   });
 
   it("finds every demo product by its name typed without diacritics", async () => {
@@ -78,30 +78,31 @@ describe("search_products and get_stock on the PB-02 demo seed (PB-05)", () => {
     }
   });
 
+  // The PO test set's S4 scenario (test_questions 25-26): a coat the shop doesn't sell.
   it("returns no product for a name the shop doesn't sell (AC3 starts from here)", async () => {
-    expect(await searchProducts({ query: "áo khoác da", limit: 5 }, ctx, db)).toEqual({ products: [] });
-    expect(await searchProducts({ query: "ao khoac da bo", limit: 5 }, ctx, db)).toEqual({ products: [] });
+    expect(await searchProducts({ query: "áo măng tô", limit: 5 }, ctx, db)).toEqual({ products: [] });
+    expect(await searchProducts({ query: "ao mang to toi goi", limit: 5 }, ctx, db)).toEqual({ products: [] });
   });
 
   it("AC1: one size and color in stock gives its stock and the product price", async () => {
-    const out = await getStock({ productId: id("SP01"), size: "M", color: "be" }, ctx, db);
-    const want = demo.variants.find((v) => v.code === "SP01" && v.size === "M" && v.color === "Be")!;
+    const out = await getStock({ productId: id("VAY01"), size: "M", color: "be" }, ctx, db);
+    const want = demo.variants.find((v) => v.code === "VAY01" && v.size === "M" && v.color === "be")!;
     expect(want.stock).toBeGreaterThan(0);
-    expect(out.price).toBe(product("SP01").price);
-    expect(out.variants).toEqual([expect.objectContaining({ size: "M", color: "Be", stock: want.stock })]);
+    expect(out.price).toBe(product("VAY01").price);
+    expect(out.variants).toEqual([expect.objectContaining({ size: "M", color: "be", stock: want.stock })]);
   });
 
   it("AC2: a sold-out variant shows stock 0, and the unfiltered call lists the same item's variants in stock", async () => {
-    // SP05 white / M is 0 in the seed; white S and L, pink M are in stock.
-    const asked = await getStock({ productId: id("SP05"), size: "M", color: "trang" }, ctx, db);
-    expect(asked.variants).toEqual([expect.objectContaining({ size: "M", color: "Trắng", stock: 0 })]);
+    // VAY01 black / M is 0 in the seed; be S, M and L, black S are in stock.
+    const asked = await getStock({ productId: id("VAY01"), size: "M", color: "den" }, ctx, db);
+    expect(asked.variants).toEqual([expect.objectContaining({ size: "M", color: "đen", stock: 0 })]);
 
-    const all = await getStock({ productId: id("SP05") }, ctx, db);
-    const seeded = demo.variants.filter((v) => v.code === "SP05");
+    const all = await getStock({ productId: id("VAY01") }, ctx, db);
+    const seeded = demo.variants.filter((v) => v.code === "VAY01");
     expect(all.variants).toHaveLength(seeded.length);
     const inStock = all.variants.filter((v) => v.stock > 0).map((v) => `${v.size}/${v.color}`);
-    expect(inStock).toEqual(expect.arrayContaining(["S/Trắng", "L/Trắng", "M/Hồng phấn"]));
-    expect(inStock).not.toContain("M/Trắng");
+    expect(inStock).toEqual(expect.arrayContaining(["S/be", "M/be", "L/be", "S/đen"]));
+    expect(inStock).not.toContain("M/đen");
   });
 
   it("every stock number get_stock returns equals the seed", async () => {

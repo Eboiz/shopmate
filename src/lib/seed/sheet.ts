@@ -30,9 +30,8 @@ export type DemoData = {
   policies: { kind: PolicyKind; content: string }[];
 };
 
-// PB-02 asked for 30 products and 10 pairings; the demo shop was later grown to 60 and 30.
 const EXPECTED_PRODUCTS = 60;
-const EXPECTED_PAIRINGS = 30;
+const EXPECTED_PAIRINGS = 20;
 const MAX_INT = 2147483647;
 const POLICY_KINDS: readonly string[] = Constants.public.Enums.policy_kind;
 
@@ -82,7 +81,8 @@ const key = (...parts: string[]) => parts.map((p) => p.toLowerCase()).join("\u00
 
 type Row = { line: number; get: (column: string) => string };
 
-export function readDemoData(csv: Record<SheetName, string>): {
+// `expectCounts` warns when the PO's target counts are not met; other data sets turn it off.
+export function readDemoData(csv: Record<SheetName, string>, { expectCounts = true } = {}): {
   data: DemoData | null;
   errors: string[];
   warnings: string[];
@@ -298,9 +298,9 @@ export function readDemoData(csv: Record<SheetName, string>): {
     if (!policies.some((p) => p.kind === kind)) errors.push(`policies: thiếu dòng ${kind}`);
   }
 
-  if (codes.size !== EXPECTED_PRODUCTS) warnings.push(`products: ${codes.size} sản phẩm, dữ liệu demo cần ${EXPECTED_PRODUCTS}`);
-  if (tables.pairings.length !== EXPECTED_PAIRINGS) {
-    warnings.push(`pairings: ${tables.pairings.length} cặp, dữ liệu demo cần ${EXPECTED_PAIRINGS}`);
+  if (expectCounts && codes.size !== EXPECTED_PRODUCTS) warnings.push(`products: ${codes.size} sản phẩm, issue yêu cầu ${EXPECTED_PRODUCTS}`);
+  if (expectCounts && tables.pairings.length !== EXPECTED_PAIRINGS) {
+    warnings.push(`pairings: ${tables.pairings.length} cặp, issue yêu cầu ${EXPECTED_PAIRINGS}`);
   }
 
   if (errors.length > 0 || shop === null) return { data: null, errors, warnings };

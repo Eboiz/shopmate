@@ -11,7 +11,7 @@ Product rules every plan must respect: prices, stock and sizes come only from th
 
 Write one file, `e2e/plans/PLAN_FILE`, in English, with at most 10 test cases for the user-visible behavior that changed, ordered by risk. Group them as Happy path, Edge cases, Worst cases (wrong input, wrong role, another shop's data, duplicates, failures of a dependency). For each case give:
 - the target spec file (existing feature file, or a new one named after the feature);
-- preconditions (seeded demo shop `may-boutique`, its eval twin `may-boutique-eval`, demo owner/staff accounts, a webhook payload…);
+- preconditions (seeded demo shop `hanh-boutique`, its eval twin `hanh-boutique-eval`, demo owner/staff accounts, a webhook payload…);
 - numbered steps a tester could follow in the browser or with an HTTP request;
 - the expected result, including what must be true in the database when relevant;
 - whether it is read-only and safe on production (then it gets `@smoke`).

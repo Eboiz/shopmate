@@ -17,14 +17,14 @@ test.describe("with the local database", () => {
 
   let accountId: string;
   test.beforeAll(async () => {
-    accountId = await telegramAccountId(await shopIdBySlug("may-boutique"));
+    accountId = await telegramAccountId(await shopIdBySlug("hanh-boutique"));
   });
 
   test("a shopper's message lands in the bot's shop and gets answered once", async ({ request }) => {
     const chat = fakeChatId();
     expect((await postTelegram(request, accountId, telegramUpdate(chat, { text: "Áo len còn màu be không?" }))).status()).toBe(200);
     const conversation = await waitForConversation("telegram", String(chat), (c) => c.messages.some((m) => answered(m.sender)));
-    expect(conversation.shopId).toBe(await shopIdBySlug("may-boutique"));
+    expect(conversation.shopId).toBe(await shopIdBySlug("hanh-boutique"));
     expect(conversation.messages[0]).toEqual({ sender: "shopper", text: "Áo len còn màu be không?" });
     expect(conversation.messages.filter((m) => answered(m.sender))).toHaveLength(1);
   });
