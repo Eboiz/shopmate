@@ -22,7 +22,7 @@ describe("prompt", () => {
 
   it("customer prompt has the four handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v0.3");
+    expect(PROMPT_VERSION).toBe("v0.4");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
   });
@@ -50,6 +50,12 @@ describe("prompt", () => {
     const staff = buildStablePrompt("staff_draft");
     expect(staff).toContain("1m65 → 165");
     expect(staff).not.toContain("hỏi lại khách MỘT câu");
+  });
+
+  it("keeps search_products queries to the product name (PB-05 AC4)", () => {
+    for (const mode of ["customer", "staff_draft"] as const) {
+      expect(buildStablePrompt(mode)).toContain("query của search_products chỉ gồm tên hoặc loại sản phẩm");
+    }
   });
 
   it("stable prompt does not depend on the product", () => {
