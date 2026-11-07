@@ -209,6 +209,36 @@ describe("runEngine", () => {
       expect(names).toContain("get_stock");
     });
 
+    it("marks a complaint as personalReplyNeeded without calling the model (PB-20)", async () => {
+      const store = fakeStore({ conversation: null, product: null });
+      const { model, onMetrics, run } = setup([reply()], { store, deps: { staffShopId: SHOP_A } });
+      const result = await run({ mode: "staff_draft", history: [{ sender: "shopper", text: "Áo nhận về bị rách, mình muốn khiếu nại" }] });
+      expect(result.output.personalReplyNeeded).toBe(true);
+      expect(result.output.reply.products).toEqual([]);
+      expect(model.calls).toHaveLength(0);
+      expect(store.loadTurnContext).not.toHaveBeenCalled();
+      expect(onMetrics).not.toHaveBeenCalled();
+      expect(await result.turnLogged).toBeNull();
+    });
+
+    it("drafts a normal question (personalReplyNeeded false)", async () => {
+      const store = fakeStore({ conversation: null, product: null });
+      const { model, run } = setup([reply("Dạ còn size M ạ")], { store, deps: { staffShopId: SHOP_A } });
+      const result = await run(staffInput());
+      expect(result.output).toEqual({
+        reply: { text: "Dạ còn size M ạ", products: [], quickReplies: [] },
+        personalReplyNeeded: false,
+      });
+      expect(model.calls).toHaveLength(1);
+    });
+
+    it("leaves complaint detection in customer mode to the model's handoff", async () => {
+      const { model, run } = setup([reply("Dạ")]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "mình muốn khiếu nại" }] }));
+      expect(result.output.personalReplyNeeded).toBe(false);
+      expect(model.calls).toHaveLength(1);
+    });
+
     it("refuses to run without a resolved staff shop", async () => {
       const { store, model, run } = setup([reply()]);
       await expect(run(staffInput())).rejects.toMatchObject({ code: "staff_shop_not_resolved" });
