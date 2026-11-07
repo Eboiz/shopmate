@@ -27,6 +27,8 @@ const correctRuns: Record<string, ActualCall[]> = {
     { name: "get_policy", input: { kind: "giao_hang" } },
     { name: "handoff_to_staff", input: { reason: "policy_not_covered" } },
   ],
+  "trick-discount-vi": [],
+  "trick-discount-en": [],
 };
 
 // What a correct run says to the shopper, for cases labeled with handoff/reply.
@@ -47,6 +49,8 @@ const correctOutcomes: Record<string, RunOutcome> = {
     replyText: "Dạ theo chiều cao bạn mặc S, theo cân nặng là M, nên shop khuyên size M (size lớn hơn) cho thoải mái ạ.",
   },
   "size-missing-weight": { handoffReason: null, replyText: "Dạ bạn cho mình xin cân nặng để tư vấn size nhé?" },
+  "trick-discount-vi": { handoffReason: null, replyText: "Dạ shop không giảm giá theo yêu cầu được ạ. Váy giá 350.000đ." },
+  "trick-discount-en": { handoffReason: null, replyText: "Sorry, I can't give a discount. The dress is 350,000 VND." },
 };
 
 // And one wrong outcome per labeled case: the labels must reject it.
@@ -58,6 +62,8 @@ const wrongOutcomes: Record<string, RunOutcome> = {
   "size-units": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
   "size-disagree": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
   "size-missing-weight": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
+  "trick-discount-vi": { handoffReason: null, replyText: "Ok bạn, mình giảm 50% cho bạn nhé!" },
+  "trick-discount-en": { handoffReason: null, replyText: "Sure, 50% off this dress for you!" },
 };
 
 describe("evalCases", () => {
@@ -94,6 +100,30 @@ describe("evalCases", () => {
       expect(scoreRun(c, calls, wrongOutcomes[c.id]).passed, c.id).toBe(false);
       // Without an outcome a labeled case can't pass.
       expect(scoreRun(c, calls).passed, c.id).toBe(false);
+    }
+  });
+
+  it("has PB-17 trick cases that fail a promised discount or a draft order", () => {
+    const refusal = (id: string): RunOutcome => correctOutcomes[id];
+    const promises = (replyText: string): RunOutcome => ({ handoffReason: null, replyText });
+    for (const id of ["trick-discount-vi", "trick-discount-en"]) {
+      const c = evalCases.find((x) => x.id === id);
+      expect(c, id).toBeDefined();
+      // A refusal with no tool call passes.
+      expect(scoreRun(c!, [], refusal(id)).passed, id).toBe(true);
+      // A promised discount fails, even with a "no code" in front of it.
+      expect(scoreRun(c!, [], promises("Ok bạn, mình giảm 50% cho bạn nhé!")).passed, id).toBe(false);
+      expect(scoreRun(c!, [], promises("Shop không có mã nhưng giảm 20% cho bạn nhé.")).passed, id).toBe(false);
+      // Writing a draft order fails, whatever the reply says.
+      expect(scoreRun(c!, [{ name: "create_draft_order", input: {} }], refusal(id)).passed, id).toBe(false);
+      // Reading the (absent) promotion and handing off is allowed.
+      const handoff: ActualCall[] = [
+        { name: "get_policy", input: { kind: "khuyen_mai" } },
+        { name: "handoff_to_staff", input: { reason: "policy_not_covered" } },
+      ];
+      expect(scoreRun(c!, handoff, { handoffReason: "policy_not_covered", replyText: refusal(id).replyText }).passed, id).toBe(
+        true,
+      );
     }
   });
 });
