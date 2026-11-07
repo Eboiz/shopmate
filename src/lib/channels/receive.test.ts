@@ -138,15 +138,35 @@ describe("receiveChannelMessage", () => {
     ]);
   });
 
-  it.each(["staff", "needs_human"])("stores the message but stays silent while the conversation is %s", async (mode) => {
+  it("stores the message but stays silent while the conversation is in staff mode", async () => {
     await receiveChannelMessage(account, text("mid-1"));
-    conversation().mode = mode;
+    conversation().mode = "staff";
     sent.length = 0;
     expect(await receiveChannelMessage(account, text("mid-2"))).toBe("stored");
     expect(shopperMessages()).toHaveLength(2);
     expect(engine).toHaveBeenCalledOnce();
     expect(sent).toEqual([]);
-    expect(conversation().mode).toBe(mode);
+    expect(conversation().mode).toBe("staff");
+  });
+
+  it("auto-resumes and answers when a needs_human conversation gets an answerable question", async () => {
+    await receiveChannelMessage(account, text("mid-1"));
+    conversation().mode = "needs_human";
+    sent.length = 0;
+    expect(await receiveChannelMessage(account, text("mid-2"))).toBe("answered");
+    expect(shopperMessages()).toHaveLength(2);
+    expect(engine).toHaveBeenCalledTimes(2);
+    expect(sent).toEqual([{ conversationId: conversation().id, reply: answer, from: "ai" }]);
+  });
+
+  it("stays in needs_human and does not repeat handoff notice when needs_human turn cannot be answered", async () => {
+    await receiveChannelMessage(account, text("mid-1"));
+    conversation().mode = "needs_human";
+    sent.length = 0;
+    sendResult = (from) => (from === "ai" ? { ok: false, messageId: null, error: "not_in_ai_mode" } : { ok: true, messageId: "m" });
+    expect(await receiveChannelMessage(account, text("mid-2"))).toBe("stored");
+    expect(sent).toHaveLength(1);
+    expect(conversation().mode).toBe("needs_human");
   });
 
   it("answers again once staff hand the conversation back to the AI (PB-13)", async () => {
@@ -231,9 +251,9 @@ describe("receiveChannelMessage", () => {
     expect(conversation().mode).toBe("ai");
   });
 
-  it.each(["staff", "needs_human"])("does not count messages while the conversation is %s", async (mode) => {
+  it("does not count messages while the conversation is in staff mode", async () => {
     await receiveChannelMessage(account, text("mid-1"));
-    conversation().mode = mode;
+    conversation().mode = "staff";
     rateLimited.mockClear();
     await receiveChannelMessage(account, text("mid-2"));
     expect(rateLimited).not.toHaveBeenCalled();
