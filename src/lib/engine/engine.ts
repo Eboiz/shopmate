@@ -14,6 +14,7 @@ import {
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
+import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
@@ -145,7 +146,10 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
   };
 }
 
-const isWriteTool = (name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
+const lastShopperText = (history: EngineInput["history"]) =>
+  history.findLast((message) => message.sender === "shopper")?.text ?? "";
+
+const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
 
 export async function runEngine(rawInput: EngineInput, partialDeps: Partial<EngineDeps> = {}): Promise<EngineResult> {
   const deps = resolveDeps(partialDeps);
@@ -155,6 +159,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const mode = input.mode;
 
   if (mode === "staff_draft" && !deps.staffShopId) throw new EngineError("staff_shop_not_resolved");
+  // PB-20: a complaint gets "reply personally", not a draft. Decided by the server
+  // before any model call, so it costs nothing and logs no turn.
+  if (mode === "staff_draft" && isComplaint(lastShopperText(input.history))) {
+    return {
+      output: { reply: { text: PERSONAL_REPLY_TEXT, products: [], quickReplies: [] }, personalReplyNeeded: true },
+      handoffReason: null,
+      turnLogged: Promise.resolve(null),
+    };
+  }
   // ONE read for everything needed before the model call.
   const tc = await deps.store.loadTurnContext({
     conversationId: input.mode === "customer" ? input.conversationId : null,
@@ -353,7 +366,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       quickReplies: modelReply.quickReplies,
     };
   }
-  // personalReplyNeeded belongs to PB-20.
+  // A complaint returned early above (PB-20).
   const output = engineOutputSchema.parse({ reply, personalReplyNeeded: false });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 

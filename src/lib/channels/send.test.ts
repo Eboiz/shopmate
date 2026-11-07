@@ -8,6 +8,7 @@ const calls: Call[] = [];
 let conversationRow: unknown;
 let currentMode: string;
 let insertResult: { data: unknown; error: unknown };
+let earlierMessage: unknown;
 
 function builder(table: string) {
   const ops: Call[] = [];
@@ -23,6 +24,7 @@ function builder(table: string) {
     update: record("update"),
     eq: record("eq"),
     maybeSingle: async () => {
+      if (table === "messages") return { data: earlierMessage, error: null };
       if (!ops.some((c) => c.op === "update")) return { data: conversationRow, error: null };
       // The update matches only if every `.eq("mode", x)` filter matches the current mode.
       const modeFilter = ops.find((c) => c.op === "eq" && c.args[0] === "mode");
@@ -72,6 +74,7 @@ beforeEach(() => {
     },
   };
   insertResult = { data: { id: "m1" }, error: null };
+  earlierMessage = null;
 });
 
 describe("sendToConversation", () => {
@@ -125,6 +128,31 @@ describe("sendToConversation", () => {
     expect(messageInsert()?.args[0]).toMatchObject({ sender: "staff", staff_id: "s1" });
     currentMode = "needs_human";
     expect((await sendToConversation("c1", reply, { from: "system" })).ok).toBe(true);
+  });
+
+  it("stores a staff reply with its client message id, and AI/system replies without one", async () => {
+    await sendToConversation("c1", reply, { from: "staff", staffId: "s1", clientMessageId: "req-1" });
+    expect(messageInsert()?.args[0]).toMatchObject({ sender: "staff", client_message_id: "req-1" });
+    calls.length = 0;
+    await sendToConversation("c1", reply, { from: "ai" });
+    expect(messageInsert()?.args[0]).toMatchObject({ sender: "ai", client_message_id: null });
+  });
+
+  it("does not store or deliver a retried staff reply twice (same client message id, PB-13)", async () => {
+    insertResult = { data: null, error: { code: "23505", message: "duplicate key value" } };
+    earlierMessage = { id: "m-first" };
+    const result = await sendToConversation("c1", reply, { from: "staff", staffId: "s1", clientMessageId: "req-1" });
+    expect(result).toEqual({ ok: false, messageId: "m-first", error: "duplicate_client_message" });
+    expect(send).not.toHaveBeenCalled();
+    const lookup = calls.filter((c) => c.table === "messages" && c.op === "eq").map((c) => c.args);
+    expect(lookup).toEqual([["conversation_id", "c1"], ["shop_id", shopA], ["client_message_id", "req-1"]]);
+  });
+
+  it("returns a unique violation without a client message id as a plain failure", async () => {
+    insertResult = { data: null, error: { code: "23505", message: "duplicate key value" } };
+    const result = await sendToConversation("c1", reply, { from: "staff", staffId: "s1" });
+    expect(result).toEqual({ ok: false, messageId: null, error: "duplicate key value" });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("keeps the message and returns the error when the channel refuses it", async () => {

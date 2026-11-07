@@ -142,6 +142,17 @@ describe("receiveChannelMessage", () => {
     expect(conversation().mode).toBe(mode);
   });
 
+  it("answers again once staff hand the conversation back to the AI (PB-13)", async () => {
+    await receiveChannelMessage(account, text("mid-1"));
+    conversation().mode = "staff";
+    expect(await receiveChannelMessage(account, text("mid-2"))).toBe("stored");
+    conversation().mode = "ai"; // "Trả lại cho AI"
+    sent.length = 0;
+    expect(await receiveChannelMessage(account, text("mid-3"))).toBe("answered");
+    expect(engine).toHaveBeenCalledTimes(2);
+    expect(sent).toEqual([{ conversationId: conversation().id, reply: answer, from: "ai" }]);
+  });
+
   it("hands off to staff with a notice when the engine fails", async () => {
     engine.mockRejectedValue(new Error("not_implemented"));
     expect(await receiveChannelMessage(account, text("mid-1"))).toBe("handed_off");
