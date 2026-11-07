@@ -15,6 +15,7 @@ const quickLinks = [
   { href: "/admin/inbox", icon: "chat" as const, title: "Hộp thư", description: "Xem và tiếp quản hội thoại cần hỗ trợ" },
   { href: "/admin/orders", icon: "box" as const, title: "Đơn hàng", description: "Xác nhận hoặc huỷ các đơn đang chờ" },
   { href: "/admin/products", icon: "hanger" as const, title: "Sản phẩm", description: "Cập nhật giá, tồn kho và phối đồ" },
+  { href: "/admin/reply-assistant", icon: "spark" as const, title: "Trợ lý trả lời", description: "Soạn bản nháp cho câu hỏi của khách" },
 ];
 
 export function DashboardOverview({ previewData }: DashboardOverviewProps) {
