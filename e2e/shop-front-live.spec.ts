@@ -12,7 +12,7 @@ const CHAT = `/api/shops/${DEMO_SHOP_SLUG}/chat`;
 
 test("@smoke the demo shop lists products with photo, name, price and colors on a 375 px phone", async ({ page }) => {
   await page.goto(`/s/${DEMO_SHOP_SLUG}`);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Mây Boutique");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Hạnh Boutique");
   const first = page.getByRole("article").first();
   await expect(first.getByRole("img")).toBeVisible();
   await expect(first.getByRole("heading", { level: 3 })).not.toBeEmpty();
