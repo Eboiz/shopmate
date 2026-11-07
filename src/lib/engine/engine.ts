@@ -194,9 +194,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   let ctx: ToolContext;
   if (input.mode === "customer") {
-    // Same code for "no such conversation" and "not in mode ai", so callers
-    // can't tell an existing conversation from a missing one by the error.
-    if (!tc.conversation || tc.conversation.mode !== "ai") throw new EngineError("conversation_not_found");
+    // Accepts conversations in mode "ai" or "needs_human" (auto-resume when answerable).
+    if (!tc.conversation || (tc.conversation.mode !== "ai" && tc.conversation.mode !== "needs_human")) {
+      throw new EngineError("conversation_not_found");
+    }
     ctx = { shopId: tc.conversation.shopId, conversationId: input.conversationId };
   } else {
     ctx = { shopId: deps.staffShopId!, conversationId: null };
@@ -699,6 +700,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     };
   }
   } // end of the LLM tool loop path
+  // Auto-resume: if the conversation was in needs_human and the AI produced an
+  // answer without handing off, move the conversation back to ai mode.
+  if (mode === "customer" && tc.conversation?.mode === "needs_human" && handoff === null && !truncated) {
+    await deps.store.setAiMode?.(ctx);
+  }
+
   // A complaint the word list catches returned early above (PB-20); one only Jev
   // caught sets personalReplyNeeded here.
   const output = engineOutputSchema.parse({ reply: reply!, personalReplyNeeded });
