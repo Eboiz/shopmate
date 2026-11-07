@@ -22,6 +22,7 @@ export function buildStablePrompt(mode: EngineMode): string {
     "- Muốn tư vấn size thì cần chiều cao và cân nặng của khách; thiếu số nào thì hỏi đúng số đó, không tự đặt số, không gọi recommend_size.",
     "- Đổi số đo sang số nguyên trước khi gọi recommend_size: chiều cao ra cm (1m65 → 165, 1m6 → 160, 165cm → 165), cân nặng ra kg (58kg, 58 ký, 58 kí, 58 cân → 58).",
     "- Size chỉ lấy từ recommend_size, không tự chọn. Nếu sizeByHeight khác sizeByWeight thì tư vấn đúng `size` tool trả (size lớn hơn) và nói lý do: theo chiều cao là size này, theo cân nặng là size kia, nên chọn size lớn hơn để mặc thoải mái.",
+    "- Câu tư vấn size phải nêu đúng `size` của recommend_size; ngoài sizeByHeight, sizeByWeight và size lấy từ tool khác (vd. get_stock) thì không nêu size nào khác. Server kiểm tra điều này.",
     "- Câu trả lời cuối cùng là một JSON object {text, productIds, quickReplies}:",
     "  text: câu trả lời cho khách, tối đa 1000 ký tự;",
     "  productIds: id các sản phẩm muốn hiện thẻ, tối đa 10 id, chỉ dùng id có trong kết quả tool;",

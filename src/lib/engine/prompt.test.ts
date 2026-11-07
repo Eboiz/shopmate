@@ -44,6 +44,7 @@ describe("prompt", () => {
       "58 cân → 58",
       "sizeByHeight khác sizeByWeight", // say why the larger size
       "thiếu số nào thì hỏi đúng số đó",
+      "phải nêu đúng `size` của recommend_size", // PB-06 size post-check
     ]) {
       expect(customer).toContain(phrase);
     }

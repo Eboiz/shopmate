@@ -21,6 +21,10 @@ describe("parseHeightCm", () => {
     ["165 cm", 165],
     ["165", 165],
     ["155.5", 156],
+    ["1 mét 65", 165],
+    ["1met6", 160],
+    ["m6", 160],
+    ["m65", 165],
   ])("%s -> %i", (raw, want) => {
     expect(parseHeightCm(raw)).toBe(want);
   });
@@ -68,6 +72,19 @@ describe("extractMeasurements", () => {
     ["minh cao 1m55 nang 47kg", 155, 47],
     ["Em nặng 52kg", null, 52],
     ["Em cao 1m58", 158, null],
+    // PB-06: how shoppers actually type it.
+    ["cao 1m6 nặng 50", 160, 50],
+    ["1.65m 55kg", 165, 55],
+    ["50kg 160cm", 160, 50],
+    ["158cm/50kg", 158, 50],
+    ["1m65/58kg mặc size gì", 165, 58],
+    ["mình cao m6, nặng 50 kí", 160, 50],
+    ["cao 1 mét 65 nặng 58 ký", 165, 58],
+    ["nặng 45 kí lô cao 150", 150, 45],
+    // Two bare numbers: a plausible height and weight, in either order.
+    ["160 50", 160, 50],
+    ["160 50 thì mặc size gì shop", 160, 50],
+    ["50 160", 160, 50],
   ])("%s", (text, heightCm, weightKg) => {
     expect(extractMeasurements(text)).toEqual({ heightCm, weightKg });
   });
@@ -75,6 +92,12 @@ describe("extractMeasurements", () => {
   it("ignores numbers that are not a measurement", () => {
     expect(extractMeasurements("Váy 350000đ còn size 28 không, lấy 2 cái")).toEqual({ heightCm: null, weightKg: null });
     expect(extractMeasurements("size M màu be 165")).toEqual({ heightCm: null, weightKg: null });
+    // Bare pairs only when they can't be anything else.
+    expect(extractMeasurements("lấy 2 cái size 28")).toEqual({ heightCm: null, weightKg: null });
+    expect(extractMeasurements("160 50 size 28")).toEqual({ heightCm: null, weightKg: null });
+    expect(extractMeasurements("350k 160")).toEqual({ heightCm: null, weightKg: null });
+    expect(extractMeasurements("160 150")).toEqual({ heightCm: null, weightKg: null });
+    expect(extractMeasurements("1.6 50")).toEqual({ heightCm: null, weightKg: null });
   });
 
   it("keeps the last mention in a message", () => {
