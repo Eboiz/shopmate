@@ -25,3 +25,18 @@ jobs:
       - run: pnpm test
       # Runs the seed script with plain Node, which also catches imports Vitest and tsc accept but Node can't run.
       - run: pnpm db:seed --check
+
+  # pgTAP tests (supabase/tests): schema, RLS between shops, constraints. Runs every
+  # migration on a throwaway Supabase first, so a broken migration fails here too.
+  db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec supabase start -x studio,imgproxy,edge-runtime,logflare,vector,mailpit,postgres-meta,supavisor,realtime
+      - run: pnpm db:test

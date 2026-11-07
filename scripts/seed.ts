@@ -4,6 +4,8 @@
 //   pnpm db:seed                                   local Supabase (`pnpm db:start`)
 //   pnpm db:seed --target=shared --confirm=<ref>   the team's Supabase project
 //   pnpm db:seed --check                           only read and check the CSV files
+//   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15, PB-21)
+//     [--telegram-webhook=<base URL>]             also point the Telegram bot's webhook there
 //
 // Safe to run again: rows are upserted on their natural keys and nothing is ever
 // deleted. Each run resets name, price and stock to the CSV, so on the shared
@@ -18,7 +20,8 @@ import { readDemoData, SHEET_COLUMNS, type DemoData, type SheetName } from "../s
 const root = new URL("../", import.meta.url);
 const demoDir = new URL("supabase/seed/demo/", root);
 const { values: args } = parseArgs({
-  options: { check: { type: "boolean" }, target: { type: "string" }, confirm: { type: "string" } },
+  options: { check: { type: "boolean" }, target: { type: "string" }, confirm: { type: "string" }, only: { type: "string" },
+    "telegram-webhook": { type: "string" } },
 });
 
 function fail(message: string): never {
@@ -35,6 +38,7 @@ for (const w of warnings) console.warn(`! ${w}`);
 if (!data) fail(`supabase/seed/demo has ${errors.length} error(s):\n  ${errors.join("\n  ")}`);
 console.log(`✓ CSV: ${data.products.length} products, ${data.variants.length} variants, ${data.pairings.length} pairings`);
 if (args.check) process.exit(0);
+if (args.only !== undefined && args.only !== "channels") fail(`unknown --only=${args.only}; use --only=channels`);
 
 // 2. Pick the target. Local is the default; the shared project needs its ref typed out.
 const envFile = new URL(".env.local", root);
@@ -205,100 +209,181 @@ async function seedAccount(shop_id: string, a: Account) {
   );
 }
 
-const imageUrls = await uploadImages(data);
-const shops = [data.shop, { name: `${data.shop.name} (eval)`, slug: `${data.shop.slug}-eval` }];
-const [demoId, evalId] = await Promise.all(shops.map((s) => seedShop(s.name, s.slug, data, imageUrls)));
-for (const a of accounts) await seedAccount(demoId, a);
-
-// 6. Read back what is now in the database, per shop.
-async function count(table: "products" | "variants" | "size_charts" | "pairings" | "policies" | "profiles", shop_id: string, withoutPhoto = false) {
-  let query = db.from(table).select("*", { count: "exact", head: true }).eq("shop_id", shop_id);
-  if (withoutPhoto) query = query.is("image_url", null);
-  const { count, error } = await query;
-  if (error) fail(`counting ${table}: ${error.message}`);
-  return count;
-}
-// More rows than the CSV means rows a previous CSV had (or added in the app): they
-// stay, and the AI still sells or suggests them, so say so.
-const expected = {
-  products: data.products.length, variants: data.variants.length, size_charts: data.sizeCharts.length,
-  pairings: data.pairings.length, policies: data.policies.length,
+// 5b. The demo shop's chat channels: its Facebook Page (PB-15) and Telegram bot
+// (PB-21). Tokens come from .env.local and never enter the repo; each webhook finds
+// the shop from these rows. A channel whose variables are missing is skipped.
+const optionalEnv = (name: string) => process.env[name]?.trim() || undefined;
+const messengerEnv = () => {
+  const pageId = optionalEnv("MESSENGER_PAGE_ID");
+  const token = optionalEnv("MESSENGER_PAGE_ACCESS_TOKEN");
+  return pageId && token ? { pageId, token } : null;
 };
-const tables = ["products", "variants", "size_charts", "pairings", "policies", "profiles"] as const;
-for (const [i, shop_id] of [demoId, evalId].entries()) {
-  const counts = await Promise.all([
-    ...tables.map(async (t) => {
-      const n = await count(t, shop_id);
-      if (t !== "profiles" && (n ?? 0) > expected[t]) {
-        console.warn(`! ${shops[i].slug}: ${t} has ${n} rows, the CSV ${expected[t]}; the extra rows are kept`);
-      }
-      return `${t} ${n}`;
-    }),
-    count("products", shop_id, true).then((n) => `without photo ${n}`),
-  ]);
-  console.log(`✓ ${shops[i].slug}: ${counts.join(", ")}`);
+const telegramEnv = () => {
+  const token = optionalEnv("TELEGRAM_BOT_TOKEN");
+  const secret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
+  return token && secret ? { token, secret } : null;
+};
+
+async function seedChannelAccount(
+  shop_id: string,
+  channel: "messenger" | "telegram",
+  external_account_id: string,
+  access_token: string,
+  webhook_secret: string | null = null,
+) {
+  // Never move an account that another shop already uses.
+  const existing = await db.from("channel_accounts").select("shop_id")
+    .eq("channel", channel).eq("external_account_id", external_account_id).maybeSingle();
+  ok(existing, `${channel} channel account read`);
+  if (existing.data && existing.data.shop_id !== shop_id) fail(`${channel} ${external_account_id} belongs to another shop`);
+  return must(
+    await db.from("channel_accounts")
+      .upsert({ shop_id, channel, external_account_id, access_token, webhook_secret }, { onConflict: "channel,external_account_id" })
+      .select("id").single(),
+    `${channel} channel account`,
+  );
 }
 
-// DoD: 5 random products of the CSV match the database (price, stock, size chart).
-const picked = [...data.products].sort(() => Math.random() - 0.5).slice(0, 5);
-const fromDb = must(
-  await db.from("products")
-    .select("code, price, variants(size, color, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)")
-    .eq("shop_id", demoId).in("code", picked.map((p) => p.code)),
-  "sample read back",
-);
-// Each CSV row must be in the database as written; extra database rows (an older
-// CSV, PB-16 edits) are reported by the counts above, not here.
-const mismatched = picked.filter((p) => {
-  const row = fromDb.find((r) => r.code === p.code);
-  if (!row || row.price !== p.price) return true;
-  const variantsMatch = data.variants.filter((v) => v.code === p.code).every((v) =>
-    row.variants.some((d) => d.size === v.size && d.color === v.color && d.stock === v.stock));
-  const chartsMatch = data.sizeCharts.filter((c) => c.code === p.code).every((c) =>
-    row.size_charts.some((d) => d.size === c.size && d.height_min_cm === c.heightMin && d.height_max_cm === c.heightMax
-      && d.weight_min_kg === c.weightMin && d.weight_max_kg === c.weightMax));
-  return !variantsMatch || !chartsMatch;
-});
-if (mismatched.length > 0) fail(`CSV and database differ for ${mismatched.map((p) => p.code).join(", ")}`);
-console.log(`✓ 5 random products match the CSV: ${picked.map((p) => p.code).join(", ")}`);
+async function seedChannels(shop_id: string, slug: string) {
+  const messenger = messengerEnv();
+  if (messenger) {
+    await seedChannelAccount(shop_id, "messenger", messenger.pageId, messenger.token);
+    console.log(`✓ messenger: Page ${messenger.pageId} → ${slug}`);
+  } else console.warn("! MESSENGER_PAGE_ID or MESSENGER_PAGE_ACCESS_TOKEN not set in .env.local: no Messenger channel");
 
-// 7. Two-shop isolation (RLS), checked as the real users through the publishable
-// key. pgTAP (supabase/tests/rls.test.sql) covers every case inside a rolled-back
-// transaction; this repeats the main ones on the seeded data. The write attempts
-// are harmless even if RLS were broken: the update writes back the value already
-// there, and the insert reuses an existing code, so the database refuses it anyway.
-// An update that RLS filters out returns 0 rows without an error, so count the rows.
-let failed = false;
-function check(what: string, passed: boolean) {
-  console.log(`${passed ? "✓" : "✗"} ${what}`);
-  failed ||= !passed;
-}
-async function signedIn(a: Account) {
-  const c = client(publishableKey);
-  const { error } = await c.auth.signInWithPassword({ email: a.email, password: a.password });
-  if (error) fail(`${a.role} sign-in: ${error.message}`);
-  return c;
-}
-const [owner, staff] = await Promise.all(accounts.map(signedIn));
-const sample = data.products[0];
+  const telegram = telegramEnv();
+  if (!telegram) {
+    console.warn("! TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET not set in .env.local: no Telegram channel");
+    return;
+  }
+  // The bot id is the number before ":" in its token. Never print the token itself.
+  const botId = telegram.token.match(/^(\d+):[\w-]+$/)?.[1] ?? fail("TELEGRAM_BOT_TOKEN is not a bot token (<id>:<secret>)");
+  const row = await seedChannelAccount(shop_id, "telegram", botId, telegram.token, telegram.secret);
+  console.log(`✓ telegram: bot ${botId} → ${slug}`);
 
-const own = await owner.from("products").select("id, shop_id");
-check("owner reads the products of their shop only",
-  (own.data?.length ?? 0) >= data.products.length && own.data!.every((p) => p.shop_id === demoId));
-const evalRead = await owner.from("products").select("id").eq("shop_id", evalId);
-check("owner reads 0 products of the eval shop", evalRead.data?.length === 0);
-const evalUpdate = await owner.from("products").update({ name: sample.name })
-  .eq("shop_id", evalId).eq("code", sample.code).select("id");
-check("owner's update of an eval shop product changes 0 rows", evalUpdate.data?.length === 0);
-const evalInsert = await owner.from("products")
-  .insert({ shop_id: evalId, code: sample.code, name: sample.name, price: sample.price }).select("id");
-check("owner cannot add a product to the eval shop (RLS, not the duplicate code)", evalInsert.error?.code === "42501");
-const staffEdit = await staff.from("products").update({ price: sample.price })
-  .eq("shop_id", demoId).eq("code", sample.code).select("id");
-check("staff cannot change a price (owner only, PB-16)", staffEdit.data?.length === 0);
-const anonRead = await client(publishableKey).from("products").select("id");
-check("anon cannot read products", anonRead.error?.code === "42501");
-const after = must(await db.from("products").select("code, name, price").eq("shop_id", evalId), "eval shop read back");
-check("read back: eval shop products unchanged",
-  data.products.every((q) => after.some((p) => p.code === q.code && p.name === q.name && p.price === q.price)));
-if (failed) process.exit(1);
+  const base = args["telegram-webhook"];
+  if (base === undefined) return;
+  const url = `${base.replace(/\/$/, "")}/api/webhooks/telegram/${row.id}`;
+  const response = await fetch(`https://api.telegram.org/bot${telegram.token}/setWebhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, secret_token: telegram.secret, allowed_updates: ["message"] }),
+  });
+  const result = (await response.json()) as { ok: boolean; description?: string };
+  if (!result.ok) fail(`setWebhook: ${result.description}`);
+  console.log(`✓ telegram: webhook → ${url}`);
+}
+
+// The full seed, or with --only=channels just the channel accounts.
+if (args.only === undefined) {
+  const imageUrls = await uploadImages(data);
+  const shops = [data.shop, { name: `${data.shop.name} (eval)`, slug: `${data.shop.slug}-eval` }];
+  const [demoId, evalId] = await Promise.all(shops.map((s) => seedShop(s.name, s.slug, data, imageUrls)));
+  for (const a of accounts) await seedAccount(demoId, a);
+  await seedChannels(demoId, data.shop.slug);
+
+  // 6. Read back what is now in the database, per shop.
+  async function count(table: "products" | "variants" | "size_charts" | "pairings" | "policies" | "profiles", shop_id: string, withoutPhoto = false) {
+    let query = db.from(table).select("*", { count: "exact", head: true }).eq("shop_id", shop_id);
+    if (withoutPhoto) query = query.is("image_url", null);
+    const { count, error } = await query;
+    if (error) fail(`counting ${table}: ${error.message}`);
+    return count;
+  }
+  // More rows than the CSV means rows a previous CSV had (or added in the app): they
+  // stay, and the AI still sells or suggests them, so say so.
+  const expected = {
+    products: data.products.length, variants: data.variants.length, size_charts: data.sizeCharts.length,
+    pairings: data.pairings.length, policies: data.policies.length,
+  };
+  const tables = ["products", "variants", "size_charts", "pairings", "policies", "profiles"] as const;
+  for (const [i, shop_id] of [demoId, evalId].entries()) {
+    const counts = await Promise.all([
+      ...tables.map(async (t) => {
+        const n = await count(t, shop_id);
+        if (t !== "profiles" && (n ?? 0) > expected[t]) {
+          console.warn(`! ${shops[i].slug}: ${t} has ${n} rows, the CSV ${expected[t]}; the extra rows are kept`);
+        }
+        return `${t} ${n}`;
+      }),
+      count("products", shop_id, true).then((n) => `without photo ${n}`),
+    ]);
+    console.log(`✓ ${shops[i].slug}: ${counts.join(", ")}`);
+  }
+
+  // DoD: 5 random products of the CSV match the database (price, stock, size chart).
+  const picked = [...data.products].sort(() => Math.random() - 0.5).slice(0, 5);
+  const fromDb = must(
+    await db.from("products")
+      .select("code, price, variants(size, color, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)")
+      .eq("shop_id", demoId).in("code", picked.map((p) => p.code)),
+    "sample read back",
+  );
+  // Each CSV row must be in the database as written; extra database rows (an older
+  // CSV, PB-16 edits) are reported by the counts above, not here.
+  const mismatched = picked.filter((p) => {
+    const row = fromDb.find((r) => r.code === p.code);
+    if (!row || row.price !== p.price) return true;
+    const variantsMatch = data.variants.filter((v) => v.code === p.code).every((v) =>
+      row.variants.some((d) => d.size === v.size && d.color === v.color && d.stock === v.stock));
+    const chartsMatch = data.sizeCharts.filter((c) => c.code === p.code).every((c) =>
+      row.size_charts.some((d) => d.size === c.size && d.height_min_cm === c.heightMin && d.height_max_cm === c.heightMax
+        && d.weight_min_kg === c.weightMin && d.weight_max_kg === c.weightMax));
+    return !variantsMatch || !chartsMatch;
+  });
+  if (mismatched.length > 0) fail(`CSV and database differ for ${mismatched.map((p) => p.code).join(", ")}`);
+  console.log(`✓ 5 random products match the CSV: ${picked.map((p) => p.code).join(", ")}`);
+
+  // 7. Two-shop isolation (RLS), checked as the real users through the publishable
+  // key. pgTAP (supabase/tests/rls.test.sql) covers every case inside a rolled-back
+  // transaction; this repeats the main ones on the seeded data. The write attempts
+  // are harmless even if RLS were broken: the update writes back the value already
+  // there, and the insert reuses an existing code, so the database refuses it anyway.
+  // An update that RLS filters out returns 0 rows without an error, so count the rows.
+  let failed = false;
+  function check(what: string, passed: boolean) {
+    console.log(`${passed ? "✓" : "✗"} ${what}`);
+    failed ||= !passed;
+  }
+  async function signedIn(a: Account) {
+    const c = client(publishableKey);
+    const { error } = await c.auth.signInWithPassword({ email: a.email, password: a.password });
+    if (error) fail(`${a.role} sign-in: ${error.message}`);
+    return c;
+  }
+  const [owner, staff] = await Promise.all(accounts.map(signedIn));
+  const sample = data.products[0];
+
+  const own = await owner.from("products").select("id, shop_id");
+  check("owner reads the products of their shop only",
+    (own.data?.length ?? 0) >= data.products.length && own.data!.every((p) => p.shop_id === demoId));
+  const evalRead = await owner.from("products").select("id").eq("shop_id", evalId);
+  check("owner reads 0 products of the eval shop", evalRead.data?.length === 0);
+  const evalUpdate = await owner.from("products").update({ name: sample.name })
+    .eq("shop_id", evalId).eq("code", sample.code).select("id");
+  check("owner's update of an eval shop product changes 0 rows", evalUpdate.data?.length === 0);
+  const evalInsert = await owner.from("products")
+    .insert({ shop_id: evalId, code: sample.code, name: sample.name, price: sample.price }).select("id");
+  check("owner cannot add a product to the eval shop (RLS, not the duplicate code)", evalInsert.error?.code === "42501");
+  const staffEdit = await staff.from("products").update({ price: sample.price })
+    .eq("shop_id", demoId).eq("code", sample.code).select("id");
+  check("staff cannot change a price (owner only, PB-16)", staffEdit.data?.length === 0);
+  const anonRead = await client(publishableKey).from("products").select("id");
+  check("anon cannot read products", anonRead.error?.code === "42501");
+  const after = must(await db.from("products").select("code, name, price").eq("shop_id", evalId), "eval shop read back");
+  check("read back: eval shop products unchanged",
+    data.products.every((q) => after.some((p) => p.code === q.code && p.name === q.name && p.price === q.price)));
+  if (failed) process.exit(1);
+} else {
+  // --only=channels touches nothing but channel_accounts: no prices, stock, photos or
+  // passwords, so it is safe on the shared project while the team tests there. It
+  // ends without process.exit: exiting while fetch sockets are open crashes Node on Windows.
+  if (!messengerEnv() && !telegramEnv()) {
+    fail("no channel to seed: set MESSENGER_PAGE_ID + MESSENGER_PAGE_ACCESS_TOKEN or TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_SECRET in .env.local");
+  }
+  const shop = must(
+    await db.from("shops").select("id").eq("slug", data.shop.slug).maybeSingle(),
+    `shop ${data.shop.slug} (run the full seed first)`,
+  );
+  await seedChannels(shop.id, data.shop.slug);
+}
