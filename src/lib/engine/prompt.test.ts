@@ -52,6 +52,12 @@ describe("prompt", () => {
     expect(staff).not.toContain("hỏi lại khách MỘT câu");
   });
 
+  it("keeps search_products queries to the product name (PB-05 AC4)", () => {
+    for (const mode of ["customer", "staff_draft"] as const) {
+      expect(buildStablePrompt(mode)).toContain("query của search_products chỉ gồm tên hoặc loại sản phẩm");
+    }
+  });
+
   it("stable prompt does not depend on the product", () => {
     const blocks = [productA, productB, null].map((product) => buildSystemPrompt({ mode: "customer", product }));
     for (const b of blocks) {
