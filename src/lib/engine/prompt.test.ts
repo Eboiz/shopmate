@@ -22,9 +22,16 @@ describe("prompt", () => {
 
   it("customer prompt has the four handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v0.1");
+    expect(PROMPT_VERSION).toBe("v0.2");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
+  });
+
+  it("asks for declared pairings with the shopper's size and at most two suggestions", () => {
+    const prompt = buildStablePrompt("customer");
+    for (const phrase of ["get_pairings", "size khách đã nói", "tối đa 2 món", "lý do shop đã khai báo"]) {
+      expect(prompt).toContain(phrase);
+    }
   });
 
   it("stable prompt does not depend on the product", () => {

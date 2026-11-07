@@ -128,6 +128,61 @@ describe("runEngine", () => {
     expect(result.output.personalReplyNeeded).toBe(false);
   });
 
+  it("enforces the shopper's size and builds pairing cards and reasons from tool data", async () => {
+    const pair = {
+      productId: PRODUCT, name: "Váy suông linen", price: 350000,
+      imageUrl: null, reason: "Áo trắng hợp váy be", sizesInStock: ["M"],
+    };
+    const foreign = "b0000000-0000-4000-8000-000000000011";
+    const store = fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: { id: PRODUCT, name: "Váy suông linen" } });
+    const { handlers, run } = setup([
+      toolCalls(toolUse("get_pairings", { productId: foreign, size: "S" })),
+      reply("Mình gợi ý món không có trong cặp", [foreign]),
+    ], { store });
+    handlers.get_pairings.mockResolvedValue({ pairings: [pair] });
+    const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "Mình size M, gợi ý đồ phối" }] }));
+    expect(handlers.get_pairings.mock.calls[0][0]).toEqual({ productId: PRODUCT, size: "M" });
+    expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
+    expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+    expect(result.output.reply.text).toContain("Áo trắng hợp váy be");
+    expect(result.output.reply.text).not.toContain("món không có trong cặp");
+  });
+
+  it("does not show invented matching items when get_pairings is empty", async () => {
+    const { store, run } = setup([
+      toolCalls(toolUse("get_pairings", { productId: PRODUCT })),
+      reply("Gợi ý áo ngẫu nhiên", [PRODUCT]),
+    ]);
+    const result = await run(customerInput());
+    expect(result.output.reply.products).toEqual([]);
+    expect(result.output.reply.text).not.toContain("áo ngẫu nhiên");
+    expect(store.productCards).not.toHaveBeenCalled();
+  });
+
+  it("queries declared pairings when the model forgets the tool", async () => {
+    const store = fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: { id: PRODUCT, name: "Váy suông linen" } });
+    const { handlers, run } = setup([reply("Áo tưởng tượng hợp váy này", [PRODUCT])], { store });
+    handlers.get_pairings.mockResolvedValue({ pairings: [{
+      productId: PRODUCT, name: "Váy suông linen", price: 350000,
+      imageUrl: null, reason: "Hạnh chọn vì cùng tông", sizesInStock: ["M"],
+    }] });
+    const result = await run(customerInput({
+      productId: PRODUCT,
+      history: [{ sender: "shopper", text: "Mình size M, gợi ý món phối với váy này" }],
+    }));
+    expect(handlers.get_pairings.mock.calls[0][0]).toEqual({ productId: PRODUCT, size: "M" });
+    expect(result.output.reply.text).toContain("Hạnh chọn vì cùng tông");
+    expect(result.output.reply.text).not.toContain("Áo tưởng tượng");
+  });
+
+  it("asks for the product when a matching question has no product or tool result", async () => {
+    const { handlers, run } = setup([reply("Mình nghĩ áo lạ hợp", [PRODUCT])]);
+    const result = await run(customerInput({ history: [{ sender: "shopper", text: "Gợi ý đồ phối" }] }));
+    expect(handlers.get_pairings).not.toHaveBeenCalled();
+    expect(result.output.reply.products).toEqual([]);
+    expect(result.output.reply.text).toContain("sản phẩm nào");
+  });
+
   it("server adds shop_id", async () => {
     const use = toolUse("search_products", { query: "váy" });
     const { handlers, model, run } = setup([toolCalls(use), reply()]);
@@ -428,7 +483,7 @@ describe("runEngine", () => {
       const { onMetrics, run } = setup([reply("Dạ size M ạ")]);
       await run(customerInput());
       const detail = onMetrics.mock.calls[0][1]!;
-      expect(detail.system).toContain("Prompt v0.1");
+      expect(detail.system).toContain("Prompt v0.2");
       expect(detail.calls).toEqual([]);
     });
 
