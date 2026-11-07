@@ -5,11 +5,14 @@ import type { ComponentProps, ReactNode } from "react";
 
 // A grey block with the shape of content that is still on its way. Hidden from
 // screen readers: the LoadingRegion around it says what is loading.
-export function Skeleton({ className = "", ...props }: ComponentProps<"div">) {
+// `tone="dark"` is for dark sections (the shop hero); pick the tone here rather
+// than passing a bg-* class, which would clash with the default one.
+export function Skeleton({ className = "", tone = "light", ...props }: ComponentProps<"div"> & { tone?: "light" | "dark" }) {
   // Two rounded-* classes on one element have no guaranteed winner in Tailwind,
   // so the default radius only applies when the caller gives none.
   const radius = /(^|\s)rounded/.test(className) ? "" : "rounded-md";
-  return <div aria-hidden="true" className={`animate-pulse bg-[#e6e1d8] ${radius} ${className}`} {...props} />;
+  const color = tone === "dark" ? "bg-white/10" : "bg-[#e6e1d8]";
+  return <div aria-hidden="true" className={`animate-pulse ${color} ${radius} ${className}`} {...props} />;
 }
 
 // Wraps skeletons so assistive tech hears `label` once instead of nothing.
