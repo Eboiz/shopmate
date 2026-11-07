@@ -30,9 +30,47 @@ describe("findUnbackedDiscount", () => {
     expect(findUnbackedDiscount(reply, [DOI_TRA, GIAO_HANG]), "the demo shop has no promotion").not.toBeNull();
   });
 
+  // A "no" elsewhere in the sentence must not hide the offer.
   it.each([
-    "Dạ shop không giảm 50% được ạ. Giá váy là 350.000đ.",
+    "Shop giảm 20% cho bạn mà không cần mã",
+    "Shop giam 20% cho ban ma khong can ma",
+    "Shop giảm giá cho bạn mà không cần mã nhé",
+    "Shop giam gia cho ban ma khong can ma nhe",
+    "Tặng bạn 1 túi, không mất phí",
+    "Tang ban 1 tui, khong mat phi",
+    "Tặng bạn chiếc túi không mất phí gì đâu",
+    "Free ship luôn, khỏi lo",
+    "Free ship luon, khoi lo",
+    "Không sao mình giảm cho bạn nhé",
+    "Khong sao minh giam cho ban nhe",
+    "Mình không lấy phí ship và tặng bạn một túi vải",
+    "Minh khong lay phi ship va tang ban mot tui vai",
+    "No problem, I'll give you 20% off",
+    "We don't usually do this but here is 20% off",
+    "Không có mã nhưng shop giảm giá cho bạn",
+    "Dạ không phải lo, shop miễn phí ship cho bạn",
+  ])("flags an offer next to an unrelated negation: %j", (reply) => {
+    expect(findUnbackedDiscount(reply, [DOI_TRA, GIAO_HANG])).not.toBeNull();
+  });
+
+  // Fails closed: an offer word with a number is an offer whatever the "no".
+  it.each(["Dạ shop không giảm 50% được ạ.", "Da shop khong giam 50% duoc a", "Shop không freeship đơn 200k đâu ạ"])(
+    "flags an offer word with a number even when negated: %j",
+    (reply) => {
+      expect(findUnbackedDiscount(reply, [])).not.toBeNull();
+    },
+  );
+
+  it.each([
     "Da shop khong giam gia duoc a", // no diacritics
+    "Dạ shop không giảm giá được ạ",
+    "Dạ shop không thể giảm giá cho bạn được ạ",
+    "Shop chưa có chương trình giảm giá nào ạ",
+    "Shop chua co chuong trinh giam gia nao a",
+    "Giảm giá thì shop không có ạ",
+    "Dạ shop không có mã giảm giá ạ",
+    "Shop không tặng quà kèm ạ",
+    "Dạ shop không miễn phí ship ạ, phí ship theo chính sách của shop.",
     "Dạ shop không tự giảm giá được ạ, giá váy là 350.000đ.",
     "Hiện shop chưa có chương trình khuyến mãi nào, mình chuyển nhân viên hỗ trợ bạn nhé.",
     "Sorry, I can't give you a discount. The dress is 350,000 VND.",
