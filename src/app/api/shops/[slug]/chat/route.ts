@@ -12,11 +12,17 @@ import {
   readShopperToken,
   shopperExternalId,
 } from "@/lib/chat/web-chat";
+import { WEB_CHAT_LIMIT_ERROR, clientHash, clientIp, takeWebChatSlot } from "@/lib/guard/web-chat-limit";
 
 // Web chat (PB-04). The shop page polls GET every 3 seconds while the chat is
 // open, so staff replies (PB-13) and order updates (PB-12), which
 // sendToConversation stores as messages, show without a reload. The browser
 // never reads Supabase itself.
+
+// POST runs a whole AI turn (up to 5 tool calls, plus the after() turn log)
+// before it answers. 120 s leaves room for a slow turn and stays within Vercel
+// Hobby's 300 s limit (Fluid compute).
+export const maxDuration = 120;
 
 type Ctx = RouteContext<"/api/shops/[slug]/chat">;
 
@@ -65,6 +71,18 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     }
 
     const existing = readShopperToken(request.cookies.get(SHOPPER_COOKIE)?.value);
+    // Before any shopper, conversation or AI turn: limits per client IP and per
+    // shop, which dropping the cookie can't reset (PB-17 counts per conversation).
+    const limit = await takeWebChatSlot({
+      shopId: shop.id,
+      clientHash: clientHash(clientIp(request.headers)),
+      newShopper: !existing,
+    });
+    if (limit !== "ok") {
+      console.warn(`web chat: ${limit} limit reached for shop ${shop.id}`);
+      return fail(WEB_CHAT_LIMIT_ERROR[limit], 429);
+    }
+
     const token = existing ?? newShopperToken();
     // A new visitor gets the cookie even when the turn fails after their message
     // was stored, so a retry or a reload finds the same conversation.

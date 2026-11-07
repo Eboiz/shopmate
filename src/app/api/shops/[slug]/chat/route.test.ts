@@ -20,8 +20,16 @@ vi.mock("@/lib/channels/receive", () => ({
   receiveChannelMessage: (...args: unknown[]) => receive(...args),
 }));
 
+const takeSlot = vi.fn<(input: { shopId: string; clientHash: string; newShopper: boolean }) => Promise<string>>();
+vi.mock("@/lib/guard/web-chat-limit", async (original) => ({
+  ...(await original<typeof import("@/lib/guard/web-chat-limit")>()),
+  takeWebChatSlot: (input: { shopId: string; clientHash: string; newShopper: boolean }) => takeSlot(input),
+}));
+process.env.SUPABASE_SECRET_KEY ??= "sb_secret_unit_test";
+
 const { GET, POST } = await import("./route");
 const { shopperExternalId } = await import("@/lib/chat/web-chat");
+const { WEB_CHAT_LIMIT_ERROR, clientHash } = await import("@/lib/guard/web-chat-limit");
 
 const ctx = (slug = "may-boutique") => ({ params: Promise.resolve({ slug }) });
 const get = (cookie?: string, slug?: string) =>
@@ -31,12 +39,16 @@ const get = (cookie?: string, slug?: string) =>
     }),
     ctx(slug),
   );
-const post = (body: unknown, { cookie, slug }: { cookie?: string; slug?: string } = {}) =>
+const post = (body: unknown, { cookie, slug, ip }: { cookie?: string; slug?: string; ip?: string } = {}) =>
   POST(
     new NextRequest(`https://shop.test/api/shops/${slug ?? "may-boutique"}/chat`, {
       method: "POST",
       body: typeof body === "string" ? body : JSON.stringify(body),
-      headers: { "content-type": "application/json", ...(cookie ? { cookie: `shopmate_shopper=${cookie}` } : {}) },
+      headers: {
+        "content-type": "application/json",
+        ...(cookie ? { cookie: `shopmate_shopper=${cookie}` } : {}),
+        ...(ip ? { "x-forwarded-for": `${ip}, 10.0.0.1` } : {}),
+      },
     }),
     ctx(slug),
   );
@@ -46,6 +58,47 @@ beforeEach(() => {
   history.mockReset().mockResolvedValue([]);
   productInShop.mockReset().mockResolvedValue(true);
   receive.mockReset().mockResolvedValue("answered");
+  takeSlot.mockReset().mockResolvedValue("ok");
+});
+
+describe("POST /api/shops/[slug]/chat limits the client cannot reset", () => {
+  it("asks for a slot per client IP and shop before anything is stored, flagging cookie-less requests", async () => {
+    await post(valid, { ip: "203.0.113.7" });
+    expect(takeSlot).toHaveBeenCalledWith({ shopId: "shop-a", clientHash: clientHash("203.0.113.7"), newShopper: true });
+    expect(takeSlot.mock.invocationCallOrder[0]).toBeLessThan(receive.mock.invocationCallOrder[0]);
+
+    await post(valid, { ip: "203.0.113.7", cookie: TOKEN });
+    expect(takeSlot.mock.calls[1][0]).toMatchObject({ newShopper: false });
+  });
+
+  it("never stores the raw IP", async () => {
+    await post(valid, { ip: "203.0.113.7" });
+    expect(takeSlot.mock.calls[0][0].clientHash).not.toContain("203.0.113.7");
+  });
+
+  it.each(["client", "new_shopper", "shop"] as const)(
+    "answers 429 with a Vietnamese error over the %s limit, without a shopper, cookie or AI turn",
+    async (limit) => {
+      takeSlot.mockResolvedValue(limit);
+      const response = await post(valid, { ip: "203.0.113.7" });
+      expect(response.status).toBe(429);
+      expect(await response.json()).toEqual({ error: WEB_CHAT_LIMIT_ERROR[limit] });
+      expect(response.cookies.get("shopmate_shopper")).toBeUndefined();
+      expect(receive).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses the message when the limit can't be checked (no unchecked AI calls)", async () => {
+    takeSlot.mockRejectedValue(new Error("db down"));
+    const response = await post(valid);
+    expect(response.status).toBe(500);
+    expect(receive).not.toHaveBeenCalled();
+  });
+
+  it("does not count invalid requests", async () => {
+    await post({ ...valid, text: "" });
+    expect(takeSlot).not.toHaveBeenCalled();
+  });
 });
 
 describe("GET /api/shops/[slug]/chat", () => {

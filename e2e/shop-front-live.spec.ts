@@ -52,7 +52,8 @@ test("ask about a product, get a reply, keep the chat after a reload, see a staf
 
   const chat = page.getByRole("region", { name: "Trò chuyện với shop" });
   await expect(chat.getByText("Đang hỏi về:")).toContainText(productName);
-  await expect(chat.getByText("Bắt đầu trò chuyện")).toBeVisible();
+  // The first GET can be slow on `next dev` (the route compiles on first use).
+  await expect(chat.getByText("Bắt đầu trò chuyện")).toBeVisible({ timeout: 20_000 });
   await chat.getByRole("textbox", { name: "Tin nhắn" }).fill(question);
   await chat.getByRole("button", { name: "Gửi" }).click();
   await expect(chat.getByRole("status")).toContainText("Shop đang trả lời");

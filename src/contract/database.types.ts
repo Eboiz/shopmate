@@ -341,6 +341,26 @@ isOneToOne: false
       referencedColumns: ["id","shop_id"]
     }
                   ]
+                },"web_chat_hits": {
+                  Row: {
+                    "client_hash": string,"created_at": string,"id": number,"new_shopper": boolean,"shop_id": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "client_hash": string,"created_at"?: string,"id"?: never,"new_shopper": boolean,"shop_id": string
+                  }
+                  Update: {
+                    "client_hash"?: string,"created_at"?: string,"id"?: never,"new_shopper"?: boolean,"shop_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "web_chat_hits_shop_id_fkey"
+      columns: ["shop_id"]
+isOneToOne: false
+      referencedRelation: "shops"
+      referencedColumns: ["id"]
+    }
+                  ]
                 }
           }
           Views: {
@@ -367,7 +387,10 @@ isOneToOne: false
         to: "products"
         isOneToOne: false
         isSetofReturn: true
-      } }
+      } },
+"web_chat_take":
+{ Args: { "p_client_hash": string,"p_client_per_minute": number,"p_new_shopper": boolean,"p_new_shoppers_per_hour": number,"p_shop_id": string,"p_shop_per_minute": number }; Returns: string
+                           }
           }
           Enums: {
             "channel": "web"|"messenger"|"instagram"|"telegram"|"whatsapp","conversation_mode": "ai"|"needs_human"|"staff","engine_mode": "customer"|"staff_draft","handoff_reason": "complaint"|"asked_for_human"|"not_covered_by_data"|"product_not_found"|"misunderstood_twice"|"size_out_of_range"|"policy_not_covered"|"postcheck_failed"|"too_many_tool_calls","message_sender": "shopper"|"ai"|"staff"|"system","order_status": "draft"|"confirmed"|"cancelled","policy_kind": "doi_tra"|"giao_hang"|"khuyen_mai","profile_role": "owner"|"staff"
