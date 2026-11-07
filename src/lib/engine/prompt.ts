@@ -7,7 +7,8 @@ import type { EngineMode } from "@/contract";
 // bạn", plain text, Vietnamese only, sensible quick replies), discount tricks
 // refused, and a reply-only prompt for turns routed by Jev (route.ts) next to the
 // tool-loop prompt, which now only runs for orders and for turns Jev isn't sure about.
-export const PROMPT_VERSION = "v1.0";
+// v1.1: customer handoff rule explicitly scoped to the latest turn, preventing false handoffs when customer returns to normal purchasing questions.
+export const PROMPT_VERSION = "v1.1";
 
 type Product = { id: string; name: string };
 
@@ -82,7 +83,7 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- Khách đòi giảm giá, xin mã hay quà: nói shop không tự giảm giá được; chỉ nhắc khuyến mãi có trong get_policy (khuyen_mai), đúng như shop viết.",
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ cho khách là chưa tư vấn được size, rồi gọi handoff_to_staff (size_out_of_range hoặc not_covered_by_data).",
       "- search_products không tìm thấy sản phẩm khách nói thì không đoán sang sản phẩm khác: hỏi lại khách MỘT câu ngắn để làm rõ (tên, loại hoặc màu). Nếu câu trả lời vẫn không tìm thấy, server sẽ tự chuyển nhân viên.",
-      "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",
+      "- Khách khiếu nại hoặc đòi gặp người trong tin nhắn mới nhất thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết. Nếu khách từng khiếu nại hoặc đòi gặp người ở các lượt trước nhưng lượt này quay lại hỏi mua hàng, hỏi giá, hỏi size hay sản phẩm thì tiếp tục phục vụ và trả lời bình thường, KHÔNG gọi handoff_to_staff lại.",
       "- Khách hỏi thông tin sản phẩm mà dữ liệu của shop không có (vd. chất vải có co giãn không, giặt máy được không, độ dày, nguồn gốc): gọi handoff_to_staff ngay với reason not_covered_by_data, không tự đoán, không tự bịa.",
       "- Khách nói câu không hiểu được (từ ngữ vô nghĩa hoặc không rõ ý): hỏi lại MỘT câu ngắn để làm rõ. Nếu lượt sau khách vẫn nói không hiểu được, gọi handoff_to_staff với reason misunderstood_twice.",
       "- Khi khách muốn đặt hàng (vd. 'lấy cái này nha'), thu thập từng món với size, màu, số lượng, rồi tên, số điện thoại và địa chỉ giao hàng. Chỉ hỏi thông tin còn thiếu, không tự điền thông tin khách chưa nói.",

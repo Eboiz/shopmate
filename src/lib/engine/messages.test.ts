@@ -5,13 +5,23 @@ import { toModelMessages } from "./messages";
 const m = (sender: HistoryMessage["sender"], text: string): HistoryMessage => ({ sender, text });
 
 describe("toModelMessages", () => {
-  it("maps senders, merges runs, drops system, empty and leading assistant messages", () => {
+  it("maps senders, merges runs, maps system to assistant, drops empty and leading assistant messages", () => {
     expect(
       toModelMessages([m("ai", "Chào"), m("shopper", "a"), m("shopper", "b"), m("ai", "c"), m("system", "x"), m("shopper", "d")]),
     ).toEqual([
       { role: "user", content: "a\nb" },
-      { role: "assistant", content: "c" },
+      { role: "assistant", content: "c\nx" },
       { role: "user", content: "d" },
+    ]);
+  });
+
+  it("keeps shopper messages separated across intervening system handoff notices", () => {
+    expect(
+      toModelMessages([m("shopper", "gặp nhân viên"), m("system", "Nhân viên sẽ trả lời sớm"), m("shopper", "mua áo blazer")]),
+    ).toEqual([
+      { role: "user", content: "gặp nhân viên" },
+      { role: "assistant", content: "Nhân viên sẽ trả lời sớm" },
+      { role: "user", content: "mua áo blazer" },
     ]);
   });
 
