@@ -68,6 +68,11 @@ vi.mock("./send", () => ({
 const engine = vi.fn<() => Promise<EngineOutput>>();
 vi.mock("@/lib/engine/run", () => ({ runEngine: (...args: unknown[]) => engine(...(args as [])) }));
 
+// PB-17: the limit itself is tested in src/lib/guard/rate-limit.test.ts; here only
+// that receive.ts asks it, and stops before the AI when it says no.
+const rateLimited = vi.fn<(target: { shopId: string; conversationId: string }) => Promise<boolean>>();
+vi.mock("@/lib/guard/rate-limit", () => ({ replyIfRateLimited: (target: { shopId: string; conversationId: string }) => rateLimited(target) }));
+
 const { receiveChannelMessage, HANDOFF_TEXT, PHOTO_HANDOFF_TEXT } = await import("./receive");
 
 const account = { id: "acc-a", shopId: "shop-a", channel: "messenger" as const };
@@ -82,6 +87,7 @@ beforeEach(() => {
   sent.length = 0;
   sendResult = () => ({ ok: true, messageId: "m" });
   engine.mockReset().mockResolvedValue({ reply: answer, personalReplyNeeded: false });
+  rateLimited.mockReset().mockResolvedValue(false);
 });
 
 describe("receiveChannelMessage", () => {
@@ -180,6 +186,39 @@ describe("receiveChannelMessage", () => {
     sendResult = () => ({ ok: false, messageId: null, error: "not_in_ai_mode" });
     expect(await receiveChannelMessage(account, text("mid-1"))).toBe("stored");
     expect(sent.map((s) => s.from)).toEqual(["ai"]);
+  });
+
+  it("checks the rate limit for this shop and conversation after storing the message", async () => {
+    rateLimited.mockImplementation(async () => {
+      expect(shopperMessages()).toHaveLength(1); // stored first, so it counts
+      return false;
+    });
+    await receiveChannelMessage(account, text("mid-1"));
+    expect(rateLimited).toHaveBeenCalledWith({ shopId: "shop-a", conversationId: conversation().id });
+  });
+
+  it("does not call the AI for a message over the rate limit (PB-17)", async () => {
+    rateLimited.mockResolvedValue(true);
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("rate_limited");
+    expect(shopperMessages()).toHaveLength(1); // still in the inbox
+    expect(engine).not.toHaveBeenCalled();
+    expect(sent).toEqual([]); // the "please wait" reply is sent by replyIfRateLimited itself
+    expect(conversation().mode).toBe("ai");
+  });
+
+  it("does not hand a photo to staff when the shopper is over the rate limit", async () => {
+    rateLimited.mockResolvedValue(true);
+    const photo = { externalId: "psid-1", messageId: "mid-1", imageUrls: ["https://x/1.jpg"] };
+    expect(await receiveChannelMessage(account, photo)).toBe("rate_limited");
+    expect(conversation().mode).toBe("ai");
+  });
+
+  it.each(["staff", "needs_human"])("does not count messages while the conversation is %s", async (mode) => {
+    await receiveChannelMessage(account, text("mid-1"));
+    conversation().mode = mode;
+    rateLimited.mockClear();
+    await receiveChannelMessage(account, text("mid-2"));
+    expect(rateLimited).not.toHaveBeenCalled();
   });
 
   it("keeps two shops apart: the same shopper id in another shop is another shopper", async () => {

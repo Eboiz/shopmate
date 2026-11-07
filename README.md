@@ -66,6 +66,18 @@ E2E_BASE_URL=https://<preview-url> pnpm test:e2e:main      # before each Sprint 
 - Until the chat API (PB-03, PB-04, PB-11) and the orders API (PB-12) are deployed, it is reported as **skipped** with what is missing. Skipped is not passed.
 - **Cleanup:** each run confirms one order, so stock of Váy suông linen Trắng / M drops by 3 per `test:e2e:main`. `pnpm db:seed` (or `--target=shared` for the team project) puts stock back to the CSV. The confirmed orders and their conversations stay, under customer names starting with `E2E-`, so they are easy to tell apart from real ones.
 
+## Rate limit (PB-17)
+
+`receiveChannelMessage` (`src/lib/channels/receive.ts`) already applies it for every external channel (Messenger, Telegram, and later Instagram, WhatsApp). The web chat route (PB-04) stores the shopper's message, then calls it before the engine the same way:
+
+```ts
+import { replyIfRateLimited } from "@/lib/guard/rate-limit";
+
+if (await replyIfRateLimited({ shopId, conversationId })) return; // "please wait" was sent, don't call the AI
+```
+
+Limit: 10 shopper messages per minute per conversation (one conversation per shopper), assumption A5. The rule is in `src/lib/guard/rate-limit-rule.ts`.
+
 ## Demo shop (PB-02)
 
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
@@ -122,3 +134,18 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 - `/admin/*` needs a signed-in user. `src/proxy.ts` redirects signed-out visitors to `/login?next=...`, and `src/app/admin/layout.tsx` checks the user again on the server.
 - `/login` signs in with Supabase Auth email + password.
 - `/s/<shop-slug>` (customer web chat, PB-04) is public.
+
+## Customer shop and web chat (PB-04)
+
+The frontend at `/s/<shop-slug>` uses the PB-25 shared UI components and
+expects these same-origin, server-owned endpoints (they are not implemented in
+this frontend branch):
+
+- `GET /api/shops/<slug>/catalog` → `{ shop: { name }, products: [{ id, name, price, imageUrl, colors, sizesInStock }] }`.
+- `GET /api/shops/<slug>/chat` → `{ messages: [{ id, sender, text, reply, createdAt }] }`; `reply` is the PB-00 shared reply shape or `null`.
+- `POST /api/shops/<slug>/chat` with `{ text, productId, clientMessageId }` → a successful response after saving the shopper message; the selected `productId` must be passed into the PB-00 customer engine input.
+
+The browser never reads Supabase directly. The backend owns the HTTP-only
+shopper cookie, conversation persistence, product/shop validation, engine call,
+and delivery through `sendToConversation`. The chat polls GET every 3 seconds
+while open to display staff replies and order updates without a reload.

@@ -35,9 +35,19 @@ export function PairingManager({
     <div className="flex flex-col gap-4">
       {canEdit && (
         <form action={addAction} className="flex flex-col gap-3">
-          <ProductSelect label="Món thứ nhất" name="productId1" products={products} />
-          <ProductSelect label="Món thứ hai" name="productId2" products={products} />
-          <TextInput label="Lý do hợp nhau" name="reason" />
+          <ProductSelect
+            label="Món thứ nhất"
+            name="productId1"
+            products={products}
+            defaultValue={addState.values?.productId1}
+          />
+          <ProductSelect
+            label="Món thứ hai"
+            name="productId2"
+            products={products}
+            defaultValue={addState.values?.productId2}
+          />
+          <TextInput label="Lý do hợp nhau" name="reason" defaultValue={addState.values?.reason} />
           {addState.error && <ErrorMessage>{addState.error}</ErrorMessage>}
           <Button type="submit" disabled={adding}>
             Thêm cặp phối đồ
@@ -80,17 +90,22 @@ function ProductSelect({
   label,
   name,
   products,
+  defaultValue = "",
 }: {
   label: string;
   name: string;
   products: ProductOption[];
+  defaultValue?: string;
 }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
       {label}
+      {/* Keyed by the value so a failed add shows the products just picked: React
+          doesn't re-apply defaultValue to a <select> when it resets the form. */}
       <select
+        key={defaultValue}
         name={name}
-        defaultValue=""
+        defaultValue={defaultValue}
         className="min-h-11 rounded-md border border-zinc-300 px-3 py-2 text-base"
       >
         <option value="">Chọn sản phẩm</option>

@@ -1,10 +1,13 @@
-import { EmptyState } from "@/components/ui/empty-state";
+import { DraftOrders } from "./draft-orders";
 
 export default function OrdersPage() {
   return (
-    <>
-      <h1 className="mb-4 text-xl font-semibold">Đơn hàng</h1>
-      <EmptyState title="Sắp ra mắt" description="Các đơn nháp cần xác nhận sẽ hiện ở đây." />
-    </>
+    <section className="mx-auto max-w-2xl">
+      <header className="mb-5">
+        <h1 className="text-xl font-semibold">Đơn hàng</h1>
+        <p className="mt-1 text-sm text-zinc-500">Kiểm tra và xử lý các đơn hàng nháp.</p>
+      </header>
+      <DraftOrders />
+    </section>
   );
 }
