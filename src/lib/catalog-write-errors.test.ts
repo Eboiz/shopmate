@@ -3,6 +3,7 @@ import {
   NOT_ALLOWED,
   NOT_FOUND,
   PAIRING_EXISTS,
+  POLICY_SAVE_FAILED,
   SAVE_FAILED,
   writeErrorMessage,
 } from "./catalog-write-errors";
@@ -18,11 +19,24 @@ describe("writeErrorMessage", () => {
 
   it.each([
     ["42501", NOT_ALLOWED],
-    ["23505", PAIRING_EXISTS],
     ["23503", NOT_FOUND],
     ["08006", SAVE_FAILED],
     [undefined, SAVE_FAILED],
   ])("maps error code %j", (code, message) => {
     expect(writeErrorMessage({ code }, 0)).toBe(message);
+  });
+
+  it("says a pairing already exists only for the pairing write", () => {
+    expect(writeErrorMessage({ code: "23505" }, 0, { duplicate: PAIRING_EXISTS })).toBe(PAIRING_EXISTS);
+  });
+
+  it("never shows the pairing message for a policy save (review #8)", () => {
+    const policy = { failed: POLICY_SAVE_FAILED };
+    expect(writeErrorMessage({ code: "23505" }, 0, policy)).toBe(POLICY_SAVE_FAILED);
+    expect(writeErrorMessage({ code: "08006" }, 0, policy)).toBe(POLICY_SAVE_FAILED);
+  });
+
+  it("falls back to the generic message for a duplicate when the write names none", () => {
+    expect(writeErrorMessage({ code: "23505" }, 0)).toBe(SAVE_FAILED);
   });
 });

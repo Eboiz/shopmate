@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "@/components/ui/text-input";
+import { MAX_PRICE, MAX_STOCK } from "@/lib/shop-data-validation";
 import { INITIAL_FORM_STATE, type FormAction } from "./form-state";
 
 type Variant = { id: string; size: string; color: string; stock: number };
@@ -32,7 +33,8 @@ export function ProductEditor({
             label="Giá (đồng)"
             name="price"
             inputMode="numeric"
-            defaultValue={product.price}
+            maxLength={String(MAX_PRICE).length}
+            defaultValue={state.values?.price ?? product.price}
             readOnly={!canEdit}
             error={state.error}
           />
@@ -74,7 +76,8 @@ function StockForm({
           label={`Tồn kho: ${variant.size} / ${variant.color}`}
           name="stock"
           inputMode="numeric"
-          defaultValue={variant.stock}
+          maxLength={String(MAX_STOCK).length}
+          defaultValue={state.values?.stock ?? variant.stock}
           readOnly={!canEdit}
           error={state.error}
         />

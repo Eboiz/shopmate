@@ -31,9 +31,16 @@ export const updatePriceSchema = z.object({
     .refine((price) => price <= MAX_PRICE, "Giá phải nhỏ hơn 100.000.000 đồng"),
 });
 
+// Far below the database's integer limit, and more than a small shop holds of
+// one size and color: a longer number is a typo.
+export const MAX_STOCK = 99_999;
+
 export const updateStockSchema = z.object({
   variantId: id,
-  stock: wholeNumber("Tồn kho phải là số nguyên từ 0 trở lên"),
+  stock: wholeNumber("Tồn kho phải là số nguyên từ 0 trở lên").refine(
+    (stock) => stock <= MAX_STOCK,
+    "Tồn kho tối đa là 99.999",
+  ),
 });
 
 // Empty content is allowed: it means the shop has no such policy, so the AI hands

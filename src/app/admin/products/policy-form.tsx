@@ -24,7 +24,7 @@ export function PolicyForm({ type, content, canEdit, updatePolicy }: PolicyFormP
         label={POLICY_LABELS[type]}
         name="content"
         rows={4}
-        defaultValue={content}
+        defaultValue={state.values?.content ?? content}
         readOnly={!canEdit}
         error={state.error}
       />

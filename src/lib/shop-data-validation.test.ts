@@ -32,10 +32,15 @@ describe("updateStockSchema", () => {
   it("accepts 0 and above", () => {
     expect(stock("0").data?.stock).toBe(0);
     expect(stock("12").data?.stock).toBe(12);
+    expect(stock("99999").data?.stock).toBe(99999);
   });
 
-  it.each(["-1", "", "1.5", "abc"])("rejects %j", (value) => {
+  it.each(["-1", "", "1.5", "abc", "100000", "99999999999999999999"])("rejects %j", (value) => {
     expect(stock(value).success).toBe(false);
+  });
+
+  it("explains the stock limit instead of a database error (review #8)", () => {
+    expect(stock("100000").error?.issues[0].message).toBe("Tồn kho tối đa là 99.999");
   });
 });
 

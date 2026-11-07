@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { EmptyState } from "@/components/ui/empty-state";
-import { getCatalog, requireStaff } from "@/lib/catalog";
+import { requireStaff } from "@/lib/auth";
+import { getCatalog } from "@/lib/catalog";
 import {
   addPairing,
   deletePairing,
@@ -28,9 +29,9 @@ function parseTab(value: string | string[] | undefined): TabId {
 // checked the session; requireStaff reads the role and shop for this page.
 export default async function ProductsPage({ searchParams }: PageProps<"/admin/products">) {
   const tab = parseTab((await searchParams).tab);
-  const ctx = await requireStaff();
-  const { products, policies, pairings } = await getCatalog(ctx);
-  const canEdit = ctx.role === "owner";
+  const { shopId, role } = await requireStaff();
+  const { products, policies, pairings } = await getCatalog(shopId);
+  const canEdit = role === "owner";
 
   return (
     <>
