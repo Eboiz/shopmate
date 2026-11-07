@@ -558,6 +558,55 @@ describe("runEngine", () => {
     });
   });
 
+  describe("stock answer (PB-05)", () => {
+    const L_BE = "a0000000-0000-4000-8000-000000000022";
+    const M_DEN = "a0000000-0000-4000-8000-000000000023";
+    const variant = (variantId: string, size: string, color: string, stock: number) => ({ variantId, size, color, stock });
+    const soldOut = { ...stockOut, variants: [variant(L_BE, "L", "be", 0)] };
+    const whole = { ...stockOut, variants: [variant(VARIANT, "M", "be", 2), variant(L_BE, "L", "be", 0), variant(M_DEN, "M", "đen", 5)] };
+
+    it("sold out: the stock and price the model answers from are the tool's, and so are the alternatives and the card", async () => {
+      const { handlers, model, store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT, size: "L", color: "be" })),
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ màu be size L hết hàng rồi ạ. Váy còn M be và M đen, giá 350.000đ.", [PRODUCT]),
+      ]);
+      handlers.get_stock.mockResolvedValueOnce(soldOut).mockResolvedValueOnce(whole);
+      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "váy này màu be size L còn không?" }] }));
+
+      // The shop id comes from the conversation, never from the model.
+      expect(handlers.get_stock.mock.calls.map((c) => [c[0], (c[1] as { shopId: string }).shopId])).toEqual([
+        [{ productId: PRODUCT, size: "L", color: "be" }, SHOP_A],
+        [{ productId: PRODUCT }, SHOP_A],
+      ]);
+      expect(JSON.parse(toolResults(model.calls[1])[0].content as string)).toEqual(soldOut);
+      expect(JSON.parse(toolResults(model.calls[2])[0].content as string)).toEqual(whole);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+      expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
+
+      // Both outputs are logged with the turn: what a reply's numbers are checked against (PB-07).
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].tool_calls).toEqual([
+        { name: "get_stock", input: { productId: PRODUCT, size: "L", color: "be" }, output: soldOut },
+        { name: "get_stock", input: { productId: PRODUCT }, output: whole },
+      ]);
+    });
+
+    it("a product id from another shop is a tool error, not a stock number", async () => {
+      const { handlers, model, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ mình chưa kiểm tra được ạ"),
+      ]);
+      handlers.get_stock.mockRejectedValue(new ToolError("product_not_found"));
+      const result = await run(customerInput());
+      const [res] = toolResults(model.calls[1]);
+      expect(res.is_error).toBe(true);
+      expect(JSON.parse(res.content as string)).toMatchObject({ error: "product_not_found" });
+      expect(result.handoffReason).toBeNull();
+    });
+  });
+
   describe("turn log", () => {
     it("logs the turn", async () => {
       const { store, run } = setup([
