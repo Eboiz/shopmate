@@ -54,6 +54,21 @@ Staff users who sent messages or confirmed orders can't be deleted (their rows p
 
 Migrations reach the shared Supabase project only after they are merged to `main`. Test unmerged migrations on local Supabase (`pnpm db:start`, needs Docker).
 
+## Main flow test (PB-19)
+
+`e2e/main-flow.spec.ts` plays the demo: a shopper on `/s/may-boutique` asks for a size (158 cm, 50 kg: the reply must name **M**), orders "Váy suông linen" Trắng / M in the chat, the demo staff account finds that order on `/admin/orders` (one line: name, `Trắng · Cỡ M · SL 1`), confirms it, and the stock shown on `/admin/products` is exactly one lower.
+
+```bash
+pnpm exec playwright install chromium                     # once
+export DEMO_STAFF_EMAIL=... DEMO_STAFF_PASSWORD=...        # the seeded demo staff account (PB-02)
+E2E_BASE_URL=https://<preview-url> pnpm test:e2e:main      # before each Sprint Review and the demo
+```
+
+- `test:e2e:main` runs the file three times with **one worker**: runs in parallel would confirm orders at the same time and make the stock check wrong.
+- It talks to the real AI, so it checks facts (size M in the reply text, the order line, stock one lower), not sentences. The nightly job skips it (no Claude key there).
+- Until the chat API (PB-03, PB-04, PB-11) and the orders API (PB-12) are deployed, it is reported as **skipped** with what is missing. Skipped is not passed.
+- **Cleanup:** each run confirms one order, so stock of Váy suông linen Trắng / M drops by 3 per `test:e2e:main`. `pnpm db:seed` (or `--target=shared` for the team project) puts stock back to the CSV. The confirmed orders and their conversations stay, under customer names starting with `E2E-`, so they are easy to tell apart from real ones.
+
 ## Rate limit (PB-17)
 
 `receiveChannelMessage` (`src/lib/channels/receive.ts`) already applies it for every external channel (Messenger, Telegram, and later Instagram, WhatsApp). The web chat route (PB-04) stores the shopper's message, then calls it before the engine the same way:

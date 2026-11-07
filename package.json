@@ -12,6 +12,7 @@
     "test:int": "vitest run --config vitest.int.config.ts",
     "engine:eval": "vitest run --config vitest.eval.config.ts",
     "test:e2e": "playwright test",
+    "test:e2e:main": "playwright test e2e/main-flow.spec.ts --workers=1 --repeat-each=3",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
