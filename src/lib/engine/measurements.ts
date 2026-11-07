@@ -14,14 +14,15 @@ const HEIGHT_RANGE = [50, 250] as const; // recommend_size input bounds (PB-00)
 const WEIGHT_RANGE = [20, 250] as const;
 const inRange = (n: number, [lo, hi]: readonly [number, number]) => (n >= lo && n <= hi ? n : null);
 
-// "1m65", "1m6", "1.65m", "1,65", "165cm", "165 cm", "165" -> 165. A plain number
-// under 3 is metres. Returns null for anything else or out of 50-250 cm.
+// "1m65", "1m6", "1 mét 65", "m65", "1.65m", "1,65", "165cm", "165 cm", "165" -> 165.
+// A plain number under 3 is metres; "m6" / "m65" is slang for 1m6 / 1m65.
+// Returns null for anything else or out of 50-250 cm.
 export function parseHeightCm(raw: string | number): number | null {
   if (typeof raw === "number") {
     if (!Number.isFinite(raw)) return null;
     return inRange(toWhole(raw < 3 ? raw * 100 : raw), HEIGHT_RANGE);
   }
-  const s = fold(raw).replace(/\s+/g, "");
+  const s = fold(raw).replace(/\s+/g, "").replace(/^(\d?)met/, "$1m").replace(/^m(?=\d)/, "1m");
   let m = /^(\d)m(\d{1,2})?$/.exec(s);
   if (m) return inRange(Number(m[1]) * 100 + (m[2] ? Number(m[2].padEnd(2, "0")) : 0), HEIGHT_RANGE);
   m = /^(\d[.,]\d{1,2})m?$/.exec(s);
@@ -42,7 +43,9 @@ export function parseWeightKg(raw: string | number): number | null {
 // Height and weight found in one free-text message. Only written forms that
 // cannot be something else count: a unit ("1m65", "165cm", "58kg", "58 ký",
 // "58 cân") or a keyword before the number ("cao 165", "nặng 58"). A bare number
-// in a sentence (a price, a size like 28) is ignored. The last mention wins.
+// in a sentence (a price, a size like 28) is ignored, except a message whose only
+// two numbers are a plausible height and weight ("160 50", "50 160"). The last
+// mention wins.
 export function extractMeasurements(text: string): { heightCm: number | null; weightKg: number | null } {
   const s = fold(text);
   const find = (patterns: RegExp[], parse: (x: string) => number | null) => {
@@ -55,13 +58,13 @@ export function extractMeasurements(text: string): { heightCm: number | null; we
     }
     return hits.sort((a, b) => a.index - b.index).at(-1)?.v ?? null;
   };
-  return {
+  const found = {
     heightCm: find(
       [
-        /(?<![\d.,])(1\s?m\s?\d{1,2})(?![\d]|[.,]\d)/g, // 1m65, 1m6
+        /(?<![\d.,])(1\s?(?:m|met)\s?\d{1,2})(?![\d]|[.,]\d)/g, // 1m65, 1m6, 1 mét 65
         /(?<![\d.,])(\d[.,]\d{1,2})\s?m\b/g, // 1.65m, 1,65m
         /(?<![\d.,])(\d{2,3}(?:[.,]\d+)?)\s?cm\b/g, // 165cm, 165 cm
-        /\bcao\s*(?:khoang|tam|co|la|:)?\s*(\d{3}(?:[.,]\d+)?|\d[.,]\d{1,2})(?!\d|[.,]\d)/g, // cao 165, cao 1.65
+        /\bcao\s*(?:khoang|tam|co|la|:)?\s*(\d{3}(?:[.,]\d+)?|\d[.,]\d{1,2}|m\d{1,2})(?!\d|[.,]\d)/g, // cao 165, cao 1.65, cao m6
       ],
       parseHeightCm,
     ),
@@ -73,6 +76,22 @@ export function extractMeasurements(text: string): { heightCm: number | null; we
       parseWeightKg,
     ),
   };
+  return found.heightCm === null && found.weightKg === null ? barePair(s) ?? found : found;
+}
+
+// "160 50" / "50 160": exactly two numbers in the message, both plain integers
+// (no unit, no "k", no decimals), one a plausible adult height and the other a
+// plausible weight. The ranges don't overlap, so the order doesn't matter.
+const BARE_HEIGHT = [130, 200] as const;
+const BARE_WEIGHT = [30, 120] as const;
+function barePair(folded: string): { heightCm: number; weightKg: number } | null {
+  const tokens = [...folded.matchAll(/\d+(?:[.,]\d+)*[a-z%]*/g)].map((m) => m[0]);
+  if (tokens.length !== 2 || !tokens.every((t) => /^\d{2,3}$/.test(t))) return null;
+  const [x, y] = tokens.map(Number);
+  for (const [h, w] of [[x, y], [y, x]]) {
+    if (inRange(h, BARE_HEIGHT) !== null && inRange(w, BARE_WEIGHT) !== null) return { heightCm: h, weightKg: w };
+  }
+  return null;
 }
 
 // The most recent height and weight the shopper wrote, each from the newest
