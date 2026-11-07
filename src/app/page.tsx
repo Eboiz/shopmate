@@ -1,13 +1,8 @@
 import Link from "next/link";
+import { Icon } from "@/components/ui/icon";
 
 export default function Home() {
   return (
-    <main className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-4 px-4 py-12">
-      <h1 className="text-2xl font-semibold">ShopMate</h1>
-      <p className="text-zinc-600">Trợ lý bán hàng AI cho shop thời trang nhỏ.</p>
-      <Link href="/admin" className="underline">
-        Vào trang quản lý
-      </Link>
-    </main>
+    <main className="flex w-full flex-1 flex-col bg-[#f5f3ef]"><header className="flex items-center justify-between border-b border-[#e3dfd8] bg-white px-4 py-4 sm:px-8"><Link href="/" className="text-2xl font-black tracking-[-.07em]">ShopMate<span className="text-[#e9573f]">.</span></Link><Link href="/login" className="inline-flex min-h-10 items-center gap-2 border border-[#171717] px-4 text-xs font-bold uppercase tracking-[.1em] transition-colors hover:bg-[#171717] hover:text-white"><Icon name="login" className="size-4" /> Đăng nhập</Link></header><section className="relative flex flex-1 items-center overflow-hidden bg-[#171717] px-5 py-20 text-white sm:px-10 lg:min-h-[690px] lg:px-20"><div aria-hidden="true" className="absolute -right-24 -top-24 size-[32rem] rotate-[-18deg] rounded-full border-[60px] border-white/10" /><div aria-hidden="true" className="absolute -bottom-40 right-[20%] size-96 rounded-full bg-[#e9573f] opacity-50 blur-[110px]" /><div className="ui-enter relative mx-auto w-full max-w-[1400px]"><p className="mb-6 text-xs font-bold uppercase tracking-[.22em] text-[#ff8d75]">AI commerce / Built for fashion shops</p><h1 className="max-w-5xl text-[clamp(4rem,12vw,10rem)] font-black uppercase leading-[.88] tracking-[-.09em]">Every<br />shop has<br /><span className="text-[#e9573f]">a story.</span></h1><p className="mt-8 max-w-lg text-base leading-7 text-[#d4d1ca]">ShopMate giúp shop tư vấn khách, trả lời tin nhắn và xử lý đơn hàng trong một không gian làm việc rõ ràng.</p><Link href="/admin" className="mt-9 inline-flex min-h-12 items-center gap-3 bg-[#e9573f] px-6 text-xs font-bold uppercase tracking-[.12em] transition-colors hover:bg-[#d4442e]">Vào trang quản lý ↗</Link></div></section><div className="grid border-t border-[#e3dfd8] bg-white sm:grid-cols-3">{[["01", "Tư vấn sản phẩm", "Trả lời câu hỏi về giá, size và tồn kho."],["02", "Quản lý hội thoại", "Theo dõi khách hàng trên các kênh."],["03", "Xử lý đơn hàng", "Kiểm tra đơn nháp trước khi xác nhận."]].map(([number,title,description])=><div key={number} className="border-b border-[#e3dfd8] p-7 sm:border-b-0 sm:border-r lg:p-10"><span className="text-xs font-bold text-[#e9573f]">{number} / SHOPMATE</span><h2 className="mt-4 text-xl font-bold">{title}</h2><p className="mt-2 text-sm text-[#706d67]">{description}</p></div>)}</div></main>
   );
 }

@@ -11,4 +11,9 @@ describe("isNavItemActive", () => {
     expect(isNavItemActive("/admin/orders-old", "/admin/orders")).toBe(false);
     expect(isNavItemActive("/admin/inbox", "/admin/orders")).toBe(false);
   });
+
+  it("keeps the dashboard active only on its own page", () => {
+    expect(isNavItemActive("/admin", "/admin")).toBe(true);
+    expect(isNavItemActive("/admin/inbox", "/admin")).toBe(false);
+  });
 });

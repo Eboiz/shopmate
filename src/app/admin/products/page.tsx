@@ -35,15 +35,19 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
 
   return (
     <>
-      <h1 className="mb-4 text-xl font-semibold">Sản phẩm</h1>
-      <nav aria-label="Loại dữ liệu" className="mb-4 grid grid-cols-3 rounded-md border border-zinc-200">
+      <header className="mb-7">
+        <p className="ui-eyebrow mb-2">Danh mục cửa hàng</p>
+        <h1 className="ui-page-title">Sản phẩm</h1>
+        <p className="mt-2 text-sm text-[#706d67]">Cập nhật giá, tồn kho, chính sách và cách phối đồ.</p>
+      </header>
+      <nav aria-label="Loại dữ liệu" className="mb-6 flex gap-2 overflow-x-auto border-b border-[#e3dfd8] pb-2">
         {TABS.map(({ id, label }) => (
           <Link
             key={id}
             href={id === "products" ? "/admin/products" : `/admin/products?tab=${id}`}
             aria-current={tab === id ? "page" : undefined}
-            className={`flex min-h-11 items-center justify-center px-1 text-sm ${
-              tab === id ? "bg-zinc-900 font-semibold text-white" : "text-zinc-600"
+            className={`flex min-h-11 shrink-0 items-center justify-center rounded-xl px-5 text-sm transition-colors ${
+              tab === id ? "bg-[#171717] font-semibold text-white" : "text-[#706d67] hover:bg-[#efebe4]"
             }`}
           >
             {label}

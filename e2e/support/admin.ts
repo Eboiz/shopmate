@@ -14,7 +14,7 @@ export async function signIn(page: Page, role: "owner" | "staff", next = "/admin
   }
   await page.goto(`/login?next=${encodeURIComponent(next)}`);
   await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Mật khẩu").fill(password);
+  await page.getByLabel("Mật khẩu", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Đăng nhập" }).click();
   await page.waitForURL((url) => url.pathname.startsWith(next));
 }
