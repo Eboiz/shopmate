@@ -190,15 +190,18 @@ Read only. It uses `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the
 
 ## Customer shop and web chat (PB-04)
 
-The frontend at `/s/<shop-slug>` uses the PB-25 shared UI components and
-expects these same-origin, server-owned endpoints (they are not implemented in
-this frontend branch):
+The page at `/s/<shop-slug>` (PB-25 shared UI components) talks only to these
+same-origin endpoints (`src/app/api/shops/[slug]/`):
 
-- `GET /api/shops/<slug>/catalog` → `{ shop: { name }, products: [{ id, name, price, imageUrl, colors, sizesInStock }] }`.
-- `GET /api/shops/<slug>/chat` → `{ messages: [{ id, sender, text, reply, createdAt }] }`; `reply` is the PB-00 shared reply shape or `null`.
-- `POST /api/shops/<slug>/chat` with `{ text, productId, clientMessageId }` → a successful response after saving the shopper message; the selected `productId` must be passed into the PB-00 customer engine input.
+- `GET /api/shops/<slug>/catalog` → `{ shop: { name }, products: [{ id, name, price, imageUrl, colors, sizesInStock }] }`. Colors and sizes are the in-stock ones; 404 for an unknown shop.
+- `GET /api/shops/<slug>/chat` → `{ messages: [{ id, sender, text, reply, createdAt }] }` (latest 100, oldest first); `reply` is the PB-00 shared reply shape or `null`. A visitor without the cookie gets `[]`.
+- `POST /api/shops/<slug>/chat` with `{ text, productId, clientMessageId }` → `{ status }` (`answered`, `stored`, `handed_off`, `rate_limited`, `duplicate`) once the shopper message is stored and, in `ai` mode, the AI reply too. `text` is 1–1000 characters; `productId` must belong to the shop. Errors are `{ error }` in Vietnamese, ready to show.
 
-The browser never reads Supabase directly. The backend owns the HTTP-only
-shopper cookie, conversation persistence, product/shop validation, engine call,
-and delivery through `sendToConversation`. The chat polls GET every 3 seconds
-while open to display staff replies and order updates without a reload.
+How it works:
+
+- **Shopper identity:** no account. The first POST sets the httpOnly cookie `shopmate_shopper` (random 256-bit id plus its HMAC, signed with the server secret, path `/api/shops`, 180 days; a cookie with a wrong signature counts as no cookie); `shoppers.external_id` stores only its SHA-256. The shop always comes from the slug, never from the body.
+- **Same core as the other channels:** POST calls `receiveChannelMessage` (`src/lib/channels/receive.ts`) with `{ channel: "web", shopId }`: dedupe by `clientMessageId` (unique `messages(conversation_id, client_message_id)`), PB-17 rate limit, no AI unless the conversation is `ai`, engine with the asked-about `productId`, handoff on engine failure.
+- **Limits the browser can't reset:** PB-17 counts per conversation, and dropping the cookie makes a new one. So before any shopper, conversation or AI turn, POST asks `web_chat_take` (`src/lib/guard/web-chat-limit.ts`, table `web_chat_hits`): at most 30 messages per minute per client IP (all shops), 15 per minute per IP in one shop, 20 requests without a valid cookie (new shoppers) per hour per IP, and 60 messages per minute per shop. The IP is `x-real-ip`, else the first hop of `x-forwarded-for` (set by Vercel), stored only as an HMAC. Over a limit: 429 with a Vietnamese `{ error }`, nothing stored. `maxDuration` of the chat route is 120 s (a whole AI turn runs inside the POST).
+- **Staff replies and order updates:** `sendToConversation` stores them as messages (the web adapter has nothing to push); the open chat polls GET every 3 seconds and shows them without a reload. The browser never reads Supabase.
+- **Tests:** `src/app/api/shops/[slug]/**/route.test.ts` (validation, cookie, slug), `src/lib/chat/web-chat.int.test.ts` (`pnpm test:int`), `e2e/shop-front.spec.ts` (mocked API) and `e2e/shop-front-live.spec.ts` (real API on the seeded demo shop; the staff-message part needs `E2E_SUPABASE_URL` / `E2E_SUPABASE_SECRET_KEY`).
+- **Local photos:** `next.config.ts` allows the photo host of `NEXT_PUBLIC_SUPABASE_URL` when it is local Supabase (`next dev`, or `pnpm build` + `pnpm start` in the CI e2e job); deployments built against `*.supabase.co` never allow local IPs.

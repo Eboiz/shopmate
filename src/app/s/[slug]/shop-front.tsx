@@ -240,7 +240,7 @@ export function ShopFront({ slug }: Props) {
                       {message.reply?.text || message.text}
                     </div>
                     {message.reply && message.reply.products.length > 0 && (
-                      <div className="mt-2 grid grid-cols-1 gap-2">
+                      <div className="mt-2 grid grid-cols-2 gap-2">
                         {message.reply.products.map((product) => (
                           <ProductCard
                             key={product.productId}
