@@ -9,7 +9,7 @@ import { EngineError } from "./types";
 export function toModelMessages(history: HistoryMessage[]): Anthropic.MessageParam[] {
   const out: { role: "user" | "assistant"; content: string }[] = [];
   for (const { sender, text } of history) {
-    if (sender === "system" || text.trim() === "") continue;
+    if (text.trim() === "") continue;
     const role = sender === "shopper" ? "user" : "assistant";
     if (out.length === 0 && role === "assistant") continue;
     const last = out.at(-1);
