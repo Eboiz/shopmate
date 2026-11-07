@@ -1,5 +1,6 @@
 import { expect } from "@playwright/test";
 import { db } from "./env";
+import type { Database } from "../../src/contract/database.types";
 
 // Read-back helpers for the local database of the nightly job.
 function client() {
