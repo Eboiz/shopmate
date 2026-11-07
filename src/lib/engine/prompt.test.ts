@@ -22,7 +22,7 @@ describe("prompt", () => {
 
   it("customer prompt has the four handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v0.3");
+    expect(PROMPT_VERSION).toBe("v0.4");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
   });
