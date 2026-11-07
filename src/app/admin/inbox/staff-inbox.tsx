@@ -11,6 +11,7 @@ import {
   historyLimit, listInboxMessages, listLiveConversations, setLiveInboxMode, subscribeInbox,
   type InboxConversation, type InboxMessage,
 } from "./inbox-live";
+import { formatWaiting, overdueAfterMs, waitingMs } from "./waiting";
 
 const channelLabels: Record<Channel, string> = {
   web: "Web chat",
@@ -31,6 +32,12 @@ const senderLabels: Record<MessageSender, string> = {
   ai: "AI",
   staff: "Nhân viên",
   system: "Hệ thống",
+};
+
+const bubbleStyles: Record<Exclude<MessageSender, "system">, string> = {
+  shopper: "rounded-bl-sm border border-[#e3dfd8] bg-white",
+  ai: "rounded-br-sm border border-[#f3d3c9] bg-[#fff0eb]",
+  staff: "rounded-br-sm bg-[#171717] text-white",
 };
 
 const inboxDate = new Intl.DateTimeFormat("vi-VN", {
@@ -61,6 +68,9 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
   const [refreshing, setRefreshing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
+  // Clock for "waiting since" labels: set when data arrives, then once a minute,
+  // so render never reads the clock itself.
+  const [now, setNow] = useState<number | null>(null);
   const onMessage = useEffectEvent((conversationId?: string) => {
     if (selectedId && (!conversationId || conversationId === selectedId)) {
       setHistoryVersion((version) => version + 1);
@@ -78,6 +88,7 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
         (conversations) => {
           if (active && id === requestId) {
             setState({ status: "ready", conversations });
+            setNow(Date.now());
             setRefreshing(false);
           }
         },
@@ -108,6 +119,11 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
       unsubscribe();
     };
   }, [attempt]);
+
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(tick);
+  }, []);
 
   function reload() {
     if (state.status === "error") setState({ status: "loading" });
@@ -171,6 +187,7 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
       {conversations.length ? (
         <InboxConversations
           conversations={conversations}
+          now={now}
           selected={selected}
           onSelect={setSelectedId}
           historyVersion={historyVersion}
@@ -184,8 +201,19 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
   );
 }
 
-function InboxConversations({ conversations, selected, onSelect, historyVersion, reload, sendMessageAction }: {
+function WaitingBadge({ since, now }: { since: string; now: number }) {
+  const ms = waitingMs(since, now);
+  const overdue = ms >= overdueAfterMs;
+  return (
+    <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${overdue ? "bg-[#b2382a] text-white" : "bg-[#efebe4] text-[#171717]"}`}>
+      Chờ {formatWaiting(ms)}
+    </span>
+  );
+}
+
+function InboxConversations({ conversations, now, selected, onSelect, historyVersion, reload, sendMessageAction }: {
   conversations: InboxConversation[];
+  now: number | null;
   selected?: InboxConversation;
   onSelect: (id: string | null) => void;
   historyVersion: number;
@@ -214,9 +242,12 @@ function InboxConversations({ conversations, selected, onSelect, historyVersion,
                 <span className="my-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                   {channelLabels[conversation.channel]}
                   <ModeBadge mode={conversation.mode} />
+                  {conversation.mode === "needs_human" && now !== null && (
+                    <WaitingBadge since={conversation.customerMessageAt ?? conversation.lastMessageAt} now={now} />
+                  )}
                 </span>
                 <span className="block truncate text-sm text-[#706d67]">
-                  {conversation.latestMessage || "Chưa có nội dung văn bản"}
+                  {conversation.customerMessage ?? (conversation.latestMessage || "Chưa có nội dung văn bản")}
                 </span>
               </button>
             </li>
@@ -234,7 +265,7 @@ function InboxConversations({ conversations, selected, onSelect, historyVersion,
           onBack={() => onSelect(null)}
         />
       ) : (
-        <div className="hidden md:block">
+        <div className="hidden md:sticky md:top-24 md:block md:self-start">
           <EmptyState title="Chọn một cuộc trò chuyện" description="Lịch sử tin nhắn sẽ xuất hiện tại đây." />
         </div>
       )}
@@ -312,7 +343,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
   }
 
   return (
-    <section aria-label={`Cuộc trò chuyện với ${conversation.customerName}`} className="min-w-0 space-y-3">
+    <section aria-label={`Cuộc trò chuyện với ${conversation.customerName}`} className="min-w-0 space-y-3 md:sticky md:top-24 md:self-start">
       <Button variant="secondary" className="md:hidden" onClick={onBack}>Về danh sách</Button>
 
       <div className="ui-card space-y-3 p-4 sm:p-5">
@@ -336,9 +367,18 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
         <div ref={messageLog} role="log" aria-label="Tin nhắn" className="max-h-80 min-h-40 overflow-y-auto rounded-lg border border-[#e3dfd8] bg-[#f5f3ef] p-3 md:max-h-[26rem] md:p-4">
           {messages?.length ? (
             <ol className="space-y-3">
-              {messages.map((message) => (
-                <li key={message.id} className={message.sender === "staff" ? "flex justify-end" : "flex"}>
-                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${message.sender === "staff" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white"}`}>
+              {messages.map((message) => message.sender === "system" ? (
+                <li key={message.id} className="flex justify-center">
+                  <p className="max-w-[90%] rounded-full bg-[#e9e5de] px-3 py-1 text-center text-xs text-[#5c5954]">
+                    <span className="sr-only">{senderLabels.system}: </span>
+                    {message.text || "Tin nhắn không có nội dung văn bản"}
+                    <time className="ml-2 opacity-70" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
+                  </p>
+                </li>
+              ) : (
+                // Shopper on the left; the shop side (AI and staff) on the right.
+                <li key={message.id} className={message.sender === "shopper" ? "flex" : "flex justify-end"}>
+                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${bubbleStyles[message.sender]}`}>
                     <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs">
                       <strong>{senderLabels[message.sender]}</strong>
                       <time dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>

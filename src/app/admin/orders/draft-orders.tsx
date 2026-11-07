@@ -125,6 +125,7 @@ function DraftOrderCard({
 }) {
   const [pending, setPending] = useState<OrderDecision | null>(null);
   const [error, setError] = useState<string>();
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   async function submit(decision: OrderDecision) {
     if (pending) return;
@@ -177,14 +178,37 @@ function DraftOrderCard({
       </div>
 
       {error && <ErrorMessage>{error}</ErrorMessage>}
-      <div className="grid grid-cols-2 gap-2 text-sm">
-        <Button variant="secondary" disabled={pending !== null} loading={pending === "cancelled"} loadingText="Đang hủy…" onClick={() => void submit("cancelled")}>
-          Hủy đơn
-        </Button>
-        <Button disabled={pending !== null} loading={pending === "confirmed"} loadingText="Đang xác nhận…" onClick={() => void submit("confirmed")}>
-          Xác nhận
-        </Button>
-      </div>
+      {confirmingCancel ? (
+        // Cancelling cannot be undone, so it takes a second, explicit step.
+        <div role="group" aria-label="Xác nhận hủy đơn" className="space-y-3 rounded-lg border border-[#f3d3c9] bg-[#fff6f3] p-3">
+          <p className="text-sm">
+            Hủy đơn của <strong>{order.customer.name}</strong> ({formatPrice(order.total)})? Thao tác này không hoàn tác được.
+          </p>
+          <div className="grid grid-cols-2 gap-2 text-sm">
+            <Button variant="secondary" disabled={pending !== null} onClick={() => setConfirmingCancel(false)}>
+              Giữ đơn
+            </Button>
+            <Button
+              variant="danger"
+              disabled={pending !== null}
+              loading={pending === "cancelled"}
+              loadingText="Đang hủy…"
+              onClick={() => void submit("cancelled")}
+            >
+              Hủy đơn này
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <Button variant="secondary" disabled={pending !== null} onClick={() => setConfirmingCancel(true)}>
+            Hủy đơn
+          </Button>
+          <Button disabled={pending !== null} loading={pending === "confirmed"} loadingText="Đang xác nhận…" onClick={() => void submit("confirmed")}>
+            Xác nhận
+          </Button>
+        </div>
+      )}
     </article>
   );
 }
