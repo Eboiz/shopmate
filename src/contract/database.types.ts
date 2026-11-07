@@ -367,7 +367,10 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "engine_create_draft_order":
+            "decide_draft_order":
+{ Args: { "p_decision": Database["public"]['Enums']["order_status"],"p_order_id": string }; Returns: Json
+                           },
+"engine_create_draft_order":
 { Args: { "p_conversation_id": string,"p_customer_address": string,"p_customer_name": string,"p_customer_phone": string,"p_items": Json,"p_shop_id": string }; Returns: Json
                            },
 "engine_search_products":

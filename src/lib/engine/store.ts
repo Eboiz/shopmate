@@ -1,4 +1,5 @@
-import type { ConversationMode, ProductCard, TablesInsert, ToolContext } from "@/contract";
+import { toolCallLogSchema, type ConversationMode, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { searchMissed } from "./misunderstood";
 import { sortSizes } from "./text";
 import { setNeedsHuman } from "./tools/handoff-to-staff";
 import type { Db } from "./types";
@@ -12,6 +13,9 @@ export type TurnContextArgs = {
 export type TurnContext = {
   conversation: { shopId: string; mode: ConversationMode } | null; // always null in staff_draft
   product: { id: string; name: string } | null;
+  // customer only: the conversation's previous AI turn searched for a product and
+  // found nothing (see searchMissed), and did not hand off. Missing means false.
+  previousTurnMissedProduct?: boolean;
 };
 
 export type EngineStore = {
@@ -44,6 +48,22 @@ export function createSupabaseStore(db: Db): EngineStore {
     return data;
   }
 
+  async function previousTurnMissed(shopId: string, conversationId: string): Promise<boolean> {
+    const { data, error } = await db
+      .from("ai_turns")
+      .select("tool_calls, handoff_reason")
+      .eq("conversation_id", conversationId)
+      .eq("shop_id", shopId)
+      .eq("mode", "customer")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`ai_turns: ${error.message}`);
+    if (!data || data.handoff_reason !== null) return false;
+    const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
+    return logs.success && searchMissed(logs.data);
+  }
+
   return {
     async loadTurnContext({ conversationId, shopId, productId }) {
       if ((conversationId === null) === (shopId === null)) {
@@ -59,9 +79,14 @@ export function createSupabaseStore(db: Db): EngineStore {
         .maybeSingle();
       if (error) throw new Error(`conversations: ${error.message}`);
       if (!conversation) return { conversation: null, product: null };
+      const [found, previousTurnMissedProduct] = await Promise.all([
+        product(conversation.shop_id, productId),
+        previousTurnMissed(conversation.shop_id, conversationId!),
+      ]);
       return {
         conversation: { shopId: conversation.shop_id, mode: conversation.mode },
-        product: await product(conversation.shop_id, productId),
+        product: found,
+        previousTurnMissedProduct,
       };
     },
 

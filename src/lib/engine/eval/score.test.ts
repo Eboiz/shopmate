@@ -40,9 +40,31 @@ describe("scoreRun", () => {
       paramMatched: 1,
       paramMismatched: 0,
       unnecessary: 0,
+      handoffOk: null,
+      replyOk: null,
       passed: true,
     });
     expect(aggregate([s]).recall).toBe(1);
+  });
+
+  it("checks the handoff and reply labels against the outcome", () => {
+    const labeled: EvalCase = {
+      ...findProduct,
+      handoff: null,
+      reply: { label: "mentions linen", ok: (t) => t.includes("linen") },
+    };
+    const calls = [{ name: "search_products", input: { query: "vay suong linen", limit: 5 } }];
+    expect(scoreRun(labeled, calls, { handoffReason: null, replyText: "Váy suông linen còn ạ" })).toMatchObject({
+      handoffOk: true,
+      replyOk: true,
+      passed: true,
+    });
+    expect(scoreRun(labeled, calls, { handoffReason: "complaint", replyText: "linen" })).toMatchObject({
+      handoffOk: false,
+      passed: false,
+    });
+    expect(scoreRun(labeled, calls, { handoffReason: null, replyText: "Dạ" })).toMatchObject({ replyOk: false, passed: false });
+    expect(scoreRun(labeled, calls)).toMatchObject({ handoffOk: false, replyOk: false, passed: false });
   });
 
   it("counts a missing required tool", () => {

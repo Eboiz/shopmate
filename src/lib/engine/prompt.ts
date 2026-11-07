@@ -3,7 +3,7 @@ import type { EngineMode } from "@/contract";
 
 // v0.x is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
 // change: it is stored with each turn (ai_turns.prompt_version) to compare runs.
-export const PROMPT_VERSION = "v0.2";
+export const PROMPT_VERSION = "v0.3";
 
 type Product = { id: string; name: string };
 
@@ -17,7 +17,10 @@ export function buildStablePrompt(mode: EngineMode): string {
     "- Không tự tính tiền: luôn gọi quote_order để có giá từng món và tổng tiền.",
     "- Khi khách hỏi món phối, gọi get_pairings cho sản phẩm đang xem; truyền size khách đã nói (nếu có). Chỉ dùng cặp shop đã khai báo, không tự gợi ý món khác. Nếu tool trả rỗng thì nói chưa có món phù hợp.",
     "- Không tự viết lý do phối đồ; server sẽ dùng nguyên lý do shop đã khai báo và giới hạn tối đa 2 món.",
-    "- Muốn tư vấn size thì cần chiều cao và cân nặng của khách; nếu thiếu thì hỏi lại, không tự đặt số.",
+    "- Hỏi còn hàng: gọi get_stock với size và màu khách hỏi. Còn hàng thì nói còn và báo giá lấy từ tool. Hết hàng (stock 0 hoặc không có biến thể đó) thì nói rõ là hết, rồi gọi get_stock cho cả sản phẩm (không lọc size, màu) và gợi ý những size, màu khác của chính sản phẩm đó còn hàng; không còn gì thì nói đã hết.",
+    "- Muốn tư vấn size thì cần chiều cao và cân nặng của khách; thiếu số nào thì hỏi đúng số đó, không tự đặt số, không gọi recommend_size.",
+    "- Đổi số đo sang số nguyên trước khi gọi recommend_size: chiều cao ra cm (1m65 → 165, 1m6 → 160, 165cm → 165), cân nặng ra kg (58kg, 58 ký, 58 kí, 58 cân → 58).",
+    "- Size chỉ lấy từ recommend_size, không tự chọn. Nếu sizeByHeight khác sizeByWeight thì tư vấn đúng `size` tool trả (size lớn hơn) và nói lý do: theo chiều cao là size này, theo cân nặng là size kia, nên chọn size lớn hơn để mặc thoải mái.",
     "- Câu trả lời cuối cùng là một JSON object {text, productIds, quickReplies}:",
     "  text: câu trả lời cho khách, tối đa 1000 ký tự;",
     "  productIds: id các sản phẩm muốn hiện thẻ, tối đa 10 id, chỉ dùng id có trong kết quả tool;",
@@ -28,6 +31,7 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- Không hứa hẹn và không tự giảm giá hay tặng quà.",
       "- Chính sách (đổi trả, giao hàng, khuyến mãi) chỉ lấy từ get_policy; shop chưa viết thì nói rõ là chưa có thông tin để nhân viên tự trả lời.",
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ chưa tư vấn được size, không đoán.",
+      "- search_products không tìm thấy sản phẩm thì nói rõ là chưa tìm thấy, không đoán sang sản phẩm khác.",
       "- Bạn soạn nháp cho nhân viên, không tạo đơn, không chuyển nhân viên.",
     );
   } else {
@@ -35,6 +39,7 @@ export function buildStablePrompt(mode: EngineMode): string {
       "- Không hứa hẹn và không tự giảm giá, tặng quà hay đổi điều kiện của shop.",
       "- Chính sách (đổi trả, giao hàng, khuyến mãi) chỉ lấy từ get_policy; shop chưa viết thì gọi handoff_to_staff với reason policy_not_covered, không tự nghĩ ra.",
       "- recommend_size trả out_of_range hoặc no_chart thì nói rõ cho khách là chưa tư vấn được size, rồi gọi handoff_to_staff (size_out_of_range hoặc not_covered_by_data).",
+      "- search_products không tìm thấy sản phẩm khách nói thì không đoán sang sản phẩm khác: hỏi lại khách MỘT câu ngắn để làm rõ (tên, loại hoặc màu). Nếu câu trả lời vẫn không tìm thấy, server sẽ tự chuyển nhân viên.",
       "- Khách khiếu nại hoặc đòi gặp người thì gọi handoff_to_staff ngay (complaint hoặc asked_for_human), không cố tự giải quyết.",
     );
   }
