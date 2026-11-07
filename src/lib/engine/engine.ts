@@ -19,6 +19,8 @@ import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { createLangfuseSink } from "./langfuse";
+import { normalizeSizeInput } from "./measurements";
+import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
 import { createSupabaseStore, type EngineStore } from "./store";
@@ -34,6 +36,7 @@ export const HANDOFF_TEXT =
 const HANDOFF_SUFFIX = "Mình đã chuyển câu hỏi của bạn cho nhân viên shop, nhân viên sẽ trả lời bạn sớm nhé!";
 export const SIZE_OUT_OF_RANGE_HANDOFF_TEXT = `Dạ, số đo của bạn nằm ngoài bảng size của shop nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
 export const NO_SIZE_CHART_HANDOFF_TEXT = `Dạ, sản phẩm này shop chưa có bảng size nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
+export const PRODUCT_NOT_FOUND_HANDOFF_TEXT = `Dạ, mình vẫn chưa tìm thấy sản phẩm bạn hỏi trong shop. ${HANDOFF_SUFFIX}`;
 
 type SizeStatus = "out_of_range" | "no_chart" | null;
 
@@ -247,9 +250,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
     const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
       const s0 = now();
+      // recommend_size gets the height and weight the shopper actually wrote
+      // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.
       const effectiveInput = u.name === "get_pairings" && u.input && typeof u.input === "object"
         ? { ...u.input, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
-        : u.input;
+        : u.name === "recommend_size"
+          ? normalizeSizeInput(u.input, input.history)
+          : u.input;
       const run = await executeTool(u.name, effectiveInput, ctx, mode, deps.handlers, deps.db);
       return { run, ms: now() - s0, startMs: s0 - t0 };
     });
@@ -292,6 +299,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     );
   }
 
+  // PB-05: the product name matched nothing last turn (the AI asked one
+  // clarifying question) and the shopper's answer matches nothing again. The
+  // engine hands off itself; the model's second guess is not sent.
+  const productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
+    && answersAiMessage(input.history) && searchMissed(logs);
+  if (productMissedTwice) handoff = "misunderstood_twice";
+
   // A matching question must not depend on the model remembering the tool. If
   // it forgot, query the product the shopper is viewing on the server. Without
   // a product, ask which item they mean instead of showing invented matches.
@@ -315,8 +329,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
-    if (handoff === "too_many_tool_calls") await deps.store.setNeedsHuman(ctx);
-    reply = { text: handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
+    if (handoff === "too_many_tool_calls" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
+    const text = productMissedTwice ? PRODUCT_NOT_FOUND_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
+    reply = { text, products: [], quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
