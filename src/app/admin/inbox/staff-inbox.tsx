@@ -119,18 +119,33 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
   if (state.status === "loading") {
     return (
       <LoadingRegion label="Đang tải hộp thư…">
+        {/* Same grid, title row and card heights as InboxConversations below. */}
         <Skeleton className="mb-4 h-11 w-28 rounded-lg" />
-        <div className="space-y-2 md:w-80">
-          {[0, 1, 2, 3].map((row) => (
-            <div key={row} className="ui-card space-y-2 p-4">
-              <div className="flex justify-between gap-2">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-3 w-14" />
-              </div>
-              <Skeleton className="h-5 w-36 rounded-full" />
-              <Skeleton className="h-4 w-full" />
+        <div className="gap-5 md:grid md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
+          <div>
+            <div className="mb-3 flex h-6 items-center justify-between">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-6 w-9 rounded-full" />
             </div>
-          ))}
+            <div className="space-y-2">
+              {[0, 1, 2, 3].map((row) => (
+                <div key={row} className="ui-card p-4">
+                  <div className="flex h-6 items-center justify-between gap-2">
+                    <Skeleton className="h-4 w-32" />
+                    <Skeleton className="h-3 w-14" />
+                  </div>
+                  <div className="my-1 flex h-[22px] items-center gap-2">
+                    <Skeleton className="h-3 w-16" />
+                    <Skeleton className="h-5 w-24 rounded-full" />
+                  </div>
+                  <div className="flex h-5 items-center">
+                    <Skeleton className="h-4 w-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div aria-hidden="true" className="hidden h-[222px] rounded-xl border border-dashed border-[#d5d0c8] bg-white md:block" />
         </div>
       </LoadingRegion>
     );
