@@ -60,12 +60,13 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   const stockBefore = await readStock(staff, PRODUCT, SIZE, COLOR);
   expect(stockBefore, "seeded stock must allow one more order; run pnpm db:seed").toBeGreaterThan(0);
 
-  // 1. Shop page, ask about the dress.
+  // 1. Shop page, open the dress, ask about it.
   await page.goto(`/s/${DEMO_SHOP_SLUG}`);
   await page
     .locator("article", { has: page.getByRole("heading", { name: PRODUCT, exact: true }) })
-    .getByRole("button", { name: "Hỏi về món này" })
+    .getByRole("link", { name: "Xem chi tiết", exact: true })
     .click();
+  await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
 
   // Each AI reply has the label "Shop" (PB-04) followed by its text bubble. Only
   // the bubble is read: the product cards under it list every size in stock.

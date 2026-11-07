@@ -15,17 +15,19 @@ import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
+import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
-import { decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
+import { checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION } from "./prompt";
 import { routeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
 import { EngineError, type Db, type ToolHandlers } from "./types";
@@ -209,6 +211,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let handoff: HandoffReason | null = null;
   let truncated = false;
   let sizeStatus: SizeStatus = null;
+  // PB-06 post-check: the last ok recommend_size result of this turn, the product
+  // it was for, and whether the model already got its one retry.
+  let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
+  let sizeRetried = false;
+  let sizeFallback = false;
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
   const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
@@ -218,6 +225,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let reply: Reply | null = null;
   let personalReplyNeeded = false;
   let productMissedTwice = false;
+  let discountRetried = false;
+  let discountBlocked = false;
 
   // PB-10: Jev routes the turn; orders, unsure turns and Jev failures fall back
   // to the LLM tool loop below.
@@ -254,6 +263,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         catalog,
         runTool,
         cards: (ids) => deps.store.productCards(ctx.shopId, ids),
+        policyCovers: (policy) => checkPolicyCovers(deps.jev!, { history: input.history, policy }),
       });
       if (routed.kind === "fallback") {
         route = { ...route, path: "llm_loop", fallbackReason: routed.reason };
@@ -283,48 +293,89 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         reply = routed.reply;
         break;
       case "write": {
-        const replySystem = buildReplySystemPrompt({ mode, product: tc.product, facts: routed.facts, task: routed.task });
-        detail.system = replySystem.map((b) => b.text).join("\n\n");
-        const c0 = now();
-        let firstTokenAt: number | null = null;
-        const res = await deps.model.create(
-          {
-            model: deps.modelName,
-            max_tokens: MAX_OUTPUT_TOKENS,
-            system: replySystem,
-            messages,
-            output_config: { effort: "low", format: { type: "json_schema", schema: MODEL_REPLY_JSON_SCHEMA } },
-          },
-          { onFirstToken: () => (firstTokenAt ??= now()) },
-        );
-        modelCalls.push({
-          startMs: c0 - t0,
-          ms: now() - c0,
-          ttftMs: firstTokenAt === null ? null : firstTokenAt - c0,
-          inputTokens: res.usage.input_tokens,
-          outputTokens: res.usage.output_tokens,
-          cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
-          cacheCreationTokens: res.usage.cache_creation_input_tokens ?? 0,
-          stopReason: res.stop_reason,
-        });
-        if (deps.captureContent) detail.calls.push({ messages: messages.slice(), output: res.content });
-        inputTokens += res.usage.input_tokens;
-        outputTokens += res.usage.output_tokens;
-        if (res.stop_reason === "max_tokens") {
-          console.error("engine: reply truncated at max_tokens");
-          truncated = true;
-          reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+        // Same post-checks as the tool loop: an unreadable reply, a size other
+        // than recommend_size's (PB-06) or an unbacked discount (PB-09) gets one
+        // more try with the reason added to the task; after that the server's
+        // own text (size) or a handoff (discount) is sent.
+        const write = routed;
+        const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
+        let task = write.task;
+        for (let attempt = 1; ; attempt++) {
+          const replySystem = buildReplySystemPrompt({ mode, product: tc.product, facts: write.facts, task });
+          detail.system = replySystem.map((b) => b.text).join("\n\n");
+          const c0 = now();
+          let firstTokenAt: number | null = null;
+          const res = await deps.model.create(
+            {
+              model: deps.modelName,
+              max_tokens: MAX_OUTPUT_TOKENS,
+              system: replySystem,
+              messages,
+              output_config: { effort: "low", format: { type: "json_schema", schema: MODEL_REPLY_JSON_SCHEMA } },
+            },
+            { onFirstToken: () => (firstTokenAt ??= now()) },
+          );
+          modelCalls.push({
+            startMs: c0 - t0,
+            ms: now() - c0,
+            ttftMs: firstTokenAt === null ? null : firstTokenAt - c0,
+            inputTokens: res.usage.input_tokens,
+            outputTokens: res.usage.output_tokens,
+            cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: res.usage.cache_creation_input_tokens ?? 0,
+            stopReason: res.stop_reason,
+          });
+          if (deps.captureContent) detail.calls.push({ messages: messages.slice(), output: res.content });
+          inputTokens += res.usage.input_tokens;
+          outputTokens += res.usage.output_tokens;
+          const canRetry = attempt < 2;
+          if (res.stop_reason === "max_tokens") {
+            console.error("engine: reply truncated at max_tokens");
+            if (canRetry) continue;
+            truncated = true;
+            reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+            break;
+          }
+          const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
+          const parsed = parseModelReply(text);
+          if (!parsed.ok) {
+            // Seen with the gateway cutting a stream short: ask once more.
+            console.error(`engine: unreadable reply (stop ${res.stop_reason}, ${text.length} chars)`);
+            if (canRetry) continue;
+            reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+            break;
+          }
+          if (write.sizeAdvice && !replyMatchesSize(parsed.reply.text, write.sizeAdvice, otherSizes())) {
+            if (canRetry) {
+              task = `${write.task}\n${sizeCorrection(write.sizeAdvice)}`;
+              continue;
+            }
+            reply = {
+              text: sizeFallbackText(write.sizeAdvice),
+              products: await deps.store.productCards(ctx.shopId, write.productIds),
+              quickReplies: [],
+            };
+            break;
+          }
+          if (mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null) {
+            if (canRetry) {
+              task = `${write.task}\n${DISCOUNT_RETRY_NOTE}`;
+              continue;
+            }
+            handoff = "postcheck_failed";
+            await deps.store.setNeedsHuman(ctx);
+            reply = { text: DISCOUNT_HANDOFF_TEXT, products: [], quickReplies: [] };
+            break;
+          }
+          finalFirstTokenAt = firstTokenAt;
+          // Cards are the server's choice (graded by PB-10), never the model's ids.
+          reply = {
+            text: parsed.reply.text,
+            products: await deps.store.productCards(ctx.shopId, write.productIds),
+            quickReplies: parsed.reply.quickReplies,
+          };
           break;
         }
-        const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-        const parsed = parseModelReply(text).reply;
-        finalFirstTokenAt = firstTokenAt;
-        // Cards are the server's choice (graded by PB-10), never the model's ids.
-        reply = {
-          text: parsed.text,
-          products: await deps.store.productCards(ctx.shopId, routed.productIds),
-          quickReplies: parsed.quickReplies,
-        };
         break;
       }
     }
@@ -368,8 +419,39 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
     if (res.stop_reason !== "tool_use") {
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-      modelReply = parseModelReply(text).reply;
+      const parsed = parseModelReply(text);
+      // sizeAdvice is set inside a callback; TS can't see it.
+      const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice;
+      const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
+      // A matching question gets a reply built from get_pairings, not this text.
+      const sizeOk = !advice || !parsed.ok || isMatchingQuestion(input.history)
+        || replyMatchesSize(parsed.reply.text, advice, otherSizes());
+      if (!sizeOk && !sizeRetried) {
+        // Ask once more, with the tool's size spelled out.
+        sizeRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: sizeCorrection(advice!) },
+        );
+        continue;
+      }
+      sizeFallback = !sizeOk;
+      modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
+      // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
+      // offer gets one regeneration; a second one hands off (below the loop).
+      if (mode === "customer" && modelReply && !pairingState.called
+        && findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null) {
+        if (!discountRetried) {
+          discountRetried = true;
+          messages.push(
+            { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+            { role: "user", content: DISCOUNT_RETRY_NOTE },
+          );
+          continue;
+        }
+        discountBlocked = true;
+      }
       break;
     }
 
@@ -401,7 +483,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       if (run.log) logs.push(run.log);
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
-      if (u.name === "recommend_size" && !run.isError) sizeStatus = sizeStatusOf(run.content);
+      if (u.name === "recommend_size" && !run.isError) {
+        sizeStatus = sizeStatusOf(run.content);
+        const out = run.log?.output as { status?: string } | undefined;
+        const productId = (run.log?.input as { productId?: string } | undefined)?.productId;
+        if (out?.status === "ok" && productId) sizeAdvice = { advice: out as SizeAdvice, productId };
+      }
       if (u.name === "recommend_size" && !run.isError && !knownSize) {
         const size = (run.log?.output as { status?: string; size?: string } | undefined);
         if (size?.status === "ok") knownSize = size.size ?? null;
@@ -439,6 +526,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
     && answersAiMessage(input.history) && searchMissed(logs);
   if (productMissedTwice) handoff = "misunderstood_twice";
+  else if (discountBlocked) handoff = "postcheck_failed";
+
+  // PB-06 AC4: measurements outside the chart, or a product with no chart, always
+  // end in a handoff, even when the model answered instead of calling
+  // handoff_to_staff. (sizeStatus is set inside a callback; TS can't see it.)
+  const finalSizeStatus = sizeStatus as SizeStatus;
+  const sizeHandoff = mode === "customer" && !handoff && finalSizeStatus !== null;
+  if (sizeHandoff) handoff = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
 
   // A matching question must not depend on the model remembering the tool. If
   // it forgot, query the product the shopper is viewing on the server. Without
@@ -462,13 +557,24 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
-    if (handoff === "too_many_tool_calls" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
-    const text = productMissedTwice ? PRODUCT_NOT_FOUND_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
+    if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice || sizeHandoff) await deps.store.setNeedsHuman(ctx);
+    const text = productMissedTwice
+      ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
+      : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
     reply = { text, products: [], quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
     reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+  } else if (sizeFallback && sizeAdvice) {
+    // The model named a size the size function didn't return, twice: the reply
+    // is written from the tool result, with the product's card from the database.
+    const { advice, productId } = sizeAdvice as { advice: SizeAdvice; productId: string };
+    reply = {
+      text: sizeFallbackText(advice),
+      products: await deps.store.productCards(ctx.shopId, [productId]),
+      quickReplies: [],
+    };
   } else if (pairingState.called) {
     const cards = pairingState.items.length === 0
       ? []

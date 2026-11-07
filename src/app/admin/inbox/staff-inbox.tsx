@@ -50,8 +50,8 @@ type SendMessageAction = (conversationId: string, text: string, requestId: strin
 >;
 
 function ModeBadge({ mode }: { mode: ConversationMode }) {
-  const color = mode === "needs_human" ? "bg-amber-100 text-amber-900" : "bg-zinc-100 text-zinc-800";
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${color}`}>{modeLabels[mode]}</span>;
+  const color = mode === "needs_human" ? "bg-[#fff0eb] text-[#b2382a]" : "bg-[#efebe4] text-[#171717]";
+  return <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${color}`}>{modeLabels[mode]}</span>;
 }
 
 export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMessageAction }) {
@@ -107,7 +107,7 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
     setHistoryVersion((version) => version + 1);
   }
 
-  if (state.status === "loading") return <p role="status">Đang tải hộp thư…</p>;
+  if (state.status === "loading") return <p role="status" className="ui-card p-6 text-sm text-[#706d67]">Đang tải hộp thư…</p>;
 
   if (state.status === "error") {
     return (
@@ -125,7 +125,7 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
 
   return (
     <>
-      <Button variant="secondary" className="mb-3" onClick={reload}>Làm mới</Button>
+      <Button variant="secondary" className="mb-4" onClick={reload}>↻ Làm mới</Button>
       {conversations.length ? (
         <InboxConversations
           conversations={conversations}
@@ -151,20 +151,21 @@ function InboxConversations({ conversations, selected, onSelect, historyVersion,
   sendMessageAction?: SendMessageAction;
 }) {
   return (
-    <div className="gap-4 md:grid md:grid-cols-[minmax(0,19rem)_minmax(0,1fr)]">
+    <div className="gap-5 md:grid md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]">
       <aside aria-label="Danh sách hội thoại" className={selected ? "hidden md:block" : undefined}>
+        <div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-bold uppercase tracking-[.08em]">Hội thoại</h2><span className="rounded-full bg-[#efebe4] px-2 py-1 text-xs font-semibold">{conversations.length}</span></div>
         <ul className="space-y-2">
           {conversations.map((conversation) => (
             <li key={conversation.id}>
               <button
                 type="button"
                 aria-pressed={selected?.id === conversation.id}
-                className="block w-full min-w-0 rounded-lg border border-zinc-300 p-3 text-left aria-pressed:border-zinc-600"
+                className="ui-card block w-full min-w-0 p-4 text-left transition-colors hover:bg-[#f5f3ef] aria-pressed:border-[#e9573f] aria-pressed:bg-[#fff6f3]"
                 onClick={() => onSelect(conversation.id)}
               >
                 <span className="flex items-baseline justify-between gap-2">
                   <span className="min-w-0 truncate font-semibold">{conversation.customerName}</span>
-                  <time className="shrink-0 text-xs" dateTime={conversation.lastMessageAt}>
+                  <time className="shrink-0 text-[11px] text-[#706d67]" dateTime={conversation.lastMessageAt}>
                     {inboxDate.format(new Date(conversation.lastMessageAt))}
                   </time>
                 </span>
@@ -172,7 +173,7 @@ function InboxConversations({ conversations, selected, onSelect, historyVersion,
                   {channelLabels[conversation.channel]}
                   <ModeBadge mode={conversation.mode} />
                 </span>
-                <span className="block truncate text-sm">
+                <span className="block truncate text-sm text-[#706d67]">
                   {conversation.latestMessage || "Chưa có nội dung văn bản"}
                 </span>
               </button>
@@ -272,7 +273,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
     <section aria-label={`Cuộc trò chuyện với ${conversation.customerName}`} className="min-w-0 space-y-3">
       <Button variant="secondary" className="md:hidden" onClick={onBack}>Về danh sách</Button>
 
-      <div className="space-y-3 rounded-lg border border-zinc-300 p-3 sm:p-4">
+      <div className="ui-card space-y-3 p-4 sm:p-5">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="wrap-anywhere font-semibold">{conversation.customerName}</h2>
@@ -289,12 +290,12 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
 
         {historyError && <ErrorMessage>Không tải được lịch sử. Bấm Làm mới để thử lại.</ErrorMessage>}
         {messages?.length === historyLimit && <p className="text-xs">Hiển thị {historyLimit} tin gần nhất.</p>}
-        <div ref={messageLog} role="log" aria-label="Tin nhắn" className="max-h-80 min-h-24 overflow-y-auto border-y border-zinc-200 py-3 md:max-h-[26rem]">
+        <div ref={messageLog} role="log" aria-label="Tin nhắn" className="max-h-80 min-h-40 overflow-y-auto rounded-lg border border-[#e3dfd8] bg-[#f5f3ef] p-3 md:max-h-[26rem] md:p-4">
           {messages?.length ? (
             <ol className="space-y-3">
               {messages.map((message) => (
                 <li key={message.id} className={message.sender === "staff" ? "flex justify-end" : "flex"}>
-                  <div className="max-w-[85%] rounded-lg border border-zinc-200 px-3 py-2 text-sm">
+                  <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${message.sender === "staff" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white"}`}>
                     <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs">
                       <strong>{senderLabels[message.sender]}</strong>
                       <time dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>

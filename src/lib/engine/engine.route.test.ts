@@ -1,7 +1,9 @@
 // PB-10: runEngine with Jev routing (a fake Jev client; no network).
 import { describe, expect, it, vi } from "vitest";
 import type { EngineInput } from "@/contract";
+import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
+import { FALLBACK_TEXT } from "./model-reply";
 import type { JevClient, JevResponse } from "./jev";
 import type { TurnMetrics } from "./metrics";
 import { PROMPT_VERSION } from "./prompt";
@@ -53,7 +55,8 @@ function setup(jev: JevClient | null, responses: Parameters<typeof scriptedModel
       price: 389000,
       variants: [{ variantId: VARIANT, size: "M", color: "Be", stock: 7 }],
     })),
-    get_policy: vi.fn(async () => ({ kind: "doi_tra", content: null })),
+    get_policy: vi.fn(async () => ({ kind: "khuyen_mai", content: null })),
+    recommend_size: vi.fn(async () => ({ status: "ok", size: "L", sizeByHeight: "M", sizeByWeight: "L" })),
     handoff_to_staff: vi.fn(async () => ({ mode: "needs_human" })),
     search_products: vi.fn(async () => ({ products: [] })),
   };
@@ -142,5 +145,45 @@ describe("runEngine with Jev routing", () => {
     const { metrics, run } = setup(null, [finalJson({ text: "Dạ", productIds: [], quickReplies: [] })]);
     await run(input("chào"));
     expect(metrics[0].route).toEqual({ path: "llm_loop", fallbackReason: "no_jev" });
+  });
+
+  const sizeJev = () => jevSaying({ intent: { type: "choice", choice: "size", confidence: 0.99 } });
+  const reply = (text: string) => finalJson({ text, productIds: [], quickReplies: [] });
+
+  it("size post-check: a wrong size gets one retry with the tool's size spelled out", async () => {
+    const { model, run } = setup(sizeJev(), [reply("Dạ bạn mặc size S nhé"), reply("Dạ bạn mặc size L nhé, theo cân nặng là L")]);
+    const result = await run(input("mình cao 1m58 nặng 58 ký mặc size gì"));
+    expect(model.calls).toHaveLength(2);
+    const retrySystem = (model.calls[1].system as { text: string }[]).map((b) => b.text).join("\n");
+    expect(retrySystem).toContain("tư vấn đúng size L");
+    expect(result.output.reply.text).toBe("Dạ bạn mặc size L nhé, theo cân nặng là L");
+  });
+
+  it("size post-check: wrong twice -> the server writes the reply from the tool result", async () => {
+    const { run } = setup(sizeJev(), [reply("Dạ size S"), reply("Dạ size XL")]);
+    const result = await run(input("mình cao 1m58 nặng 58 ký mặc size gì"));
+    expect(result.output.reply.text).toContain("size lớn hơn là L");
+    expect(result.output.reply.products.map((p) => p.productId)).toEqual([VAY]);
+  });
+
+  it("discount post-check: an unbacked discount gets one retry, then a handoff (postcheck_failed)", async () => {
+    const greeting = jevSaying({ intent: { type: "choice", choice: "greeting", confidence: 0.99 } });
+    const { model, store, run } = setup(greeting, [reply("Dạ chào bạn, shop giảm 20% cho bạn nhé"), reply("Dạ mình giảm 10% cho bạn")]);
+    const result = await run(input("chào shop"));
+    expect(model.calls).toHaveLength(2);
+    expect(result.handoffReason).toBe("postcheck_failed");
+    expect(result.output.reply.text).toBe(DISCOUNT_HANDOFF_TEXT);
+    expect(store.setNeedsHuman).toHaveBeenCalled();
+  });
+
+  it("an unreadable reply is asked for once more, then falls back", async () => {
+    const greeting = () => jevSaying({ intent: { type: "choice", choice: "greeting", confidence: 0.99 } });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cut = { stop_reason: "end_turn" as const, content: [{ type: "text" as const, text: '{"text":"Dạ ch', citations: null }] };
+    const once = setup(greeting(), [cut, reply("Dạ chào bạn")]);
+    expect((await once.run(input("chào"))).output.reply.text).toBe("Dạ chào bạn");
+    const twice = setup(greeting(), [cut, cut]);
+    expect((await twice.run(input("chào"))).output.reply.text).toBe(FALLBACK_TEXT);
+    error.mockRestore();
   });
 });

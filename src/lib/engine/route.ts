@@ -9,18 +9,22 @@ import type { EngineMode, HandoffReason, HistoryMessage, ProductCard, Reply, Too
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
 import { knownShopperSize, matchingReply } from "./pairing-suggestions";
+import type { SizeAdvice } from "./size-postcheck";
 import { fold } from "./text";
 
 // Below this intent confidence the turn goes to the LLM tool loop instead.
 export const MIN_INTENT_CONFIDENCE = 0.6;
 export const DISCOUNT_TRICK_THRESHOLD = 0.5;
 export const ASKED_TO_CLARIFY_THRESHOLD = 0.5;
+// Below this, the shop's policy text doesn't answer what was asked (v0.6 rule).
+export const POLICY_COVERS_THRESHOLD = 0.5;
 
 export const ASK_PAIRING_PRODUCT_TEXT = "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.";
 export const PAIRING_FAILED_TEXT = "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.";
 // staff_draft notes: the reply assistant shows them to staff instead of a draft.
 export const STAFF_NO_DATA_TEXT = "Dữ liệu shop chưa có thông tin này. Bạn kiểm tra sản phẩm và tự trả lời khách nhé.";
 export const STAFF_NO_POLICY_TEXT = "Shop chưa viết chính sách này. Bạn tự trả lời khách nhé.";
+export const STAFF_POLICY_SILENT_TEXT = "Chính sách của shop chưa nói tới điều khách hỏi. Bạn kiểm tra và tự trả lời khách nhé.";
 export const STAFF_NO_SIZE_TEXT = "Số đo nằm ngoài bảng size hoặc sản phẩm chưa có bảng size, nên chưa tư vấn được size. Bạn kiểm tra và tự trả lời khách nhé.";
 
 export type ToolResult = { ok: boolean; output: unknown; code?: string };
@@ -37,7 +41,8 @@ export type RouteOutcome =
   | { kind: "personal" }
   | { kind: "fixed"; reply: Reply }
   // The reply model writes the text; productIds are chosen here, not by the model.
-  | { kind: "write"; facts: Record<string, unknown>; task: string; productIds: string[] };
+  // sizeAdvice: the reply must advise exactly this size (PB-06 post-check).
+  | { kind: "write"; facts: Record<string, unknown>; task: string; productIds: string[]; sizeAdvice?: SizeAdvice };
 
 export type RouteInput = {
   mode: EngineMode;
@@ -47,6 +52,9 @@ export type RouteInput = {
   catalog: CatalogItem[];
   runTool: ToolRunner;
   cards: (productIds: string[]) => Promise<ProductCard[]>;
+  // Probability that the policy text answers the shopper's question (Jev). Missing
+  // or failing: the text is assumed to answer it.
+  policyCovers?: (policy: string) => Promise<number>;
 };
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -143,6 +151,8 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       if (!r.ok) return { kind: "fallback", reason: "tool_error" };
       const policy = r.output as ToolOutput<"get_policy">;
       if (policy.content === null) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_NO_POLICY_TEXT);
+      const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 1) : 1;
+      if (covers < POLICY_COVERS_THRESHOLD) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_POLICY_SILENT_TEXT);
       return {
         kind: "write",
         facts: { policy },
@@ -198,6 +208,7 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
     const differs = rec.sizeByHeight !== rec.sizeByWeight;
     return {
       kind: "write",
+      sizeAdvice: rec,
       facts: { product: product.name, heightCm, weightKg, ...rec },
       task: differs
         ? `Tư vấn size ${rec.size} cho ${product.name}. Nói ngắn lý do: theo chiều cao là ${rec.sizeByHeight}, theo cân nặng là ${rec.sizeByWeight}, nên chọn size lớn hơn để mặc thoải mái.`

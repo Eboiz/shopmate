@@ -82,6 +82,53 @@ describe("runEngine on the real database", () => {
       await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
     }
   });
+
+  // PB-06 AC4 with the real recommend_size and size charts: the model answers
+  // instead of calling handoff_to_staff, and the engine still hands off.
+  it.each([
+    ["outside the chart", FX.a.vay01, "cao 1m80 nặng 75kg mặc size nào?", "size_out_of_range", "ngoài bảng size"],
+    ["product without a chart", FX.a.ao03, "cao 1m60 nặng 50kg mặc size nào?", "not_covered_by_data", "chưa có bảng size"],
+  ] as const)("size %s: says it can't advise and sets needs_human", async (_label, productId, text, reason, says) => {
+    const model = scriptedModel([
+      toolCalls(toolUse("recommend_size", { productId, heightCm: 160, weightKg: 50 })),
+      finalJson({ text: "Dạ bạn mặc size M nhé", productIds: [], quickReplies: [] }),
+    ]);
+    try {
+      const result = await runEngine(
+        { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text }], productId },
+        { model, db, store, onMetrics: () => {} },
+      );
+      expect(result.handoffReason).toBe(reason);
+      expect(result.output.reply.text).toContain(says);
+      const { data: conversation } = await db.from("conversations").select("mode").eq("id", FX.a.conversation).single();
+      expect(conversation?.mode).toBe("needs_human");
+      const row = await turnRow(await result.turnLogged);
+      expect(row.handoff_reason).toBe(reason);
+      // The shopper's own numbers reached the size function, not the model's 160 / 50.
+      const call = (row.tool_calls as { name: string; input: { heightCm: number; weightKg: number } }[])[0];
+      expect(call.input).toMatchObject({ heightCm: Number(text.match(/1m(\d+)/)![1]) + 100, weightKg: Number(text.match(/(\d+)kg/)![1]) });
+    } finally {
+      await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
+    }
+  });
+
+  it("size inside the chart: the reply names the size the function computed", async () => {
+    // 158 cm / 50 kg on Váy suông linen is M; the model says L twice, so the
+    // engine writes the reply from the tool result.
+    const model = scriptedModel([
+      toolCalls(toolUse("recommend_size", { productId: FX.a.vay01, heightCm: 158, weightKg: 50 })),
+      finalJson({ text: "Dạ bạn mặc size L nhé", productIds: [], quickReplies: [] }),
+      finalJson({ text: "Dạ size L ạ", productIds: [], quickReplies: [] }),
+    ]);
+    const result = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text: "cao 158cm nặng 50kg mặc size gì?" }], productId: FX.a.vay01 },
+      { model, db, store, onMetrics: () => {} },
+    );
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toContain("size M");
+    expect(result.output.reply.text).not.toContain("size L");
+    expect(result.output.reply.products.map((p) => p.productId)).toEqual([FX.a.vay01]);
+  });
 });
 
 // Real Claude: runs only with ANTHROPIC_API_KEY in .env.test.local. CI never runs it.

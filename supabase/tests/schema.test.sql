@@ -10,7 +10,9 @@ select set_eq(
     where table_schema = 'public' and table_type = 'BASE TABLE'$$,
   array['shops', 'profiles', 'products', 'variants', 'size_charts', 'pairings', 'policies',
         'channel_accounts', 'shoppers', 'conversations', 'messages', 'channel_events',
-        'orders', 'order_items', 'ai_turns'],
+        'orders', 'order_items', 'ai_turns',
+        -- PB-04: web chat limit per client IP and shop (server only).
+        'web_chat_hits'],
   'the contract has exactly these tables'
 );
 

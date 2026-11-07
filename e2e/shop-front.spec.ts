@@ -51,11 +51,16 @@ test("shop page and chat fit 375 px, send product context and restore history", 
   await expect(page.getByText("Màu: Be, Xanh")).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
 
-  await page.getByRole("button", { name: "Hỏi về món này" }).click();
-  await expect(page.getByText("Đang hỏi về:")).toContainText("Váy hoa");
-  await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Váy này còn size M không?");
-  await page.getByRole("button", { name: "Gửi" }).click();
-  await expect(page.getByRole("status")).toContainText("Shop đang trả lời");
+  // Asking about a product starts from its detail page.
+  await page.getByRole("link", { name: "Xem chi tiết", exact: true }).click();
+  await expect(page).toHaveURL(`/s/may-boutique/p/${productId}`);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Váy hoa");
+  await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
+  const chat = page.getByRole("region", { name: "Trò chuyện với shop" });
+  await expect(chat.getByText("Đang hỏi về:")).toContainText("Váy hoa");
+  await chat.getByRole("textbox", { name: "Tin nhắn" }).fill("Váy này còn size M không?");
+  await chat.getByRole("button", { name: "Gửi" }).click();
+  await expect(chat.getByRole("status")).toContainText("Shop đang trả lời");
   await expect(page.getByText("Váy hoa còn size M.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Xem màu Be" })).toBeVisible();
   expect(submitted[0]?.productId).toBe(productId);

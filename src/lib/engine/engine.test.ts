@@ -464,8 +464,141 @@ describe("runEngine", () => {
         reply("Dạ size M ạ"),
       ]);
       handlers.recommend_size.mockResolvedValue({ status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "M" });
-      await run(sizeAsk("160 50 thì sao shop"));
+      await run(sizeAsk("mình mặc size nào vừa shop?"));
       expect(handlers.recommend_size.mock.calls[0][0]).toEqual({ productId: PRODUCT, heightCm: 160, weightKg: 50 });
+    });
+  });
+
+  describe("out of chart or no chart always hands off (PB-06 AC4)", () => {
+    const sizeInput = { productId: PRODUCT, heightCm: 190, weightKg: 100 };
+
+    it("out of range: the engine hands off even when the model only answered", async () => {
+      const { handlers, model, store, run } = setup([
+        toolCalls(toolUse("recommend_size", sizeInput)),
+        reply("Dạ bạn mặc size XL nhé"),
+      ]);
+      handlers.recommend_size.mockResolvedValue({ status: "out_of_range" });
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "cao 1m90 nặng 100kg mặc size gì" }] }));
+      expect(model.calls).toHaveLength(2);
+      expect(result.handoffReason).toBe("size_out_of_range");
+      expect(result.output.reply).toEqual({ text: SIZE_OUT_OF_RANGE_HANDOFF_TEXT, products: [], quickReplies: [] });
+      expect(store.setNeedsHuman).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
+    });
+
+    it("no chart: the engine hands off with not_covered_by_data", async () => {
+      const { store, run } = setup([toolCalls(toolUse("recommend_size", sizeInput)), reply("Dạ bạn mặc size M nhé")]);
+      const result = await run(customerInput());
+      expect(result.handoffReason).toBe("not_covered_by_data");
+      expect(result.output.reply.text).toBe(NO_SIZE_CHART_HANDOFF_TEXT);
+      expect(store.setNeedsHuman).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
+    });
+
+    it("the model's own handoff_to_staff moves the conversation; the engine doesn't do it twice", async () => {
+      const { handlers, store, run } = setup([
+        toolCalls(toolUse("recommend_size", sizeInput)),
+        toolCalls(toolUse("handoff_to_staff", { reason: "size_out_of_range" })),
+      ]);
+      handlers.recommend_size.mockResolvedValue({ status: "out_of_range" });
+      const result = await run(customerInput());
+      expect(handlers.handoff_to_staff).toHaveBeenCalledTimes(1);
+      expect(result.handoffReason).toBe("size_out_of_range");
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    });
+
+    it("an ok recommend_size after the out-of-range one (another product) does not hand off", async () => {
+      const { handlers, run } = setup([
+        toolCalls(toolUse("recommend_size", sizeInput)),
+        toolCalls(toolUse("recommend_size", { ...sizeInput, heightCm: 160, weightKg: 50 })),
+        reply("Dạ bạn mặc size M ạ"),
+      ]);
+      handlers.recommend_size
+        .mockResolvedValueOnce({ status: "out_of_range" })
+        .mockResolvedValueOnce({ status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "M" });
+      const result = await run(customerInput());
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe("Dạ bạn mặc size M ạ");
+    });
+
+    it("staff_draft never hands off; the draft says it can't advise", async () => {
+      const { handlers, store, run } = setup(
+        [toolCalls(toolUse("recommend_size", sizeInput)), reply("Chưa tư vấn được size: số đo ngoài bảng size.")],
+        { deps: { staffShopId: SHOP_A } },
+      );
+      handlers.recommend_size.mockResolvedValue({ status: "out_of_range" });
+      const result = await run(staffInput());
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe("Chưa tư vấn được size: số đo ngoài bảng size.");
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the reply's size is the recommend_size result (PB-06 AC5 post-check)", () => {
+    const sizeCall = toolCalls(toolUse("recommend_size", { productId: PRODUCT, heightCm: 155, weightKg: 52 }));
+    const ask = customerInput({ history: [{ sender: "shopper", text: "cao 1m55 nặng 52kg mặc size nào?" }] });
+    const disagree = { status: "ok", size: "M", sizeByHeight: "S", sizeByWeight: "M" };
+
+    const lastUserText = (params: Anthropic.MessageCreateParamsNonStreaming) => {
+      const last = params.messages.at(-1)!;
+      return typeof last.content === "string" ? last.content : "";
+    };
+
+    it("a reply that names the size (and the A1 reason) goes out as written", async () => {
+      const text = "Dạ theo chiều cao bạn mặc size S, theo cân nặng size M, nên shop khuyên size M cho thoải mái ạ.";
+      const { handlers, model, run } = setup([sizeCall, reply(text)]);
+      handlers.recommend_size.mockResolvedValue(disagree);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(2);
+      expect(result.output.reply.text).toBe(text);
+    });
+
+    it("the reply may name sizes another tool returned this turn (in stock)", async () => {
+      const text = "Dạ bạn mặc size M ạ. Váy còn size M màu be, size L màu đen.";
+      const { handlers, model, run } = setup([
+        toolCalls(toolUse("recommend_size", { productId: PRODUCT, heightCm: 160, weightKg: 50 }), toolUse("get_stock", { productId: PRODUCT })),
+        reply(text),
+      ]);
+      handlers.recommend_size.mockResolvedValue({ status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "M" });
+      handlers.get_stock.mockResolvedValue({
+        ...stockOut,
+        variants: [
+          { variantId: VARIANT, size: "M", color: "be", stock: 2 },
+          { variantId: ORDER, size: "L", color: "đen", stock: 1 },
+        ],
+      });
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(2);
+      expect(result.output.reply.text).toBe(text);
+    });
+
+    it("a wrong size is regenerated once, with the tool's size spelled out", async () => {
+      const { handlers, model, run } = setup([sizeCall, reply("Dạ bạn mặc size S nhé"), reply("Dạ bạn mặc size M ạ")]);
+      handlers.recommend_size.mockResolvedValue(disagree);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(3);
+      expect(lastUserText(model.calls[2])).toContain("size M");
+      expect(result.output.reply.text).toBe("Dạ bạn mặc size M ạ");
+      expect(result.handoffReason).toBeNull();
+    });
+
+    it("a reply that names no size at all is regenerated too", async () => {
+      const { handlers, model, run } = setup([sizeCall, reply("Dạ bạn chọn màu nào ạ?"), reply("Dạ size M ạ, bạn chọn màu nào?")]);
+      handlers.recommend_size.mockResolvedValue(disagree);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(3);
+      expect(result.output.reply.text).toBe("Dạ size M ạ, bạn chọn màu nào?");
+    });
+
+    it("wrong twice: the reply is written from the tool result, with the product card", async () => {
+      const { handlers, model, store, run } = setup([sizeCall, reply("Dạ size L ạ"), reply("Dạ size XL ạ")]);
+      handlers.recommend_size.mockResolvedValue(disagree);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(3);
+      expect(result.output.reply.text).toContain("size M");
+      expect(result.output.reply.text).toContain("size S");
+      expect(result.output.reply.text).not.toMatch(/size (L|XL)\b/);
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+      expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
+      expect(result.handoffReason).toBeNull();
     });
   });
 
@@ -555,6 +688,55 @@ describe("runEngine", () => {
       });
       expect(result.handoffReason).toBeNull();
       expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("stock answer (PB-05)", () => {
+    const L_BE = "a0000000-0000-4000-8000-000000000022";
+    const M_DEN = "a0000000-0000-4000-8000-000000000023";
+    const variant = (variantId: string, size: string, color: string, stock: number) => ({ variantId, size, color, stock });
+    const soldOut = { ...stockOut, variants: [variant(L_BE, "L", "be", 0)] };
+    const whole = { ...stockOut, variants: [variant(VARIANT, "M", "be", 2), variant(L_BE, "L", "be", 0), variant(M_DEN, "M", "đen", 5)] };
+
+    it("sold out: the stock and price the model answers from are the tool's, and so are the alternatives and the card", async () => {
+      const { handlers, model, store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT, size: "L", color: "be" })),
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ màu be size L hết hàng rồi ạ. Váy còn M be và M đen, giá 350.000đ.", [PRODUCT]),
+      ]);
+      handlers.get_stock.mockResolvedValueOnce(soldOut).mockResolvedValueOnce(whole);
+      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "váy này màu be size L còn không?" }] }));
+
+      // The shop id comes from the conversation, never from the model.
+      expect(handlers.get_stock.mock.calls.map((c) => [c[0], (c[1] as { shopId: string }).shopId])).toEqual([
+        [{ productId: PRODUCT, size: "L", color: "be" }, SHOP_A],
+        [{ productId: PRODUCT }, SHOP_A],
+      ]);
+      expect(JSON.parse(toolResults(model.calls[1])[0].content as string)).toEqual(soldOut);
+      expect(JSON.parse(toolResults(model.calls[2])[0].content as string)).toEqual(whole);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+      expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
+
+      // Both outputs are logged with the turn: what a reply's numbers are checked against (PB-07).
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].tool_calls).toEqual([
+        { name: "get_stock", input: { productId: PRODUCT, size: "L", color: "be" }, output: soldOut },
+        { name: "get_stock", input: { productId: PRODUCT }, output: whole },
+      ]);
+    });
+
+    it("a product id from another shop is a tool error, not a stock number", async () => {
+      const { handlers, model, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ mình chưa kiểm tra được ạ"),
+      ]);
+      handlers.get_stock.mockRejectedValue(new ToolError("product_not_found"));
+      const result = await run(customerInput());
+      const [res] = toolResults(model.calls[1]);
+      expect(res.is_error).toBe(true);
+      expect(JSON.parse(res.content as string)).toMatchObject({ error: "product_not_found" });
+      expect(result.handoffReason).toBeNull();
     });
   });
 

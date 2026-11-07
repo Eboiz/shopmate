@@ -51,12 +51,19 @@ describe("prompt", () => {
       "58 cân → 58",
       "sizeByHeight khác sizeByWeight", // say why the larger size
       "thiếu số nào thì hỏi đúng số đó",
+      "phải nêu đúng `size` của recommend_size", // PB-06 size post-check
     ]) {
       expect(customer).toContain(phrase);
     }
     const staff = buildStablePrompt("staff_draft");
     expect(staff).toContain("1m65 → 165");
     expect(staff).not.toContain("hỏi lại khách MỘT câu");
+  });
+
+  it("keeps search_products queries to the product name (PB-05 AC4)", () => {
+    for (const mode of ["customer", "staff_draft"] as const) {
+      expect(buildStablePrompt(mode)).toContain("query của search_products chỉ gồm tên hoặc loại sản phẩm");
+    }
   });
 
   it("stable prompt does not depend on the product", () => {

@@ -231,3 +231,31 @@ export async function decideTurn(
   const response = await jev.decide(request);
   return parseJevResponse(response, productKeys, { model: jev.model, ms: opts.now() - t0 });
 }
+
+// v0.6 rule (PB-09): a policy that exists but doesn't speak to what the shopper
+// asked (e.g. free shipping when the text never mentions it) goes to staff. Asked
+// only on policy turns, after get_policy returned the shop's text. Returns the
+// probability that the text answers the question.
+export async function checkPolicyCovers(
+  jev: JevClient,
+  opts: { history: HistoryMessage[]; policy: string },
+): Promise<number> {
+  const response = await jev.decide({
+    model: jev.model,
+    state: {
+      conversation: opts.history
+        .filter((m) => m.sender !== "system" && m.text.trim() !== "")
+        .slice(-HISTORY_MESSAGES)
+        .map((m) => ({ from: speaker(m.sender), text: m.text })),
+      shopPolicy: opts.policy,
+    },
+    questions: {
+      policy_answers: {
+        type: "noul",
+        instructions:
+          "Does the shop's policy text (shopPolicy) directly answer what the shopper's last message asks, without assuming anything the text doesn't say?",
+      },
+    },
+  });
+  return noulOf(response, "policy_answers");
+}

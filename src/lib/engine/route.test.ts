@@ -8,6 +8,7 @@ import {
   routeTurn,
   STAFF_NO_DATA_TEXT,
   STAFF_NO_POLICY_TEXT,
+  STAFF_POLICY_SILENT_TEXT,
   type RouteInput,
   type ToolResult,
 } from "./route";
@@ -130,7 +131,7 @@ describe("routeTurn", () => {
     const { run, runTool } = setup({ recommend_size: { ok: true, output: { status: "ok", size: "L", sizeByHeight: "M", sizeByWeight: "L" } } });
     const out = await run({ decision: decision({ intent: "size" }), history: said("1m58 58 ký mặc size gì") });
     expect(runTool).toHaveBeenCalledWith("recommend_size", { productId: VAY, heightCm: 158, weightKg: 58 });
-    expect(out).toMatchObject({ kind: "write", facts: { size: "L" }, productIds: [VAY] });
+    expect(out).toMatchObject({ kind: "write", facts: { size: "L" }, productIds: [VAY], sizeAdvice: { size: "L" } });
     expect((out as { task: string }).task).toContain("lớn hơn");
   });
 
@@ -176,6 +177,23 @@ describe("routeTurn", () => {
       kind: "fixed",
       reply: { text: STAFF_NO_POLICY_TEXT, products: [], quickReplies: [] },
     });
+  });
+
+  it("policy text that doesn't answer the question: customer hands off, staff gets a note (v0.6 rule)", async () => {
+    const shipping = { get_policy: { ok: true, output: { kind: "giao_hang", content: "Giao 2-3 ngày" } } };
+    const silent = async () => 0.1;
+    const customer = setup(shipping);
+    expect(await customer.run({ decision: decision({ intent: "policy", policyKind: "giao_hang" }), policyCovers: silent })).toMatchObject({
+      kind: "handoff",
+      reason: "policy_not_covered",
+    });
+    expect(await setup(shipping).run({ mode: "staff_draft", decision: decision({ intent: "policy" }), policyCovers: silent })).toEqual({
+      kind: "fixed",
+      reply: { text: STAFF_POLICY_SILENT_TEXT, products: [], quickReplies: [] },
+    });
+    // a failing check never blocks the answer
+    const failing = async () => Promise.reject(new Error("jev down"));
+    expect(await setup(shipping).run({ decision: decision({ intent: "policy" }), policyCovers: failing })).toMatchObject({ kind: "write" });
   });
 
   it("discount trick: only the promotion text is looked up, whatever else was asked", async () => {
