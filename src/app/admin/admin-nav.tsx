@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { ADMIN_NAV, isNavItemActive } from "@/lib/admin-nav";
 import { Icon } from "@/components/ui/icon";
 
-const NAV_ICONS = { "/admin": "grid", "/admin/inbox": "chat", "/admin/orders": "box", "/admin/products": "hanger" } as const;
+const NAV_ICONS = { "/admin": "grid", "/admin/inbox": "chat", "/admin/orders": "box", "/admin/products": "hanger", "/admin/reply-assistant": "spark" } as const;
 
 export function AdminNav({ previewPath }: { previewPath?: string } = {}) {
   const pathname = usePathname();
@@ -13,7 +13,7 @@ export function AdminNav({ previewPath }: { previewPath?: string } = {}) {
   return (
     <nav
       aria-label="Menu quản lý"
-      className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-[#e3dfd8] bg-white px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_-20px_#171717] lg:sticky lg:inset-auto lg:top-0 lg:h-[calc(100dvh-4.5rem)] lg:w-60 lg:shrink-0 lg:grid-cols-1 lg:content-start lg:gap-1 lg:border-r lg:border-t-0 lg:border-[#292929] lg:bg-[#171717] lg:px-3 lg:py-7 lg:shadow-none"
+      className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-[#e3dfd8] bg-white px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_-20px_#171717] lg:sticky lg:inset-auto lg:top-0 lg:h-[calc(100dvh-4.5rem)] lg:w-60 lg:shrink-0 lg:grid-cols-1 lg:content-start lg:gap-1 lg:border-r lg:border-t-0 lg:border-[#292929] lg:bg-[#171717] lg:px-3 lg:py-7 lg:shadow-none"
     >
       <p className="mb-2 hidden px-4 text-[10px] font-bold uppercase tracking-[.2em] text-[#99958e] lg:block">Điều hướng</p>
       {ADMIN_NAV.map(({ href, label }) => {
