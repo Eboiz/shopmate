@@ -6,8 +6,15 @@ import { adapters } from "./adapters";
 // ai: an AI reply, sent only while the conversation is in `ai` mode.
 // system: order updates (PB-12) and the "staff will reply" notice after a handoff,
 // sent in any mode.
-// staff: a staff reply (PB-13).
-export type Sender = { from: "ai" } | { from: "system" } | { from: "staff"; staffId: string };
+// staff: a staff reply (PB-13). clientMessageId is the inbox's id for one send
+// attempt: a retry with the same id stores no second message and is not delivered
+// again (messages.client_message_id is unique per conversation, PB-00).
+export type Sender =
+  | { from: "ai" }
+  | { from: "system" }
+  | { from: "staff"; staffId: string; clientMessageId?: string };
+
+const UNIQUE_VIOLATION = "23505";
 
 export type SendResult =
   | { ok: true; messageId: string }
@@ -51,6 +58,7 @@ export async function sendToConversation(
   if (bumpError) return { ok: false, messageId: null, error: bumpError.message };
   if (!bumped) return { ok: false, messageId: null, error: "not_in_ai_mode" };
 
+  const clientMessageId = sender.from === "staff" ? (sender.clientMessageId ?? null) : null;
   const { data: stored, error: insertError } = await db
     .from("messages")
     .insert({
@@ -60,9 +68,23 @@ export async function sendToConversation(
       staff_id: sender.from === "staff" ? sender.staffId : null,
       text: message.text,
       reply: message,
+      client_message_id: clientMessageId,
     })
     .select("id")
     .single();
+  if (insertError?.code === UNIQUE_VIOLATION && clientMessageId) {
+    // A retry of a send whose first attempt already stored the message. Whether
+    // that attempt reached the shopper is unknown, and sending again could show
+    // the text twice, so it is reported as stored but not confirmed.
+    const { data: earlier } = await db
+      .from("messages")
+      .select("id")
+      .eq("conversation_id", conversation.id)
+      .eq("shop_id", conversation.shop_id)
+      .eq("client_message_id", clientMessageId)
+      .maybeSingle();
+    return { ok: false, messageId: earlier?.id ?? null, error: "duplicate_client_message" };
+  }
   if (insertError) return { ok: false, messageId: null, error: insertError.message };
 
   const shopper = conversation.shoppers;
