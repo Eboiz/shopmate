@@ -54,7 +54,7 @@ test("ask about a product, get a reply, keep the chat after a reload, see a staf
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(productName);
   await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
 
-  const chat = page.getByRole("region", { name: "Trò chuyện với shop" });
+  const chat = page.getByRole("dialog", { name: "Trò chuyện với shop" });
   await expect(chat.getByText("Đang hỏi về:")).toContainText(productName);
   // The first GET can be slow on `next dev` (the route compiles on first use).
   await expect(chat.getByText("Xin chào! Mình giúp gì cho bạn?")).toBeVisible({ timeout: 20_000 });
@@ -63,7 +63,7 @@ test("ask about a product, get a reply, keep the chat after a reload, see a staf
   await expect(chat.getByRole("status")).toContainText("Shop đang trả lời");
   await expect(chat.getByText(question)).toBeVisible();
   // A reply from the shop (AI answer or the handoff notice), then the indicator goes.
-  await expect(chat.getByText("Shop", { exact: true }).first()).toBeVisible({ timeout: 60_000 });
+  await expect(chat.getByText(/^(Trợ lý AI|Shop)$/).first()).toBeVisible({ timeout: 60_000 });
   await expect(chat.getByRole("status")).toHaveCount(0, { timeout: 60_000 });
   expect(posted[0]).toMatchObject({ text: question, productId: expect.any(String), clientMessageId: expect.any(String) });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
@@ -75,7 +75,7 @@ test("ask about a product, get a reply, keep the chat after a reload, see a staf
 
   await page.reload();
   // focus + Enter: in `next dev` the dev-tools badge can sit over the button.
-  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await expect(chat.getByText(question)).toBeVisible();
 

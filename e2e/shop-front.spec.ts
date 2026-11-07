@@ -56,7 +56,7 @@ test("shop page and chat fit 375 px, send product context and restore history", 
   await expect(page).toHaveURL(`/s/may-boutique/p/${productId}`);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("Váy hoa");
   await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
-  const chat = page.getByRole("region", { name: "Trò chuyện với shop" });
+  const chat = page.getByRole("dialog", { name: "Trò chuyện với shop" });
   await expect(chat.getByText("Đang hỏi về:")).toContainText("Váy hoa");
   await chat.getByRole("textbox", { name: "Tin nhắn" }).fill("Váy này còn size M không?");
   await chat.getByRole("button", { name: "Gửi" }).click();
@@ -67,7 +67,7 @@ test("shop page and chat fit 375 px, send product context and restore history", 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
 
   await page.reload();
-  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("Váy này còn size M không?")).toBeVisible();
 });
@@ -87,7 +87,7 @@ test("open chat shows a staff reply from the next server poll", async ({ page })
   });
 
   await page.goto("/s/may-boutique");
-  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("Shop đã kiểm tra tồn kho cho bạn.")).toBeVisible({ timeout: 7000 });
 });
@@ -101,7 +101,7 @@ test("a send error remains visible while history polling succeeds", async ({ pag
   );
 
   await page.goto("/s/may-boutique");
-  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Tư vấn giúp mình");
   await page.getByRole("button", { name: "Gửi" }).click();
@@ -123,7 +123,7 @@ test("keeps the reply indicator until the answer arrives", async ({ page }) => {
   });
 
   await page.goto("/s/may-boutique");
-  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Còn hàng không?");
   await page.getByRole("button", { name: "Gửi" }).click();
@@ -150,7 +150,7 @@ test("reuses message id on retry and shows a Vietnamese network error", async ({
   });
 
   await page.goto("/s/may-boutique");
-  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Tư vấn giúp mình");
   await page.getByRole("button", { name: "Gửi" }).click();
@@ -186,7 +186,7 @@ test("a delayed old poll cannot erase a newer answer", async ({ page }) => {
   });
 
   await page.goto("/s/may-boutique");
-  await page.getByRole("button", { name: "Mở trò chuyện với shop" }).focus();
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await pollStarted;
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Còn hàng không?");
