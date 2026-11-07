@@ -24,6 +24,7 @@ import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
 import { EngineError, type Db, type ToolHandlers } from "./types";
@@ -203,6 +204,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let handoff: HandoffReason | null = null;
   let truncated = false;
   let sizeStatus: SizeStatus = null;
+  // PB-06 post-check: the last ok recommend_size result of this turn, the product
+  // it was for, and whether the model already got its one retry.
+  let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
+  let sizeRetried = false;
+  let sizeFallback = false;
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
   const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
@@ -247,7 +253,24 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
     if (res.stop_reason !== "tool_use") {
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
-      modelReply = parseModelReply(text).reply;
+      const parsed = parseModelReply(text);
+      // sizeAdvice is set inside a callback; TS can't see it.
+      const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice;
+      const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
+      // A matching question gets a reply built from get_pairings, not this text.
+      const sizeOk = !advice || !parsed.ok || isMatchingQuestion(input.history)
+        || replyMatchesSize(parsed.reply.text, advice, otherSizes());
+      if (!sizeOk && !sizeRetried) {
+        // Ask once more, with the tool's size spelled out.
+        sizeRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: sizeCorrection(advice!) },
+        );
+        continue;
+      }
+      sizeFallback = !sizeOk;
+      modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
       break;
     }
@@ -280,7 +303,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       if (run.log) logs.push(run.log);
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
-      if (u.name === "recommend_size" && !run.isError) sizeStatus = sizeStatusOf(run.content);
+      if (u.name === "recommend_size" && !run.isError) {
+        sizeStatus = sizeStatusOf(run.content);
+        const out = run.log?.output as { status?: string } | undefined;
+        const productId = (run.log?.input as { productId?: string } | undefined)?.productId;
+        if (out?.status === "ok" && productId) sizeAdvice = { advice: out as SizeAdvice, productId };
+      }
       if (u.name === "recommend_size" && !run.isError && !knownSize) {
         const size = (run.log?.output as { status?: string; size?: string } | undefined);
         if (size?.status === "ok") knownSize = size.size ?? null;
@@ -319,6 +347,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     && answersAiMessage(input.history) && searchMissed(logs);
   if (productMissedTwice) handoff = "misunderstood_twice";
 
+  // PB-06 AC4: measurements outside the chart, or a product with no chart, always
+  // end in a handoff, even when the model answered instead of calling
+  // handoff_to_staff. (sizeStatus is set inside a callback; TS can't see it.)
+  const finalSizeStatus = sizeStatus as SizeStatus;
+  const sizeHandoff = mode === "customer" && !handoff && finalSizeStatus !== null;
+  if (sizeHandoff) handoff = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
+
   // A matching question must not depend on the model remembering the tool. If
   // it forgot, query the product the shopper is viewing on the server. Without
   // a product, ask which item they mean instead of showing invented matches.
@@ -342,13 +377,22 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
-    if (handoff === "too_many_tool_calls" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
+    if (handoff === "too_many_tool_calls" || productMissedTwice || sizeHandoff) await deps.store.setNeedsHuman(ctx);
     const text = productMissedTwice ? PRODUCT_NOT_FOUND_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
     reply = { text, products: [], quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
     reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+  } else if (sizeFallback && sizeAdvice) {
+    // The model named a size the size function didn't return, twice: the reply
+    // is written from the tool result, with the product's card from the database.
+    const { advice, productId } = sizeAdvice as { advice: SizeAdvice; productId: string };
+    reply = {
+      text: sizeFallbackText(advice),
+      products: await deps.store.productCards(ctx.shopId, [productId]),
+      quickReplies: [],
+    };
   } else if (pairingState.called) {
     const cards = pairingState.items.length === 0
       ? []

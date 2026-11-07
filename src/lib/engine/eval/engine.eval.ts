@@ -15,10 +15,11 @@ import { assertLocalDb, FX, seedTwoShops } from "../test/two-shops";
 import type { Db } from "../types";
 import { evalCases } from "./cases";
 import { pb05EvalCases } from "./cases-pb05";
+import { pb06Cases } from "./cases-pb06";
 import { aggregate, scoreRun, type ActualCall, type RunScore } from "./score";
 
 const RUNS = Number(process.env.EVAL_RUNS ?? 3);
-const allCases = [...evalCases, ...pb05EvalCases];
+const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases];
 const cases = process.env.EVAL_CASE ? allCases.filter((c) => c.id === process.env.EVAL_CASE) : allCases;
 
 type Run = { score: RunScore; latencyMs: number; inputTokens: number; outputTokens: number; toolCalls: number };

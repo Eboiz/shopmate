@@ -22,7 +22,7 @@ describe("prompt", () => {
 
   it("customer prompt has the four handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v0.4");
+    expect(PROMPT_VERSION).toBe("v0.5");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
   });
@@ -44,6 +44,7 @@ describe("prompt", () => {
       "58 cân → 58",
       "sizeByHeight khác sizeByWeight", // say why the larger size
       "thiếu số nào thì hỏi đúng số đó",
+      "phải nêu đúng `size` của recommend_size", // PB-06 size post-check
     ]) {
       expect(customer).toContain(phrase);
     }
