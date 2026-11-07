@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-type IconName = "grid" | "chat" | "box" | "hanger" | "spark" | "arrow" | "search" | "send" | "close" | "refresh" | "login" | "logout" | "menu";
+type IconName = "grid" | "chat" | "box" | "hanger" | "spark" | "arrow" | "search" | "send" | "close" | "refresh" | "login" | "logout" | "menu" | "up" | "store";
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }) {
   const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -19,6 +19,8 @@ export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconN
       {name === "login" && <><path d="M15 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 8l-4 4 4 4M16 12H6" /></>}
       {name === "logout" && <><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 8l4 4-4 4M8 12h10" /></>}
       {name === "menu" && <path d="M4 6h16M4 12h16M4 18h16" />}
+      {name === "up" && <path d="M12 19V5M6 11l6-6 6 6" />}
+      {name === "store" && <path d="M4 10v10h16V10M3 10l2-6h14l2 6M3 10h18M9 20v-6h6v6" />}
     </svg>
   );
 }

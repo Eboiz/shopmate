@@ -12,11 +12,10 @@ type Props = {
   shopName: string;
   product: ShopProduct;
   shopHref: string;
-  loginHref: string;
   onAsk: (product: ShopProduct, initialMessage?: string) => void;
 };
 
-export function ProductDetailView({ shopName, product, shopHref, loginHref, onAsk }: Props) {
+export function ProductDetailView({ shopName, product, shopHref, onAsk }: Props) {
   const availableVariants = product.variants?.filter((variant) => variant.stock > 0);
   const colors = availableVariants
     ? [...new Set(availableVariants.map((variant) => variant.color))]
@@ -52,19 +51,18 @@ export function ProductDetailView({ shopName, product, shopHref, loginHref, onAs
         <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-10">
           <Link href={shopHref} className="flex min-w-0 items-center gap-3">
             <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center bg-[#171717] text-xl font-black text-white">S</span>
-            <span className="truncate text-lg font-black uppercase tracking-[-.05em] sm:text-xl">{shopName}<span className="text-[#e9573f]">.</span></span>
+            <span className="truncate text-lg font-black uppercase tracking-[-.04em] sm:text-xl">{shopName}<span className="text-[#e9573f]">.</span></span>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            <Link href={loginHref} aria-label="Đăng nhập quản lý" title="Đăng nhập quản lý" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#d5d0c8] px-3 text-xs font-bold hover:border-[#171717]"><Icon name="login" className="size-4" /><span className="hidden lg:inline">Đăng nhập</span></Link>
-            <button type="button" onClick={() => onAsk(product)} aria-label="Mở trò chuyện với shop" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[#171717] px-3 text-xs font-bold transition-colors hover:bg-[#171717] hover:text-white"><Icon name="chat" className="size-4" /><span className="hidden sm:inline">Hỏi shop</span></button>
+            <button type="button" onClick={() => onAsk(product)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#171717] px-4 text-sm font-bold transition-colors hover:bg-[#171717] hover:text-white"><Icon name="chat" className="size-4" />Chat</button>
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1400px] px-4 pb-20 pt-6 sm:px-6 lg:px-10">
         <nav aria-label="Đường dẫn trang" className="mb-6 flex flex-wrap items-center gap-2 text-xs text-[#706d67]">
-          <Link href={shopHref} className="hover:text-[#e9573f]">Cửa hàng</Link><span>/</span>
-          <Link href={`${shopHref}#san-pham`} className="hover:text-[#e9573f]">Sản phẩm</Link><span>/</span>
+          <Link href={shopHref} className="hover:text-[#c2412b]">Cửa hàng</Link><span aria-hidden="true">/</span>
+          <Link href={`${shopHref}#san-pham`} className="hover:text-[#c2412b]">Sản phẩm</Link><span aria-hidden="true">/</span>
           <span aria-current="page" className="font-semibold text-[#171717]">{product.name}</span>
         </nav>
 
@@ -91,21 +89,20 @@ export function ProductDetailView({ shopName, product, shopHref, loginHref, onAs
               <p className="mt-1 text-3xl font-bold tabular-nums text-[#e9573f] sm:text-4xl">{formatPrice(product.price)}</p>
             </div>
 
-            {colors.length > 0 && <fieldset className="mt-7"><legend className="mb-3 text-sm font-semibold">Màu sắc <span className="font-normal text-[#706d67]">· {color}</span></legend><div className="flex flex-wrap gap-2">{colors.map((item) => <button key={item} type="button" aria-pressed={color === item} onClick={() => changeColor(item)} className={`min-h-11 rounded-lg border px-4 text-sm font-medium transition-colors ${color === item ? "border-[#e9573f] bg-[#fff0eb] text-[#bf442e]" : "border-[#d5d0c8] hover:border-[#171717]"}`}>{item}</button>)}</div></fieldset>}
-            <fieldset className="mt-6"><legend className="mb-3 text-sm font-semibold">Kích thước</legend>{sizes.length > 0 ? <div className="flex flex-wrap gap-2">{sizes.map((item) => <button key={item} type="button" aria-pressed={size === item} onClick={() => { setSize(item); setQuantity(1); }} className={`min-h-11 min-w-12 rounded-lg border px-3 text-sm font-semibold transition-colors ${size === item ? "border-[#e9573f] bg-[#fff0eb] text-[#bf442e]" : "border-[#d5d0c8] hover:border-[#171717]"}`}>{item}</button>)}</div> : <p className="text-sm text-[#706d67]">Chưa có size còn hàng.</p>}</fieldset>
+            {colors.length > 0 && <fieldset className="mt-7"><legend className="mb-3 text-sm font-semibold">Màu sắc <span className="font-normal text-[#706d67]">· {color}</span></legend><div className="flex flex-wrap gap-2">{colors.map((item) => <button key={item} type="button" aria-pressed={color === item} onClick={() => changeColor(item)} className={`min-h-11 rounded-lg border px-4 text-sm font-medium transition-colors ${color === item ? "border-[#e9573f] bg-[#fff0eb] text-[#bf442e]" : "border-[#8f8a82] hover:border-[#171717]"}`}>{item}</button>)}</div></fieldset>}
+            <fieldset className="mt-6"><legend className="mb-3 text-sm font-semibold">Size</legend>{sizes.length > 0 ? <div className="flex flex-wrap gap-2">{sizes.map((item) => <button key={item} type="button" aria-pressed={size === item} onClick={() => { setSize(item); setQuantity(1); }} className={`min-h-11 min-w-12 rounded-lg border px-3 text-sm font-semibold transition-colors ${size === item ? "border-[#e9573f] bg-[#fff0eb] text-[#bf442e]" : "border-[#8f8a82] hover:border-[#171717]"}`}>{item}</button>)}</div> :<p className="text-sm text-[#706d67]">Chưa có size còn hàng.</p>}</fieldset>
 
-            {canOrder && <div className="mt-6 flex items-center gap-4"><span className="text-sm font-semibold">Số lượng</span><div className="flex items-center overflow-hidden rounded-lg border border-[#d5d0c8]"><button type="button" aria-label="Giảm số lượng" disabled={quantity <= 1} onClick={() => setQuantity((value) => Math.max(1, value - 1))} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">−</button><output className="min-w-10 text-center text-sm font-semibold tabular-nums">{quantity}</output><button type="button" aria-label="Tăng số lượng" disabled={quantity >= maxQuantity} onClick={() => setQuantity((value) => Math.min(maxQuantity, value + 1))} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">+</button></div>{selectedVariant && <span className="text-xs text-[#706d67]">Còn {selectedVariant.stock} sản phẩm</span>}</div>}
+            {canOrder && <div className="mt-6 flex items-center gap-4"><span className="text-sm font-semibold">Số lượng</span><div className="flex items-center overflow-hidden rounded-lg border border-[#8f8a82]"><button type="button" aria-label="Giảm số lượng" disabled={quantity <= 1} onClick={() => setQuantity((value) => Math.max(1, value - 1))} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">−</button><output className="min-w-10 text-center text-sm font-semibold tabular-nums">{quantity}</output><button type="button" aria-label="Tăng số lượng" disabled={quantity >= maxQuantity} onClick={() => setQuantity((value) => Math.min(maxQuantity, value + 1))} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">+</button></div>{selectedVariant && <span className="text-xs text-[#706d67]">Còn {selectedVariant.stock} sản phẩm</span>}</div>}
 
             <div className="mt-8 grid gap-3 sm:grid-cols-2">
               <button type="button" onClick={() => onAsk(product)} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-[#171717] px-5 text-sm font-semibold transition-colors hover:bg-[#f5f3ef]"><Icon name="chat" className="size-5" /> Hỏi shop</button>
-              <button type="button" onClick={requestOrder} disabled={!canOrder} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[#e9573f] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#d4442e] disabled:cursor-not-allowed disabled:opacity-50">Đặt qua chat <Icon name="arrow" className="size-4" /></button>
+              <button type="button" onClick={requestOrder} disabled={!canOrder} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#a83826] disabled:cursor-not-allowed disabled:opacity-50">Đặt qua chat <Icon name="arrow" className="size-4" /></button>
             </div>
             <p className="mt-3 text-xs leading-5 text-[#706d67]">Yêu cầu đặt hàng được soạn sẵn trong chat; shop sẽ xác nhận trước khi tạo đơn.</p>
           </div>
         </div>
 
         <section className="mt-6 rounded-xl border border-[#e3dfd8] bg-white p-5 sm:p-8">
-          <p className="ui-eyebrow mb-2">Thông tin từ cửa hàng</p>
           <h2 className="text-xl font-bold">Chi tiết sản phẩm</h2>
           <dl className="mt-5 grid gap-y-3 text-sm sm:grid-cols-[10rem_1fr]">
             <dt className="text-[#706d67]">Tên sản phẩm</dt><dd className="font-medium">{product.name}</dd>
