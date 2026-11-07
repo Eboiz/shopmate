@@ -1,6 +1,7 @@
 import "server-only";
 import type { Channel, HistoryMessage, Reply } from "@/contract";
 import { runEngine } from "@/lib/engine/run";
+import { replyIfRateLimited } from "@/lib/guard/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendToConversation } from "./send";
 
@@ -27,7 +28,7 @@ export async function receiveChannelMessage(
   account: ChannelAccountRef,
   incoming: IncomingMessage,
   onThinking?: () => Promise<void>,
-): Promise<"duplicate" | "stored" | "answered" | "handed_off"> {
+): Promise<"duplicate" | "stored" | "rate_limited" | "answered" | "handed_off"> {
   const db = createAdminClient();
   const shop_id = account.shopId;
   const must = <T>(result: { data: T; error: { message: string } | null }, what: string) => {
@@ -85,6 +86,12 @@ export async function receiveChannelMessage(
   must(bumped, "bump");
 
   if (conversation.mode !== "ai") return "stored";
+
+  // PB-17: more than 10 messages in a minute get a "please wait" reply and no AI
+  // turn. Counted after storing, so this message is included.
+  if (await replyIfRateLimited({ shopId: shop_id, conversationId: conversation.id })) {
+    return "rate_limited";
+  }
 
   // Only the turn that actually switches the mode tells the shopper: two messages
   // arriving together must not send the notice twice.
