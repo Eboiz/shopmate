@@ -1,5 +1,5 @@
 import { Suspense, type ReactNode } from "react";
-import { requireUser } from "@/lib/auth";
+import { findStaffProfile, requireUser } from "@/lib/auth";
 import { signOut } from "../login/actions";
 import { AdminNav } from "./admin-nav";
 
@@ -17,6 +17,7 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
 // proxy redirect alone is only an optimistic check.
 async function AdminGate({ children }: { children: ReactNode }) {
   const user = await requireUser();
+  const staff = await findStaffProfile();
 
   return (
     <>
@@ -29,8 +30,22 @@ async function AdminGate({ children }: { children: ReactNode }) {
           </button>
         </form>
       </header>
-      <main className="flex-1 px-4 py-6">{children}</main>
-      <AdminNav />
+      <main className="flex-1 px-4 py-6">{staff ? children : <NoShopNotice />}</main>
+      {staff && <AdminNav />}
     </>
+  );
+}
+
+// A signed-in account with no profiles row belongs to no shop: every admin page
+// would fail to load its data, so say what is wrong instead.
+function NoShopNotice() {
+  return (
+    <section className="mx-auto max-w-md space-y-2 rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-900">
+      <h1 className="font-semibold">Tài khoản chưa được gắn với shop nào</h1>
+      <p className="text-sm">
+        Bạn đã đăng nhập, nhưng tài khoản này chưa thuộc shop nào nên chưa xem được hộp thư, đơn hàng và sản phẩm.
+        Hãy nhờ chủ shop thêm tài khoản của bạn, hoặc đăng xuất rồi đăng nhập bằng tài khoản của shop.
+      </p>
+    </section>
   );
 }
