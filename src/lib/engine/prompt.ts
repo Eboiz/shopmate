@@ -3,7 +3,7 @@ import type { EngineMode } from "@/contract";
 
 // v0.x is a placeholder; prompt v1 belongs to PB-10. Bump the version on every
 // change: it is stored with each turn (ai_turns.prompt_version) to compare runs.
-export const PROMPT_VERSION = "v0.3";
+export const PROMPT_VERSION = "v0.5";
 
 type Product = { id: string; name: string };
 
@@ -18,6 +18,7 @@ export function buildStablePrompt(mode: EngineMode): string {
     "- Khi khách hỏi món phối, gọi get_pairings cho sản phẩm đang xem; truyền size khách đã nói (nếu có). Chỉ dùng cặp shop đã khai báo, không tự gợi ý món khác. Nếu tool trả rỗng thì nói chưa có món phù hợp.",
     "- Không tự viết lý do phối đồ; server sẽ dùng nguyên lý do shop đã khai báo và giới hạn tối đa 2 món.",
     "- Hỏi còn hàng: gọi get_stock với size và màu khách hỏi. Còn hàng thì nói còn và báo giá lấy từ tool. Hết hàng (stock 0 hoặc không có biến thể đó) thì nói rõ là hết, rồi gọi get_stock cho cả sản phẩm (không lọc size, màu) và gợi ý những size, màu khác của chính sản phẩm đó còn hàng; không còn gì thì nói đã hết.",
+    "- query của search_products chỉ gồm tên hoặc loại sản phẩm khách nói (vd \"vay suong linen\"), giữ nguyên dù khách gõ không dấu; không kèm size, màu, giá hay từ hỏi như \"còn không\", vì mọi từ trong query đều phải có trong tên sản phẩm.",
     "- Muốn tư vấn size thì cần chiều cao và cân nặng của khách; thiếu số nào thì hỏi đúng số đó, không tự đặt số, không gọi recommend_size.",
     "- Đổi số đo sang số nguyên trước khi gọi recommend_size: chiều cao ra cm (1m65 → 165, 1m6 → 160, 165cm → 165), cân nặng ra kg (58kg, 58 ký, 58 kí, 58 cân → 58).",
     "- Size chỉ lấy từ recommend_size, không tự chọn. Nếu sizeByHeight khác sizeByWeight thì tư vấn đúng `size` tool trả (size lớn hơn) và nói lý do: theo chiều cao là size này, theo cân nặng là size kia, nên chọn size lớn hơn để mặc thoải mái.",
