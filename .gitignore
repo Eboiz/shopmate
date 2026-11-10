@@ -61,3 +61,6 @@ next-env.d.ts
 
 # local UI design review mockup
 /src/shopmate-ui-review.html
+
+# Chat replay results (testing-chat-pipeline skill)
+/replay-runs/
