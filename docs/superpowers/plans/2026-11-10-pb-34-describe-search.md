@@ -24,7 +24,7 @@
 - Env: `EMBEDDER_URL`, `EMBEDDER_TOKEN` (shared with PB-30), `SEARCH_EMBEDDER_MOCK` (dev only; ignored when `NODE_ENV === "production"`). All in `.env.example`.
 - New migrations only; after a migration `pnpm db:reset && pnpm db:test && pnpm db:types`, commit the types.
 - Scope: only spec AC1–AC6. Anything else is a question for the developer, not code (memory: stick to PB scope).
-- PR body says `Refs Eboiz/Documents#<PB-34 issue>`, never `Closes`.
+- PR body says `Refs Eboiz/Documents#35`, never `Closes`.
 
 ## Review Focus
 

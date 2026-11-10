@@ -1,7 +1,7 @@
 # PB-34 Search the shop by description or photo — spec
 
-Source: developer request (10/11/2026). The GitHub story is created from section 1 of this file in
-`Eboiz/Documents`. Assumptions A1–A5 still need PO approval.
+Source: [Eboiz/Documents#35](https://github.com/Eboiz/Documents/issues/35), developer request (10/11/2026). The story there is section 1 of this file
+(issue opened 10/11/2026). Assumptions A1–A5 still need PO approval.
 
 PB-30 (`feat/pb-30-customer-photos`) already builds photo search for the AI assistant: the `embedder/`
 package (EmbeddingGemma 2 + Qdrant on Modal) with an offline flow that indexes each shop's catalog
