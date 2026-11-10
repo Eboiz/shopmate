@@ -1,0 +1,40 @@
+[project]
+name = "shopmate-embedder"
+version = "0.1.0"
+description = "EmbeddingGemma product embeddings and the Qdrant vector store for Shopmate (PB-30)."
+requires-python = ">=3.12,<3.13"
+# transformers/sentence-transformers floors are the lowest versions that know
+# google/embeddinggemma-2 and accept config_kwargs={"audio_config": None}.
+dependencies = [
+    "sentence-transformers>=6.2.0",
+    "transformers>=5.22.2",
+    "torch",
+    "pillow",
+    "qdrant-client",
+    "fastapi",
+    "httpx",
+    "modal",
+]
+
+[project.scripts]
+shopmate-index = "shopmate_embedder.index:main"
+shopmate-calibrate = "shopmate_embedder.calibrate:main"
+
+[dependency-groups]
+dev = ["pytest", "ruff"]
+
+# CPU-only torch keeps local dev and CI installs small; CUDA comes from Modal.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shopmate_embedder"]

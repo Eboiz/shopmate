@@ -52,3 +52,17 @@ jobs:
           } >> "$GITHUB_ENV"
       - run: pnpm db:test
       - run: pnpm test:int
+
+  # Python embedder tests (PB-30): formatting + in-memory Qdrant vectors.
+  # Tests never load the real model; CPU-only torch keeps the install small.
+  embedder:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: embedder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run pytest -q
