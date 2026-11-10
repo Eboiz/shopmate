@@ -38,3 +38,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["shopmate_embedder"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# marimo cells end on a bare expression to display the value.
+"molab_embedder.py" = ["B018"]
