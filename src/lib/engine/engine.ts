@@ -622,7 +622,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
           orderIssue = { code: "duplicate_order_call" };
           return { run: blockedOrderRun(u.input, "duplicate_order_call"), ms: now() - s0, startMs: s0 - t0 };
         }
-        createAttempted = true;
+        // A call the contract rejects writes nothing, so it doesn't count as the
+        // turn's one order write (preview 11/11: an invalid id blocked the right call).
+        createAttempted = tools.create_draft_order.input.safeParse(u.input).success;
         const candidate = u.input as { customerPhone?: unknown } | null;
         if (typeof candidate?.customerPhone === "string" && !/^0\d{9}$/.test(candidate.customerPhone)) {
           orderIssue = { code: "invalid_phone" };

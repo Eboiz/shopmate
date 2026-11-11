@@ -176,6 +176,21 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("COD");
     });
 
+    // PB-19 main flow on the preview, 11/11: the model first sent "san-pham-dang-xem"
+    // as the variant id; that call wrote nothing, yet the correct call after it was
+    // blocked as duplicate_order_call and no order was created.
+    it("still creates the draft when an earlier call in the turn was invalid and wrote nothing", async () => {
+      const invalid = { ...draftOrder, items: [{ variantId: "san-pham-dang-xem", quantity: 1 }] };
+      const { handlers, run } = setup(
+        [toolCalls(toolUse("create_draft_order", invalid)), toolCalls(toolUse("create_draft_order", draftOrder))],
+        { store: orderStore() },
+      );
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      const result = await run(customerInput({ history: orderHistory }));
+      expect(handlers.create_draft_order).toHaveBeenCalledTimes(1);
+      expect(result.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
+    });
+
     it("blocks a write before confirmation or when the customer changes the items", async () => {
       const before = setup([toolCalls(toolUse("create_draft_order", draftOrder)), reply()], { store: orderStore() });
       const first = await before.run(customerInput({ history: [orderHistory[0]] }));
