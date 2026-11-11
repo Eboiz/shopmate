@@ -75,9 +75,10 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
           onClick={() => setMenuOpen((value) => !value)}
           aria-expanded={menuOpen}
           aria-controls="shop-menu"
-          className="-ml-2 inline-flex min-h-11 items-center px-2 text-xs font-extrabold uppercase tracking-[.12em] lg:hidden"
+          aria-label={menuOpen ? "Đóng menu" : "Mở menu"}
+          className="-ml-2 inline-grid size-11 place-items-center lg:hidden"
         >
-          {menuOpen ? "Đóng" : "Menu"}
+          <Icon name={menuOpen ? "close" : "menu"} className={menuOpen ? "size-5" : "size-6"} />
         </button>
         <a href="#dau-trang" className="flex min-w-0 items-center gap-3">
           <Image src="/images/shop-avatar.jpg" alt="" width={36} height={36} className="size-9 shrink-0 object-cover" />

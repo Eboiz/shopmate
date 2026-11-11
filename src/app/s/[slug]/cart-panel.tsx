@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useRef } from "react";
+import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
 import { displayColor } from "@/lib/shop/catalog-view";
 import { cartSubtotal, type CartItem } from "./cart";
@@ -32,7 +33,7 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onSend,
       <section role="dialog" aria-modal="true" aria-labelledby="gio-dat-title" className="ui-chat-enter relative flex h-dvh w-full flex-col bg-white shadow-2xl sm:w-[420px]">
         <header className="flex items-center justify-between gap-3 border-b border-[#e3dfd8] px-5 py-4">
           <h2 id="gio-dat-title" className="text-lg font-bold">Giỏ đặt hàng</h2>
-          <button ref={closeRef} type="button" onClick={onClose} className="min-h-11 rounded-lg border border-[#8f8a82] px-3 text-sm font-semibold hover:border-[#171717]">Đóng</button>
+          <button ref={closeRef} type="button" onClick={onClose} aria-label="Đóng giỏ" className="-mr-2 inline-grid size-11 place-items-center rounded-lg hover:bg-[#f5f3ef]"><Icon name="close" className="size-5" /></button>
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5">

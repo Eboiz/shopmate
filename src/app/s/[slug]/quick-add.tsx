@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
+import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
 import { compareSizes } from "@/lib/size-order";
 import { displayColor } from "@/lib/shop/catalog-view";
@@ -80,7 +81,7 @@ export function QuickAdd({ product, onAdd, onClose }: Props) {
             <h2 id="quick-add-title" className="font-semibold leading-snug">{product.name}</h2>
             <p className="mt-1 font-bold tabular-nums text-[#c2412b]">{formatPrice(product.price)}</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Đóng" className="-mr-2 -mt-2 inline-grid size-11 shrink-0 place-items-center rounded-lg text-xl hover:bg-[#f5f3ef]">×</button>
+          <button type="button" onClick={onClose} aria-label="Đóng" className="-mr-2 -mt-2 inline-grid size-11 shrink-0 place-items-center rounded-lg hover:bg-[#f5f3ef]"><Icon name="close" className="size-4" /></button>
         </div>
 
         {colors.length > 0 && (

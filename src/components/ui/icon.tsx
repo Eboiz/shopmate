@@ -14,11 +14,11 @@ export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconN
       {name === "arrow" && <><path d="M5 19 19 5M8 5h11v11" /></>}
       {name === "search" && <><circle cx="10.8" cy="10.8" r="6.8" /><path d="m16 16 5 5" /></>}
       {name === "send" && <><path d="m21 3-9 18-2.5-7.5L2 11l19-8Z" /><path d="M9.5 13.5 21 3" /></>}
-      {name === "close" && <path d="M5 5 19 19M19 5 5 19" />}
+      {name === "close" && <path strokeWidth={3} d="M5.64 5.64 18.36 18.36M18.36 5.64 5.64 18.36" />}
       {name === "refresh" && <><path d="M20 11a8 8 0 1 0-2 6M20 4v7h-7" /></>}
       {name === "login" && <><path d="M15 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 8l-4 4 4 4M16 12H6" /></>}
       {name === "logout" && <><path d="M9 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4M14 8l4 4-4 4M8 12h10" /></>}
-      {name === "menu" && <path d="M4 6h16M4 12h16M4 18h16" />}
+      {name === "menu" && <path strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />}
       {name === "up" && <path d="M12 19V5M6 11l6-6 6 6" />}
       {name === "cart" && <path strokeWidth={2} d="M6.3 5H21l-2 7H7.38M20 16H8L6 3H3m6 17a1 1 0 1 1-2 0 1 1 0 0 1 2 0Zm11 0a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z" />}
       {name === "store" && <path d="M4 10v10h16V10M3 10l2-6h14l2 6M3 10h18M9 20v-6h6v6" />}

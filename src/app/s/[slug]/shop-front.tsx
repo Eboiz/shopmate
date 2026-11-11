@@ -571,7 +571,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           <header className="flex items-center gap-3 bg-[#171717] px-4 py-4 text-white">
             <Image src="/images/shop-avatar.jpg" alt="" width={40} height={40} className="size-10 shrink-0 object-cover" />
             <div className="min-w-0 flex-1"><h2 className="truncate font-bold">{shopName}</h2><p className="text-xs text-[#bbb8b2]">Trợ lý AI trả lời ngay · nhân viên hỗ trợ khi cần</p></div>
-            <button type="button" className="flex min-h-11 shrink-0 items-center justify-center border border-[#ffffff66] px-3 text-xs font-extrabold uppercase tracking-[.1em] transition-colors hover:bg-white hover:text-[#171717]" onClick={() => setOpen(false)} aria-label="Đóng trò chuyện">Đóng</button>
+            <button type="button" className="inline-grid size-11 shrink-0 place-items-center border border-[#ffffff66] transition-colors hover:bg-white hover:text-[#171717]" onClick={() => setOpen(false)} aria-label="Đóng trò chuyện"><Icon name="close" className="size-4" /></button>
           </header>
 
           {selected && (
