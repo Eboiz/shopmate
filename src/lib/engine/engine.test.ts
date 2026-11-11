@@ -23,6 +23,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { POLICY_HAS_TEXT_ERROR } from "./handoff-guard";
 import { NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
@@ -1014,6 +1015,28 @@ describe("runEngine", () => {
       expect(result.handoffReason).toBeNull();
       await result.turnLogged;
       expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false });
+    });
+
+    it("English word triggers one rewrite (F6)", async () => {
+      const { model, store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 350k, stock còn ạ", [PRODUCT]),
+        reply("Dạ váy giá 350k, vẫn còn hàng ạ", [PRODUCT]),
+      ]);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(model.calls).toHaveLength(3);
+      expect(model.calls[2].messages.at(-1)).toEqual({ role: "user", content: VIETNAMESE_RETRY_NOTE });
+      expect(result.output.reply.text).toBe("Dạ váy giá 350k, vẫn còn hàng ạ");
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, vietnamese: { retried: true } });
+    });
+
+    it("an English word left after the rewrite is sent as is (one rewrite only)", async () => {
+      const { model, run } = setup([reply("Dạ size M available ạ"), reply("Dạ size M available nha")]);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(model.calls).toHaveLength(2);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe("Dạ size M available nha");
     });
 
     it("staff_draft replies are not checked", async () => {

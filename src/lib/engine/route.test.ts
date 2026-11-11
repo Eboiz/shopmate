@@ -85,7 +85,7 @@ describe("routeTurn", () => {
     expect(runTool).toHaveBeenCalledWith("get_stock", { productId: VAY, size: "M", color: "Be" });
     expect(out).toMatchObject({
       kind: "write",
-      facts: { available: true, price: 389000, inStock: [{ size: "M", color: "Be", stock: 7 }] },
+      facts: { conHang: true, price: 389000, bienTheConHang: [{ size: "M", color: "Be", tonKho: 7 }] },
       productIds: [VAY],
     });
   });
@@ -99,7 +99,7 @@ describe("routeTurn", () => {
     });
     const out = await run({ history: said("màu be size M còn không") });
     expect(runTool.mock.calls.map((c) => c[1])).toEqual([{ productId: VAY, size: "M", color: "Be" }, { productId: VAY }]);
-    expect(out).toMatchObject({ kind: "write", facts: { available: false, otherOptionsInStock: [{ size: "L", color: "Trắng", stock: 3 }] } });
+    expect(out).toMatchObject({ kind: "write", facts: { conHang: false, bienTheKhacConHang: [{ size: "L", color: "Trắng", tonKho: 3 }] } });
   });
 
   it("uses the product Jev picked from the catalog over the one on screen", async () => {

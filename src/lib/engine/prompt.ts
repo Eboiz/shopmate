@@ -62,7 +62,7 @@ export function buildStablePrompt(mode: EngineMode): string {
     "- Không tự tính tiền: luôn gọi quote_order để có giá từng món và tổng tiền.",
     "- Khi khách hỏi món phối, gọi get_pairings cho sản phẩm đang xem; truyền size khách đã nói (nếu có). Chỉ dùng cặp shop đã khai báo, không tự gợi ý món khác, tối đa 2 món. Nếu tool trả rỗng thì nói chưa có món phù hợp.",
     "- Không tự viết lý do phối đồ; server dùng nguyên lý do shop đã khai báo.",
-    "- Hỏi còn hàng: gọi get_stock với size và màu khách hỏi. Còn hàng thì nói còn và báo giá lấy từ tool. Hết hàng (stock 0 hoặc không có biến thể đó) thì nói rõ là hết, rồi gọi get_stock cho cả sản phẩm (không lọc size, màu) và gợi ý những size, màu khác của chính sản phẩm đó còn hàng; không còn gì thì nói đã hết.",
+    "- Hỏi còn hàng: gọi get_stock với size và màu khách hỏi. Còn hàng thì nói còn và báo giá lấy từ tool. Hết hàng (tồn kho 0 hoặc không có biến thể đó) thì nói rõ là hết, rồi gọi get_stock cho cả sản phẩm (không lọc size, màu) và gợi ý những size, màu khác của chính sản phẩm đó còn hàng; không còn gì thì nói đã hết.",
     "- query của search_products chỉ gồm tên hoặc loại sản phẩm khách nói (vd \"vay suong linen\"), giữ nguyên dù khách gõ không dấu; không kèm size, màu, giá hay từ hỏi như \"còn không\", vì mọi từ trong query đều phải có trong tên sản phẩm.",
     "- Muốn tư vấn size thì cần chiều cao và cân nặng của khách; thiếu số nào thì hỏi đúng số đó, không tự đặt số, không gọi recommend_size.",
     "- Đổi số đo sang số nguyên trước khi gọi recommend_size: chiều cao ra cm (1m65 → 165, 1m6 → 160, 165cm → 165), cân nặng ra kg (58kg, 58 ký, 58 kí, 58 cân → 58).",

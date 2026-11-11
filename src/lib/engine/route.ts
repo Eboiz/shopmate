@@ -98,7 +98,7 @@ function resolveProduct(input: RouteInput): CatalogItem | null {
 
 type Variant = ToolOutput<"get_stock">["variants"][number];
 const inStock = (variants: Variant[]) =>
-  variants.filter((v) => v.stock > 0).map((v) => ({ size: v.size, color: v.color, stock: v.stock }));
+  variants.filter((v) => v.stock > 0).map((v) => ({ size: v.size, color: v.color, tonKho: v.stock }));
 
 async function handoff(input: RouteInput, reason: HandoffReason, sizeStatus: SizeStatus = null): Promise<RouteOutcome> {
   const r = await input.runTool("handoff_to_staff", { reason });
@@ -237,21 +237,21 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
     const others = all.ok ? inStock((all.output as ToolOutput<"get_stock">).variants) : [];
     return {
       kind: "write",
-      facts: { ...base, available: false, otherOptionsInStock: others },
+      facts: { ...base, conHang: false, bienTheKhacConHang: others },
       task: others.length
-        ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý các size, màu khác của chính sản phẩm này còn hàng (otherOptionsInStock) kèm giá."
+        ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý các size, màu khác của chính sản phẩm này còn hàng (bienTheKhacConHang) kèm giá."
         : "Nói rõ sản phẩm này đã hết hàng.",
       productIds: others.length ? [product.id] : [],
     };
   }
   return {
     kind: "write",
-    facts: { ...base, available: matching.length > 0, inStock: matching },
+    facts: { ...base, conHang: matching.length > 0, bienTheConHang: matching },
     task:
       size || color
         ? "Nói còn hàng biến thể bạn hỏi (size/màu trong asked), số lượng còn và giá."
         : matching.length
-          ? "Báo các size và màu còn hàng (inStock) và giá; hỏi bạn muốn size, màu nào."
+          ? "Báo các size và màu còn hàng (bienTheConHang) và giá; hỏi bạn muốn size, màu nào."
           : "Nói rõ sản phẩm này đã hết hàng.",
     productIds: matching.length ? [product.id] : [],
   };

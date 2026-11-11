@@ -26,6 +26,7 @@ import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { findUncheckedNumbers, NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import type { PostcheckLog } from "./postcheck-log";
+import { findEnglish, VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
@@ -280,6 +281,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let numberCheck: PostcheckLog["numberCheck"];
   let numberBlocked = false;
   const shopperText = shopperTurnText(input.history);
+  // PB-04 (F6): an English stock/size word gets one rewrite, then the reply is sent.
+  let vietnamese: PostcheckLog["vietnamese"];
+  const needsVietnameseRewrite = (text: string) => mode === "customer" && vietnamese === undefined && findEnglish(text) !== null;
   const uncheckedNumbers = (text: string) =>
     mode === "customer" ? findUncheckedNumbers(text, logs, shopperText).map((issue) => issue.raw) : [];
   const previousQuote = tc.previousQuote ?? null;
@@ -456,6 +460,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             reply = { text: NUMBER_HANDOFF_TEXT, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
             break;
           }
+          if (canRetry && needsVietnameseRewrite(parsed.reply.text)) {
+            vietnamese = { retried: true };
+            task = `${write.task}\n${VIETNAMESE_RETRY_NOTE}`;
+            continue;
+          }
           finalFirstTokenAt = firstTokenAt;
           // Cards are the server's choice (graded by PB-10), never the model's ids.
           reply = {
@@ -557,6 +566,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
           continue;
         }
         numberBlocked = unchecked.length > 0;
+      }
+      if (!discountBlocked && !numberBlocked && modelReply && !serverWrites && needsVietnameseRewrite(modelReply.text)) {
+        vietnamese = { retried: true };
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: VIETNAMESE_RETRY_NOTE },
+        );
+        continue;
       }
       break;
     }
@@ -847,7 +864,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         latency_ms: latencyMs,
         tool_calls: logs as NonNullable<Json>,
         handoff_reason: handoff,
-        postcheck: { productMiss, ...(numberCheck ? { numberCheck } : {}) } satisfies PostcheckLog,
+        postcheck: { productMiss, ...(numberCheck ? { numberCheck } : {}), ...(vietnamese ? { vietnamese } : {}) } satisfies PostcheckLog,
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         ttft_ms: metrics.ttftMs,

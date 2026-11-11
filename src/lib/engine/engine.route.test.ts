@@ -6,6 +6,7 @@ import { HANDOFF_TEXT, PRODUCT_NOT_FOUND_HANDOFF_TEXT, runEngine, type EngineDep
 import { FALLBACK_TEXT } from "./model-reply";
 import type { JevClient, JevResponse } from "./jev";
 import { NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import type { TurnMetrics } from "./metrics";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
@@ -189,6 +190,17 @@ describe("runEngine with Jev routing", () => {
     expect(result.output.reply.text).toContain("còn 7 cái");
     await result.turnLogged;
     expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
+  });
+
+  it("router write with an English word is rewritten once (F6)", async () => {
+    const { model, run } = setup(jevSaying({}), [
+      reply("Dạ size M màu be stock 7 ạ"),
+      reply("Dạ size M màu be còn 7 cái ạ"),
+    ]);
+    const result = await run(input("size M màu be còn không?"));
+    expect(model.calls).toHaveLength(2);
+    expect((model.calls[1].system as Array<{ text: string }>).map((b) => b.text).join("\n")).toContain(VIETNAMESE_RETRY_NOTE);
+    expect(result.output.reply.text).toBe("Dạ size M màu be còn 7 cái ạ");
   });
 
   it("router write with a wrong price twice sends the card and hands off (PB-07)", async () => {
