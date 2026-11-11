@@ -425,6 +425,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       shippingPolicy={policies?.shipping || undefined}
       onQuantity={cart.setQuantity}
       onRemove={cart.remove}
+      onRestore={cart.restore}
       onSend={sendCart}
       onClose={closeCart}
     />

@@ -8,6 +8,7 @@ import { compareSizes } from "@/lib/size-order";
 import { displayColor } from "@/lib/shop/catalog-view";
 import type { ShopProduct } from "@/lib/shop/types";
 import type { CartItem } from "./cart";
+import { useModal } from "./use-modal";
 
 // The colours and sizes a shopper can still buy, as the detail page offers them.
 export function productOptions(product: ShopProduct) {
@@ -47,6 +48,7 @@ export function QuickAdd({ product, onAdd, onClose }: Props) {
   const sizes = sizesFor(color);
   const [size, setSize] = useState(sizes.length === 1 ? sizes[0] : "");
   const panelRef = useRef<HTMLElement>(null);
+  useModal(panelRef);
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
