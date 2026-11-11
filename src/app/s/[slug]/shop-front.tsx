@@ -46,6 +46,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // The message being sent, shown straight away: POST only answers once the
+  // whole AI turn is done, which can take several seconds. knownIds are the
+  // messages already on screen, so the stored copy can replace this one.
+  const [outgoing, setOutgoing] = useState<{ text: string; knownIds: Set<string> } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -125,7 +129,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open, sending]);
+  }, [messages, open, sending, outgoing]);
 
   useEffect(() => {
     if (!open) return;
@@ -226,6 +230,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       : crypto.randomUUID();
     pendingSend.current = { text: message, productId, clientMessageId };
     previousReplies.current = new Set(messages.filter((item) => item.sender !== "shopper").map((item) => item.id));
+    setOutgoing({ text: message, knownIds: new Set(messages.map((item) => item.id)) });
+    setDraft("");
     let responseError = "";
     try {
       const response = await fetch(endpoint, {
@@ -245,14 +251,16 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         cartMessageRef.current = null;
         cart.clear();
       }
-      setDraft("");
       setAwaitingReply(true);
       await refresh();
     } catch {
       setAwaitingReply(false);
+      // Hand the text back so "Gửi" retries it with the same clientMessageId.
+      setDraft((current) => current || message);
       setSendError(responseError || "Chưa gửi được tin nhắn. Vui lòng kiểm tra kết nối và thử lại.");
       await refresh();
     } finally {
+      setOutgoing(null);
       setSending(false);
       // Tapping Gửi or a suggestion moved focus off the field; put it back so
       // the next message can be typed straight away.
@@ -287,6 +295,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   }, [open, loading, sending]);
 
   const lastReply = messages.at(-1)?.reply;
+  // Hidden once a poll brings back the stored copy of the same message.
+  const showOutgoing = outgoing !== null && !messages.some((message) =>
+    message.sender === "shopper" && message.text === outgoing.text && !outgoing.knownIds.has(message.id));
   if (catalogLoading) {
     return <main className="flex flex-1 flex-col">{detailProductId ? <ProductDetailSkeleton /> : <ShopFrontSkeleton />}</main>;
   }
@@ -360,6 +371,13 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     setSearch("");
     document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
   }
+  // The header search shows all its matches in the grid, across every group.
+  function searchProducts(query: string) {
+    setGroup("");
+    setSizeFilter("");
+    chooseSearch(query);
+    document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
+  }
   const inStock = products.filter((product) => product.sizesInStock.length > 0);
   const featured = (inStock.length >= 3 ? inStock : products).slice(0, 3);
   const sizeChart = products.find((product) => product.sizeChart && product.sizeChart.length > 0)?.sizeChart ?? null;
@@ -402,7 +420,17 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           </section>
         ) : <>
         <ShopMarquee items={marqueeItems} />
-        <ShopHeader shopName={shopName} groups={groupLinks} itemCount={itemCount} onOpenCart={openCart} onAsk={askText} onChooseGroup={showGroup} />
+        <ShopHeader
+          shopName={shopName}
+          groups={groupLinks}
+          itemCount={itemCount}
+          onOpenCart={openCart}
+          onAsk={askText}
+          onChooseGroup={showGroup}
+          products={products}
+          productHref={(productId) => `${shopHref}/p/${encodeURIComponent(productId)}`}
+          onSearch={searchProducts}
+        />
         <AskRow onAsk={askText} />
         <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
 
@@ -518,7 +546,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f3ef] px-4 py-5">
             {loading ? (
               <LoadingRegion label="Đang tải cuộc trò chuyện…"><ChatSkeleton /></LoadingRegion>
-            ) : messages.length === 0 ? (
+            ) : messages.length === 0 && !showOutgoing ? (
               <div className="space-y-5"><div className="ui-card overflow-hidden"><Image src="/images/chat-welcome.jpg" alt="" width={840} height={360} sizes="(max-width: 640px) 100vw, 420px" className="aspect-[7/3] w-full object-cover" /><div className="p-5"><h3 className="text-lg font-bold">Xin chào! Mình giúp gì cho bạn?</h3><p className="mt-2 text-sm leading-6 text-[#706d67]">Hỏi về sản phẩm, size, màu sắc hoặc một set đồ hợp với bạn.</p></div></div><div><p className="mb-3 text-xs font-semibold text-[#706d67]">Gợi ý câu hỏi</p><div className="flex flex-wrap gap-2">{["Shop còn size M không?", "Tư vấn size giúp mình", "Gợi ý phối đồ"].map((text) => <button key={text} type="button" onClick={() => void send(text)} disabled={sending || loading} className="inline-flex min-h-11 items-center rounded-full border border-[#8f8a82] bg-white px-4 text-sm font-semibold transition-colors hover:border-[#171717] disabled:opacity-50">{text}</button>)}</div></div></div>
             ) : (
               <div className="space-y-4">
@@ -547,6 +575,12 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                     )}
                   </div>
                 ))}
+                {showOutgoing && outgoing && (
+                  <div className="ml-8">
+                    <p className="mb-1 text-xs text-[#706d67]">{senderLabel.shopper} · Đang gửi…</p>
+                    <div className="break-words rounded-xl rounded-br-sm bg-[#171717] p-3 text-sm leading-6 text-white opacity-80">{outgoing.text}</div>
+                  </div>
+                )}
               </div>
             )}
             {(sending || awaitingReply) && (

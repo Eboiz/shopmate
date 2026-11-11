@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { formatPrice } from "@/lib/format";
 import type { ShopProduct, SizeChartRow } from "@/lib/shop/types";
+import { HeaderSearch } from "./header-search";
 
 // Presentational blocks of the shop front. Every block that can start a
 // conversation calls `onAsk`; the chat itself lives in ShopFront.
@@ -53,13 +54,17 @@ type HeaderProps = {
   onOpenCart: () => void;
   onAsk: (text: string) => void;
   onChooseGroup: (name: string) => void;
+  products: ShopProduct[];
+  productHref: (productId: string) => string;
+  onSearch: (query: string) => void;
 };
 
-export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onChooseGroup }: HeaderProps) {
+export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onChooseGroup, products, productHref, onSearch }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const navLink = "inline-flex min-h-[72px] items-center border-b-2 border-transparent px-3.5 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:border-[#171717]";
   const choose = (name: string) => { setMenuOpen(false); onChooseGroup(name); };
   const ask = (text: string) => { setMenuOpen(false); onAsk(text); };
+  const search = (query: string) => { setMenuOpen(false); onSearch(query); };
 
   return (
     <header className="sticky top-0 z-30 border-b border-[#e3dfd8] bg-white">
@@ -119,10 +124,7 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
-          <form onSubmit={(event) => { const text = readField(event, "q"); if (text) onAsk(text); }} className="hidden min-h-11 w-[280px] items-center gap-2 border-[1.5px] border-[#171717] bg-white pl-3 pr-1 focus-within:shadow-[0_0_0_3px_#c2412b40] lg:flex">
-            <input name="q" aria-label="Hỏi trợ lý AI" placeholder="Hỏi size, màu, phối đồ..." autoComplete="off" maxLength={1000} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#706d67]" />
-            <button type="submit" className="min-h-8 bg-[#e9573f] px-3 text-[11px] font-extrabold uppercase tracking-[.1em] text-[#171717] hover:bg-[#c2412b] hover:text-white">Hỏi</button>
-          </form>
+          <HeaderSearch products={products} productHref={productHref} onSearch={search} onAsk={ask} className="hidden w-[280px] lg:block" />
           <button type="button" onClick={onOpenCart} className="hidden min-h-11 items-center gap-2 px-2 text-xs font-extrabold uppercase tracking-[.1em] hover:text-[#c2412b] sm:inline-flex">
             Giỏ <span className="inline-grid h-5 min-w-5 place-items-center rounded-full bg-[#171717] px-1.5 text-[11px] tabular-nums text-white">{itemCount}</span>
           </button>
@@ -131,6 +133,7 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
 
       {menuOpen && (
         <nav id="shop-menu" aria-label="Danh mục" className="border-t border-[#e3dfd8] bg-white px-4 pb-4 sm:px-6 lg:hidden">
+          <HeaderSearch products={products} productHref={productHref} onSearch={search} onAsk={ask} className="mt-3" />
           <ul>
             {groups.map((group) => (
               <li key={group.name} className="border-b border-[#e3dfd8]">
