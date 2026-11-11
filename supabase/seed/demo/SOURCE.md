@@ -8,6 +8,8 @@ PO source for PB-28
 - PB-28's final target is 60 products and 20 pairings. The PO supplies and approves the additional rows. SP31-SP60 already present in the shared database are retained for comparison at the user's request and are reported as extra rows by the seed. They are outside this source export.
 - The catalog merged in PR #41 (SP01-SP60) is kept as a separate shop, Mây Boutique, in ../may-boutique/ with its own photos. Some of its names overlap protected test searches (SP59 "Áo măng tô qua gối"), so rows taken from it into this export need PO review.
 
+- 11/11/2026, PB-31 (Eboiz/Documents#32): the products.csv `mo_ta` column (2–4 sentences on material, fit, length, stretch, care and occasion) and two policy texts (`khuyen_mai`, and the delivery-days sentence in `giao_hang`) were drafted for PB-31 and differ from the workbook. They await the PO's row-by-row review. All other values, including the existing policy facts and numbers, are unchanged. The same drafts were applied to ../may-boutique/.
+
 To refresh the source, export the named sheets to UTF-8 CSV with the same headers and run pnpm db:seed --check. This checks question labels against the catalog using the production size and pairing logic. PB-10 evaluates the AI engine's replies.
 
 Images are illustrative CC0 stock photos. See images/CREDITS.md for sources and reuse details.

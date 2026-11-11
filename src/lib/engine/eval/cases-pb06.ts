@@ -24,6 +24,7 @@ export const pb06Cases: EvalCase[] = [
   {
     id: "size-demo-m",
     description: "PB-06 demo question: 158 cm / 50 kg on Váy suông linen is M.",
+    shouldHandOff: false,
     history: shopper("Mình cao 158cm nặng 50kg thì mặc váy này size gì?"),
     productId: V,
     expected: [sizeAt(158, 50), stockMaybe],
@@ -33,6 +34,7 @@ export const pb06Cases: EvalCase[] = [
   {
     id: "size-phrase-cao-1m6",
     description: "PB-06 AC2: 'cao 1m6 nặng 50' reaches recommend_size as 160 / 50 (M).",
+    shouldHandOff: false,
     history: shopper("cao 1m6 nặng 50 mặc size nào vừa shop"),
     productId: V,
     expected: [sizeAt(160, 50), stockMaybe],
@@ -41,6 +43,7 @@ export const pb06Cases: EvalCase[] = [
   {
     id: "size-phrase-weight-first",
     description: "PB-06 AC2: weight before height, '50kg 160cm' is 160 / 50 (M).",
+    shouldHandOff: false,
     history: shopper("50kg 160cm mặc size gì ạ"),
     productId: V,
     expected: [sizeAt(160, 50), stockMaybe],
@@ -49,6 +52,7 @@ export const pb06Cases: EvalCase[] = [
   {
     id: "size-phrase-1-65m",
     description: "PB-06 AC2: '1.65m' and '55kg' are 165 / 55 (L).",
+    shouldHandOff: false,
     history: shopper("Mình 1.65m 55kg thì lấy size nào?"),
     productId: V,
     expected: [sizeAt(165, 55), stockMaybe],
@@ -56,16 +60,18 @@ export const pb06Cases: EvalCase[] = [
   },
   {
     id: "size-out-of-range",
-    description: "PB-06 AC4: 180 cm / 75 kg is past the chart; say so and hand off.",
+    description: "PB-06 AC4 + PB-31: 180 cm / 75 kg is far past the chart; say so and offer staff (soft handoff).",
+    shouldHandOff: true,
     history: shopper("Mình cao 1m80 nặng 75kg mặc váy này size nào?"),
     productId: V,
     expected: [sizeAt(180, 75), { tool: "handoff_to_staff", args: { reason: "size_out_of_range" }, required: false }],
-    handoff: "size_out_of_range",
+    outcome: { decision: "offer", reason: "size_out_of_range" },
     reply: { label: "says outside the size chart", ok: (t) => fold(t).includes("ngoai bang size") },
   },
   {
     id: "size-no-chart",
-    description: "PB-06 AC4: the shirt has no size chart; say so and hand off.",
+    description: "PB-06 AC4 + PB-31: the shirt has no size chart; say so and offer staff (soft handoff).",
+    shouldHandOff: true,
     history: shopper("Mình cao 1m60 nặng 50kg mặc áo sơ mi này size gì?"),
     productId: AO,
     expected: [
@@ -73,7 +79,7 @@ export const pb06Cases: EvalCase[] = [
       { tool: "get_stock", args: { productId: AO }, required: false },
       { tool: "handoff_to_staff", args: { reason: "not_covered_by_data" }, required: false },
     ],
-    handoff: "not_covered_by_data",
+    outcome: { decision: "offer", reason: "not_covered_by_data" },
     reply: { label: "says no size chart", ok: (t) => fold(t).includes("chua co bang size") },
   },
 ];

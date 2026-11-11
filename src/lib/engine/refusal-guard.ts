@@ -58,7 +58,7 @@ export function echoedShopperAmounts(reply: string, history: HistoryMessage[], t
 // The shopper's latest message asks for a lower price, a discount, a gift, a
 // code or a free service, or names a price of their own ("giá 0đ", "để 200k").
 const OFFER_WORDS =
-  /\bgiam\b|\bbot\b|chiet khau|\bdiscount|\boff\b|\bsale|voucher|coupon|\bma (giam|khuyen mai|uu dai)|\bma [a-z]*\d|mien phi|\bfree\b|\btang (qua|kem|minh|em|toi)\b|qua tang|\bqua\s+(khong|ko|k)\b|khuyen mai|uu dai|\bdoi gia|\bsua gia|re hon/;
+  /\bgiam\b|\bbot\b|chiet khau|\bdiscount|\boff\b|\bsale|voucher|coupon|\bma (giam|khuyen mai|uu dai)|\bma [a-z]*\d|mien phi|\bfree\b|\bfree\W?ship|\btang (qua|kem|minh|em|toi)\b|qua tang|\bqua\s+(khong|ko|k)\b|khuyen mai|uu dai|\bdoi gia|\bsua gia|re hon/;
 
 export function shopperAsksForOffer(history: HistoryMessage[]): boolean {
   const last = history.findLast((m) => m.sender === "shopper")?.text ?? "";

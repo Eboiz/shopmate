@@ -183,6 +183,8 @@ OPENROUTER_API_KEY=... JEV_IN_TESTS=true EVAL_LABEL=jev-router pnpm engine:eval 
 
 Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared. Jev is off under vitest unless `JEV_IN_TESTS=true`.
 
+PB-31 groups (`src/lib/engine/eval/cases-pb31.ts`): `replay-*` holds the 18 shopper messages of the handoff table in Eboiz/Documents#32, each with its expected result (answer, offer of staff + reason, or handoff + reason); `near-*` holds typos, missing diacritics, other names (đầm/váy, quần bò/quần jean, somi, jacket) and measurements just outside the size chart. Run one group with `EVAL_GROUP=replay- pnpm engine:eval` (or `near-`). Every case is labeled `shouldHandOff`, and the summary has three more columns: **handoff rate** (runs handed to staff), **offer rate** (runs that asked "Bạn có muốn mình nhờ nhân viên…"), and **correct decision** (runs whose answer / offer / handoff matches the label). Report both the handoff rate and correct decision, so a lower handoff rate can't come from the AI making answers up.
+
 ### Prompt-injection eval (PB-17)
 
 ```bash

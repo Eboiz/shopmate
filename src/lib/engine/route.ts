@@ -6,8 +6,12 @@
 // Same tools, same gate (executeTool) and same ai_turns.tool_calls logs as the
 // LLM tool loop, so PB-07 and the PB-10 eval read both paths alike.
 import type { EngineMode, HandoffReason, HistoryMessage, ProductCard, Reply, ToolName, ToolOutput } from "@/contract";
+import { groupRank, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
+import { asksForHuman, OFFER_QUESTION, offerReply, sizeOfferText, type OfferReason } from "./handoff-offer";
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
+import { answersOrderConfirm, isOrderMessage, ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
+import { isReturnsQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
 import { knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
 import { fold } from "./text";
@@ -19,6 +23,10 @@ export const ASKED_TO_CLARIFY_THRESHOLD = 0.5;
 // Below this, the shop's policy text doesn't answer what was asked (v0.6 rule).
 // Between the two calibration groups in checkPolicyCovers (0.49 / 0.66).
 export const POLICY_COVERS_THRESHOLD = 0.57;
+// PB-31: same idea for a product question and the product's description; same
+// margin until it has its own calibration.
+export const DESCRIPTION_COVERS_THRESHOLD = 0.57;
+export const STAFF_BUTTON = "Gặp nhân viên";
 
 export const ASK_PAIRING_PRODUCT_TEXT = "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.";
 export const PAIRING_FAILED_TEXT = "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.";
@@ -27,6 +35,9 @@ export const STAFF_NO_DATA_TEXT = "Dữ liệu shop chưa có thông tin này. B
 export const STAFF_NO_POLICY_TEXT = "Shop chưa viết chính sách này. Bạn tự trả lời khách nhé.";
 export const STAFF_POLICY_SILENT_TEXT = "Chính sách của shop chưa nói tới điều khách hỏi. Bạn kiểm tra và tự trả lời khách nhé.";
 export const STAFF_NO_SIZE_TEXT = "Số đo nằm ngoài bảng size hoặc sản phẩm chưa có bảng size, nên chưa tư vấn được size. Bạn kiểm tra và tự trả lời khách nhé.";
+export const STAFF_OFF_TOPIC_TEXT = "Câu hỏi không liên quan tới sản phẩm hay chính sách của shop. Bạn tự trả lời khách nhé.";
+// PB-31: off-topic ("php2shell là gì", the owner's name): only the shop, then the offer.
+export const OFF_TOPIC_TEXT = `Dạ, mình chỉ hỗ trợ về sản phẩm, đơn hàng và chính sách của shop thôi ạ. ${OFFER_QUESTION}`;
 
 export type ToolResult = { ok: boolean; output: unknown; code?: string };
 // Runs one tool through executeTool and records it (logs, metrics) in the engine.
@@ -40,10 +51,21 @@ export type RouteOutcome =
   | { kind: "handoff"; reason: HandoffReason; sizeStatus: SizeStatus; viaTool: boolean }
   // staff_draft complaint the server's word list missed (PB-20)
   | { kind: "personal" }
-  | { kind: "fixed"; reply: Reply }
+  // offer (PB-31): the reply offers staff for this reason; a "yes" next turn hands off.
+  | { kind: "fixed"; reply: Reply; offer?: OfferReason }
   // The reply model writes the text; productIds are chosen here, not by the model.
   // sizeAdvice: the reply must advise exactly this size (PB-06 post-check).
-  | { kind: "write"; facts: Record<string, unknown>; task: string; productIds: string[]; sizeAdvice?: SizeAdvice };
+  // quickReplies: the server's buttons, used instead of the model's.
+  // offer: the reply ends with OFFER_QUESTION and the yes/no buttons (PB-31).
+  | {
+      kind: "write";
+      facts: Record<string, unknown>;
+      task: string;
+      productIds: string[];
+      sizeAdvice?: SizeAdvice;
+      quickReplies?: string[];
+      offer?: OfferReason;
+    };
 
 export type RouteInput = {
   mode: EngineMode;
@@ -56,6 +78,9 @@ export type RouteInput = {
   // Probability that the policy text answers the shopper's question (Jev). Missing
   // or failing: the text is assumed to answer it.
   policyCovers?: (policy: string) => Promise<number>;
+  // PB-31: probability that the product's description answers the question.
+  // Missing or failing: assumed to answer it.
+  descriptionCovers?: (product: string, description: string) => Promise<number>;
 };
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -88,7 +113,9 @@ export function requestedSize(history: HistoryMessage[], sizes: string[]): strin
 function resolveProduct(input: RouteInput): CatalogItem | null {
   const pick = input.decision.product;
   const id = pick.kind === "catalog" ? pick.id : pick.kind === "viewing" ? input.viewing?.id : undefined;
-  if (!id) return null;
+  // PB-31 r2: Jev picked none, but the message names exactly one product
+  // ("Shop có quần bò không?" -> Quần jean ống đứng).
+  if (!id) return productCoveringMessage(lastShopperText(input.history), input.catalog);
   return (
     input.catalog.find((p) => p.id === id) ??
     (input.viewing && input.viewing.id === id ? { id, name: input.viewing.name, category: null, colors: [], sizes: [] } : null)
@@ -105,13 +132,105 @@ async function handoff(input: RouteInput, reason: HandoffReason, sizeStatus: Siz
 }
 
 const fixed = (text: string): RouteOutcome => ({ kind: "fixed", reply: { text, products: [], quickReplies: [] } });
+const offer = (text: string, reason: OfferReason): RouteOutcome => ({ kind: "fixed", reply: offerReply(text), offer: reason });
+
+// The shop's product groups (Áo, Váy & đầm …), in the shop page's order: the
+// buttons of a "which one?" question.
+export function catalogGroups(catalog: CatalogItem[]): ProductGroup[] {
+  const groups = new Set(catalog.map((p) => productGroup(p.category, p.name)).filter((g) => g !== "Khác"));
+  return [...groups].sort((a, b) => groupRank(a) - groupRank(b));
+}
+
+// Quick replies are at most 20 characters (quickReplySchema): a longer product
+// name is cut to 19 + "…" so the reply stays valid; the full name stays in the
+// text and the cards. Repeats dropped, at most `max`.
+const MAX_QUICK_REPLY = 20;
+export function buttons(labels: string[], max = 4): string[] {
+  const cut = labels.map((l) => (l.length <= MAX_QUICK_REPLY ? l : `${l.slice(0, MAX_QUICK_REPLY - 1).trimEnd()}…`));
+  return [...new Set(cut)].slice(0, max);
+}
+
+// The message is one of the shop page's groups ("Áo", "váy & đầm"), by its label
+// or a natural name for it (r2: "Váy", "Đầm", "áo khoac", a model's button):
+// the group, or null. Cheap check before the catalog is read.
+const GROUP_ALIASES: Record<string, ProductGroup> = {
+  vay: "Váy & đầm", dam: "Váy & đầm", "vay dam": "Váy & đầm", "dam vay": "Váy & đầm",
+  "chan vay": "Chân váy", ao: "Áo", "ao khoac": "Áo khoác", khoac: "Áo khoác", jacket: "Áo khoác", quan: "Quần",
+};
+function asGroup(text: string): ProductGroup | null {
+  const t = fold(text).replace(/[^a-z0-9]+/g, " ").trim();
+  return PRODUCT_GROUPS.find((g) => fold(g).replace(/[^a-z0-9]+/g, " ").trim() === t) ?? GROUP_ALIASES[t] ?? null;
+}
+export const isGroupName = (text: string) => asGroup(text) !== null;
+
+// PB-31: the shopper tapped (or typed) a group button ("Áo", "Váy & đầm"): that
+// group's products from the catalog, names as buttons. null when the message
+// isn't exactly a group this shop has.
+export function groupListing(catalog: CatalogItem[], text: string, max = 10): (Reply & { productIds: string[] }) | null {
+  const asked = asGroup(text);
+  const group = catalogGroups(catalog).find((g) => g === asked);
+  if (!group) return null;
+  const items = catalog.filter((p) => productGroup(p.category, p.name) === group).slice(0, max);
+  return {
+    text: [`Dạ, nhóm ${group} shop đang có:`, ...items.map((p) => `- ${p.name}`), "Bạn muốn xem món nào ạ?"].join("\n"),
+    products: [],
+    quickReplies: buttons(items.map((p) => p.name)),
+    productIds: items.map((p) => p.id),
+  };
+}
+
+// PB-31: each group of the shop with a few of its products, groups as buttons.
+// Built from the catalog: no price, nothing the model wrote.
+export function catalogOverview(catalog: CatalogItem[], perGroup = 3): Reply | null {
+  const groups = catalogGroups(catalog);
+  if (groups.length === 0) return null;
+  const lines = groups.map((g) => {
+    const names = catalog.filter((p) => productGroup(p.category, p.name) === g).slice(0, perGroup).map((p) => p.name);
+    return `${g}: ${names.join(", ")}`;
+  });
+  return { text: ["Dạ, shop đang có:", ...lines, "Bạn muốn xem nhóm nào ạ?"].join("\n"), products: [], quickReplies: groups };
+}
+
+const lastShopperText = (history: HistoryMessage[]) => history.findLast((m) => m.sender === "shopper")?.text ?? "";
+
+const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_mai: "khuyến mãi" } as const;
+
+// PB-31: corrections to Jev's intent that the words of the message settle.
+//  - buying words and no person asked for: an order, never asked_for_human (any
+//    word for a person keeps "human": a request for a person always wins);
+//  - "mặc không vừa thì đổi được không": the doi_tra policy, not product data.
+function settledDecision(d: JevDecision, text: string): JevDecision {
+  if (d.intent === "human" && isOrderMessage(text) && !asksForHuman(text)) return { ...d, intent: "order" };
+  // Not "stock": "đổi màu khác cho mình xem" asks for other colors.
+  if (["product_detail", "size", "unclear"].includes(d.intent) && isReturnsQuestion(text)) {
+    return { ...d, intent: "policy", policyKind: "doi_tra" };
+  }
+  return d;
+}
+
+// The AI already read an order back in this conversation.
+const orderReadBack = (history: HistoryMessage[]) =>
+  history.some((m) => m.sender === "ai" && /ban muon dat .* dung khong/.test(fold(m.text)));
 
 export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
-  const { decision: d, mode } = input;
+  const { mode } = input;
   const customer = mode === "customer";
+  const last = lastShopperText(input.history);
+  const d = settledDecision(input.decision, last);
 
+  // PB-31: a yes to the order read-back goes on with the order (tool loop).
+  if (customer && answersOrderConfirm(input.history)) return { kind: "fallback", reason: "order" };
   if (d.confidence !== null && d.confidence < MIN_INTENT_CONFIDENCE) return { kind: "fallback", reason: "low_confidence" };
-  if (d.intent === "order") return { kind: "fallback", reason: "order" };
+  if (d.intent === "order") {
+    // PB-31: a message that could be an order is read back once before the order
+    // flow: "Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?". An order
+    // that also asks for a discount goes to the tool loop, which refuses it.
+    const readBack = customer && d.discountTrick < DISCOUNT_TRICK_THRESHOLD && isOrderMessage(last) && !orderReadBack(input.history);
+    const product = readBack ? resolveProduct(input) : null;
+    if (!product) return { kind: "fallback", reason: "order" };
+    const text = orderConfirmText(product.name, requestedColor(input.history, product.colors), requestedSize(input.history, product.sizes));
+    return { kind: "fixed", reply: { text, products: [], quickReplies: [ORDER_CONFIRM_YES, ORDER_CONFIRM_NO] } };
+  }
 
   // A discount or "ignore your rules" message: no other tool runs, whatever else
   // it asks (PB-17). Only the shop's own promotion text may be quoted.
@@ -135,25 +254,55 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       return customer
         ? handoff(input, "asked_for_human")
         : { kind: "write", facts: {}, task: "Soạn một câu ngắn cho biết nhân viên shop đang hỗ trợ trực tiếp.", productIds: [] };
-    case "product_detail":
-      return customer ? handoff(input, "not_covered_by_data") : fixed(STAFF_NO_DATA_TEXT);
     case "greeting":
       return { kind: "write", facts: {}, task: "Chào lại ngắn gọn và hỏi bạn đang tìm món gì.", productIds: [] };
+    case "off_topic":
+      return customer ? offer(OFF_TOPIC_TEXT, "not_covered_by_data") : fixed(STAFF_OFF_TOPIC_TEXT);
+    case "browse": {
+      // PB-31: "shop có gì", "đồ đi tiệc": the groups as buttons, plus a few
+      // products whose description fits the occasion.
+      const groups = catalogGroups(input.catalog);
+      const fits = productsForOccasion(lastShopperText(input.history), input.catalog, 3);
+      return {
+        kind: "write",
+        facts: { groups, suggested: fits.map((p) => ({ name: p.name, description: p.description ?? null })) },
+        task: fits.length
+          ? "Giới thiệu ngắn các nhóm hàng shop có (groups), nói vài món trong suggested hợp với điều bạn hỏi (chỉ dựa trên description), rồi hỏi bạn muốn xem nhóm hay món nào. Không nêu giá."
+          : "Giới thiệu ngắn các nhóm hàng shop có (groups) rồi hỏi bạn muốn xem nhóm nào. Không nêu giá.",
+        productIds: fits.map((p) => p.id),
+        quickReplies: groups,
+      };
+    }
     case "unclear":
       if (customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
       return {
         kind: "write",
-        facts: {},
-        task: "Hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
+        facts: { groups: catalogGroups(input.catalog) },
+        task: "Nếu tin nhắn không liên quan tới mua sắm ở shop, nói ngắn rằng câu đó nằm ngoài việc mua sắm ở shop. Nếu không rõ ý, hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
         productIds: [],
+        quickReplies: customer ? [...catalogGroups(input.catalog).slice(0, 4), STAFF_BUTTON] : [],
       };
     case "policy": {
       const r = await input.runTool("get_policy", { kind: d.policyKind });
       if (!r.ok) return { kind: "fallback", reason: "tool_error" };
       const policy = r.output as ToolOutput<"get_policy">;
-      if (policy.content === null) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_NO_POLICY_TEXT);
+      if (policy.content === null) {
+        if (!customer) return fixed(STAFF_NO_POLICY_TEXT);
+        return offer(`Dạ, shop chưa có thông tin về ${POLICY_NAMES[policy.kind]} để mình trả lời chắc chắn. ${OFFER_QUESTION}`, "policy_not_covered");
+      }
       const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 1) : 1;
-      if (covers < POLICY_COVERS_THRESHOLD) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_POLICY_SILENT_TEXT);
+      if (covers < POLICY_COVERS_THRESHOLD) {
+        if (!customer) return fixed(STAFF_POLICY_SILENT_TEXT);
+        // PB-31: give what the policy says that is related, say plainly what it
+        // doesn't say, and offer staff.
+        return {
+          kind: "write",
+          facts: { policy },
+          task: "Chính sách của shop (policy) không nói tới đúng điều bạn hỏi. Nếu policy có ý liên quan thì nói ngắn ý đó, giữ nguyên số và điều kiện; rồi nói rõ shop chưa có thông tin về điều bạn hỏi. Không tự suy ra hay hứa điều policy không viết.",
+          productIds: [],
+          offer: "policy_not_covered",
+        };
+      }
       return {
         kind: "write",
         facts: { policy },
@@ -168,13 +317,52 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   // stock, size, pairing: about one product.
   const product = resolveProduct(input);
   if (!product) {
-    if (customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
+    // PB-31: the shop doesn't have exactly what was named, but has close
+    // products ("áo khoác da" -> its jackets): ask which one, with buttons. The
+    // shopper was understood, so this comes before "misunderstood twice".
+    const close = d.intent === "pairing" ? [] : productsNamedIn(last, input.catalog, 3);
+    if (close.length === 0 && customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
     if (d.intent === "pairing") return fixed(ASK_PAIRING_PRODUCT_TEXT);
+    if (close.length > 0) {
+      return {
+        kind: "write",
+        facts: { closeProducts: close.map((p) => p.name) },
+        task: "Shop không có đúng món bạn tả. Nói ngắn điều đó, rồi hỏi bạn có phải đang tìm một trong các món closeProducts không (nêu tên). Không nêu giá, không đoán thêm món khác.",
+        productIds: close.map((p) => p.id),
+        quickReplies: buttons(close.map((p) => p.name)),
+      };
+    }
     return {
       kind: "write",
       facts: {},
       task: "Hỏi một câu ngắn: bạn đang hỏi sản phẩm nào (tên hoặc loại, màu). Không đoán sản phẩm.",
       productIds: [],
+      quickReplies: customer ? catalogGroups(input.catalog) : [],
+    };
+  }
+
+  if (d.intent === "product_detail") {
+    // PB-31: answered only from the shop's description of the product.
+    const description = product.description?.trim() || null;
+    const covers = description && input.descriptionCovers
+      ? await input.descriptionCovers(product.name, description).catch(() => 1)
+      : description ? 1 : 0;
+    if (description && covers >= DESCRIPTION_COVERS_THRESHOLD) {
+      return {
+        kind: "write",
+        facts: { product: product.name, description },
+        task: `Trả lời câu hỏi về ${product.name} chỉ dựa trên description của shop. Không thêm thông tin description không viết.`,
+        productIds: [product.id],
+      };
+    }
+    if (!customer) return fixed(STAFF_NO_DATA_TEXT);
+    if (!description) return offer(`Dạ, shop chưa có thông tin này về ${product.name}. ${OFFER_QUESTION}`, "not_covered_by_data");
+    return {
+      kind: "write",
+      facts: { product: product.name, description },
+      task: `Mô tả của shop (description) không nói tới đúng điều bạn hỏi về ${product.name}. Nói ngắn những gì description có liên quan (nếu có), rồi nói rõ shop chưa có thông tin về điều bạn hỏi. Không đoán.`,
+      productIds: [product.id],
+      offer: "not_covered_by_data",
     };
   }
 
@@ -202,9 +390,11 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
     if (!r.ok) return { kind: "fallback", reason: "tool_error" };
     const rec = r.output as ToolOutput<"recommend_size">;
     if (rec.status !== "ok") {
-      const sizeStatus = rec.status;
       if (!customer) return fixed(STAFF_NO_SIZE_TEXT);
-      return handoff(input, sizeStatus === "out_of_range" ? "size_out_of_range" : "not_covered_by_data", sizeStatus);
+      // PB-31: no size is picked; the server's text says why and offers staff.
+      return rec.status === "out_of_range"
+        ? offer(sizeOfferText(rec), "size_out_of_range")
+        : offer(sizeOfferText(null), "not_covered_by_data");
     }
     const differs = rec.sizeByHeight !== rec.sizeByWeight;
     return {
