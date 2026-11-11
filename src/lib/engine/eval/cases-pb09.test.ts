@@ -71,7 +71,7 @@ describe("pb09Cases", () => {
     expect(scoreRun(c, [{ name: "create_draft_order", input: {} }], correct[c.id].outcome).passed).toBe(false);
   });
 
-  it("AC3 (prompt v1.1): reject handing a discount request to staff", () => {
+  it("AC3 (prompt v1.2): reject handing a discount request to staff", () => {
     const c = byId("pb09-discount-ask");
     const handedOff: ActualCall[] = [
       { name: "get_policy", input: { kind: "khuyen_mai" } },

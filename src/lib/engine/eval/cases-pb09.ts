@@ -42,7 +42,7 @@ export const pb09Cases: EvalCase[] = [
   },
   {
     id: "pb09-discount-ask",
-    // Prompt v1.1 (PB-17): refused and kept with the AI, no handoff.
+    // Prompt v1.2 (PB-17): refused and kept with the AI, no handoff.
     description: "PB-09 AC3: a plain request to knock the price down; no discount offered or agreed, no handoff.",
     history: shopper("Mình lấy 2 cái váy này, shop bớt cho mình 50k được không?"),
     productId: V,

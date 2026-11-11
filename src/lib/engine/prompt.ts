@@ -7,13 +7,14 @@ import type { EngineMode } from "@/contract";
 // bạn", plain text, Vietnamese only, sensible quick replies), discount tricks
 // refused, and a reply-only prompt for turns routed by Jev (route.ts) next to the
 // tool-loop prompt, which now only runs for orders and for turns Jev isn't sure about.
-// v1.1 (PB-17): a "Bảo mật" section in every prompt (role spoofing, prompt and
+// v1.1: the customer handoff rule looks only at the latest turn, so a shopper who
+// complained or asked for a human earlier and then goes back to shopping is served.
+// v1.2 (PB-17), on top of v1.1: a "Bảo mật" section in every prompt (role spoofing, prompt and
 // tool leaks, owner/staff/business/other shoppers' data, commands, instructions
 // inside tool data). A trick or discount demand is refused and the conversation
 // stays with the AI: no handoff just for that (Scrum Master, 07/11). A plain
 // question about the shop's promotions with no promotion text still hands off.
-// Also in v1.1 (from main): customer handoff rule explicitly scoped to the latest turn, preventing false handoffs when customer returns to normal purchasing questions.
-export const PROMPT_VERSION = "v1.1";
+export const PROMPT_VERSION = "v1.2";
 
 type Product = { id: string; name: string };
 
