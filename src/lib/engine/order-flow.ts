@@ -46,18 +46,25 @@ export function orderConfirmText(name: string, color: string | null, size: strin
 export function answersOrderConfirm(history: HistoryMessage[]): boolean {
   const last = history.at(-1);
   const asked = history.slice(0, -1).findLast(({ sender }) => sender === "ai")?.text ?? "";
-  if (last?.sender !== "shopper" || !/ban muon dat .* dung khong/.test(fold(asked))) return false;
-  const answer = fold(last.text).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-  // ORDER_CONFIRM_YES folds to "dung dat luon".
-  return /^(da )?(dung|dung roi|dung vay|dung dat luon|ok|oke|vang|uh|chuan|dat luon|dat di)( a| nha| nhe)?$/.test(answer);
+  return last?.sender === "shopper" && /ban muon dat .* dung khong/.test(fold(asked)) && saysYes(last.text);
 }
 
 export function isOrderConfirmation(history: HistoryMessage[]): boolean {
   const last = history.at(-1);
   const summary = history.slice(0, -1).findLast(({ sender }) => sender === "ai")?.text ?? "";
-  if (last?.sender !== "shopper" || !summary.startsWith(ORDER_SUMMARY_PREFIX)) return false;
-  const answer = fold(last.text).replace(/[.!?]+$/g, "").trim();
-  return /^(?:da\s+)?(?:(?:minh|em)\s+)?(?:ok|oke|dong y|xac nhan|chot don|dat hang|lay|dung roi|chinh xac|vang)(?:\s+(?:nha|nhe|a))?$/.test(answer);
+  return last?.sender === "shopper" && summary.startsWith(ORDER_SUMMARY_PREFIX) && saysYes(last.text);
+}
+
+// A yes to a read-back or a summary: it starts with a yes ("Đúng rồi, bạn chốt đơn
+// giúp mình nhé") and changes nothing. A number, a size or color, or a change word
+// ("nhưng", "đổi", "thêm") means the shopper wants something else; matched on the
+// accented text, so "đôi" or "thấy" are not read as "đổi" or "thay" (L031).
+function saysYes(text: string): boolean {
+  const changes = /\d|không|chưa|nhưng|đổi|thay|thêm|bớt|sửa|hủy|huỷ|khác|\bsize\b|\bmàu\b|\b(?:khong|chua|nhung|doi|them|bot|sua|huy|khac)\b/;
+  if (changes.test(text.toLowerCase())) return false;
+  // ORDER_CONFIRM_YES folds to "dung dat luon".
+  const answer = fold(text).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  return /^(?:(?:da|vang) )?(?:(?:minh|em) )?(?:ok|oke|dong y|xac nhan|chot|dat hang|dat luon|dat di|len don|lay|dung|chinh xac|vang|uh|chuan)\b/.test(answer);
 }
 
 export function sameItems(

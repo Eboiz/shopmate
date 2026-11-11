@@ -45,6 +45,20 @@ describe("PB-11 order flow", () => {
     expect(isOrderConfirmation([{ sender: "shopper", text: "xác nhận" }])).toBe(false);
   });
 
+  // PB-19 main flow on the preview, 11/11: "Đúng rồi, bạn chốt đơn giúp mình nhé."
+  // was not read as a yes, so the order was quoted again and never created.
+  it("reads a yes followed by polite words, but not a yes that changes the order", () => {
+    const answer = (text: string) => isOrderConfirmation([...history.slice(0, -1), { sender: "shopper", text }]);
+    for (const t of [
+      "Đúng rồi, bạn chốt đơn giúp mình nhé.", "ok chốt đơn nha", "Xác nhận giúp mình", "Chốt đơn giúp em ạ",
+      "dung roi chot don giup minh", "Đồng ý, lên đơn nha shop",
+    ]) expect(answer(t), t).toBe(true);
+    for (const t of [
+      "ok nhưng đổi sang màu đen", "đúng rồi, lấy 2 cái nhé", "ok size L nhé", "đúng rồi thêm 1 áo nữa",
+      "chưa, để mình xem lại", "lấy cho mình mẫu khác", "không chốt nữa", "ok bớt 1 cái", "dung roi nhung doi size", "huỷ đơn giúp mình",
+    ]) expect(answer(t), t).toBe(false);
+  });
+
   it("rejects a changed item or contact details not supplied by the shopper", () => {
     const previous = { items, quote };
     expect(orderWriteError(details, history, previous)).toBeNull();
@@ -99,7 +113,13 @@ describe("PB-31: a message that could be an order is read back first", () => {
       { sender: "shopper", text: "lấy cái đen size S" },
       { sender: "ai", text: orderConfirmText("Áo blazer", "Đen", "S") },
     ];
-    for (const t of [ORDER_CONFIRM_YES, "đúng rồi", "ok", "Dạ đúng"]) {
+    for (const t of [ORDER_CONFIRM_YES, "đúng rồi", "ok", "Dạ đúng", "Đúng rồi, bạn chốt đơn giúp mình nhé."]) {
+      expect(answersOrderConfirm([...asked, { sender: "shopper", text: t }]), t).toBe(true);
+    }
+    for (const t of ["đúng rồi nhưng màu be", "ok lấy 2 cái"]) {
+      expect(answersOrderConfirm([...asked, { sender: "shopper", text: t }]), t).toBe(false);
+    }
+    for (const t of [ORDER_CONFIRM_YES]) {
       expect(answersOrderConfirm([...asked, { sender: "shopper", text: t }]), t).toBe(true);
     }
     expect(answersOrderConfirm([...asked, { sender: "shopper", text: ORDER_CONFIRM_NO }])).toBe(false);
