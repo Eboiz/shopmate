@@ -5,6 +5,7 @@ import { latestQuote, type PendingQuote } from "./order-flow";
 import { postcheckLogSchema } from "./postcheck-log";
 import { sortSizes } from "./text";
 import { setAiMode, setNeedsHuman } from "./tools/handoff-to-staff";
+import { cachedCatalog } from "./turn-cache";
 import type { Db } from "./types";
 
 export type TurnContextArgs = {
@@ -46,6 +47,29 @@ export type EngineStore = {
 };
 
 const MAX_CARDS = 10;
+
+// Every admin client reads the same database, so one cache per process is
+// enough; it keeps the first store's client for its loads.
+let sharedCatalog: ((shopId: string) => Promise<CatalogItem[]>) | null = null;
+
+async function loadCatalog(db: Db, shopId: string): Promise<CatalogItem[]> {
+  const [products, variants] = await Promise.all([
+    db.from("products").select("id, name, category").eq("shop_id", shopId).order("name"),
+    db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
+  ]);
+  if (products.error) throw new Error(`products: ${products.error.message}`);
+  if (variants.error) throw new Error(`variants: ${variants.error.message}`);
+  return products.data.map((p) => {
+    const own = variants.data.filter((v) => v.product_id === p.id);
+    return {
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      colors: [...new Set(own.map((v) => v.color))],
+      sizes: sortSizes(own.map((v) => v.size)),
+    };
+  });
+}
 
 export function createSupabaseStore(db: Db): EngineStore {
   async function product(shopId: string, productId: string | null) {
@@ -132,24 +156,8 @@ export function createSupabaseStore(db: Db): EngineStore {
         .slice(0, MAX_CARDS);
     },
 
-    async catalog(shopId) {
-      const [products, variants] = await Promise.all([
-        db.from("products").select("id, name, category").eq("shop_id", shopId).order("name"),
-        db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
-      ]);
-      if (products.error) throw new Error(`products: ${products.error.message}`);
-      if (variants.error) throw new Error(`variants: ${variants.error.message}`);
-      return products.data.map((p) => {
-        const own = variants.data.filter((v) => v.product_id === p.id);
-        return {
-          id: p.id,
-          name: p.name,
-          category: p.category,
-          colors: [...new Set(own.map((v) => v.color))],
-          sizes: sortSizes(own.map((v) => v.size)),
-        };
-      });
-    },
+    // F5: one read per shop every 30 s per process (names, colours, sizes only).
+    catalog: (shopId) => (sharedCatalog ??= cachedCatalog((id) => loadCatalog(db, id)))(shopId),
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),
     setAiMode: (ctx) => setAiMode(db, ctx),

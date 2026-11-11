@@ -28,6 +28,8 @@ import { findUncheckedNumbers, NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./
 import type { PostcheckLog } from "./postcheck-log";
 import { findEnglish, VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import { answeredFromData } from "./resume";
+import { fold } from "./text";
+import { turnToolCache } from "./turn-cache";
 import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
@@ -71,8 +73,14 @@ function sizeStatusOf(content: unknown): SizeStatus {
 
 export const STAFF_DRAFT_GIVE_UP_TEXT =
   "Chưa soạn được câu trả lời cho câu hỏi này. Bạn kiểm tra dữ liệu và tự trả lời khách nhé.";
-// Sequential. Raise above 1 only after measuring (see README, engine metrics); see runBatch.
-export const TOOL_CONCURRENCY = 1;
+// Read-only tool batches run in parallel (F5); a batch with a write tool stays
+// sequential (concurrency 1, see runBatch callers).
+export const TOOL_CONCURRENCY = 4;
+// Effort of the tool-loop model call. "low" only if the paid eval does not drop
+// (plan Task 9); the router's reply call is always "low".
+export const LOOP_EFFORT: "low" | "medium" = "medium";
+// F7: a search for one letter ("a") finds nothing useful and costs a round trip.
+export const SHORT_QUERY_ERROR = "query cần ít nhất 2 chữ cái: tên hoặc loại sản phẩm.";
 export const DEFAULT_MODEL = "claude-sonnet-5-5";
 
 // onFirstToken is called ONCE, when the first text token of the response arrives (TTFT).
@@ -176,6 +184,14 @@ function blockedOrderRun(input: unknown, code: string, extra: object = {}): Tool
 
 // PB-09 (F3, F4): a refused handoff is an error tool_result, so the model answers
 // from the data instead. isError means it is not counted as a handoff below.
+function shortQueryRun(input: unknown): ToolRun | null {
+  const query = (input as { query?: unknown } | null)?.query;
+  if (typeof query !== "string") return null;
+  const letters = fold(query).match(/\p{L}/gu)?.length ?? 0;
+  if (letters >= 2) return null;
+  return { log: { name: "search_products", input, error: "query_too_short" }, content: SHORT_QUERY_ERROR, isError: true };
+}
+
 function refusedHandoffRun(input: unknown, refused: RefusedHandoff): ToolRun {
   return {
     log: { name: "handoff_to_staff", input, error: refused.code },
@@ -253,6 +269,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const modelCalls: TurnMetrics["modelCalls"] = [];
   const toolMetrics: TurnMetrics["toolCalls"] = [];
   const seen: Array<{ name: string; input: unknown }> = [];
+  // F5/F7: an identical read-only call in this turn gets the first result back.
+  const toolCache = turnToolCache();
   let calls = 0;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -305,8 +323,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const runTool: ToolRunner = async (name, toolInput) => {
       calls += 1;
       const s0 = now();
-      const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
-      if (run.log) logs.push(run.log);
+      const cached = toolCache.get(name, toolInput);
+      const run = cached ?? await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
+      if (!cached) toolCache.set(name, toolInput, run);
+      if (run.log && !cached) logs.push(run.log);
       toolMetrics.push({ name, startMs: s0 - t0, ms: now() - s0, outcome: toolOutcome(run) });
       seen.push({ name, input: toolInput });
       return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
@@ -492,7 +512,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         system,
         tools: toolList,
         messages,
-        output_config: { effort: "medium", format: { type: "json_schema", schema: MODEL_REPLY_JSON_SCHEMA } },
+        output_config: { effort: LOOP_EFFORT, format: { type: "json_schema", schema: MODEL_REPLY_JSON_SCHEMA } },
       },
       { onFirstToken: () => (firstTokenAt ??= now()) },
     );
@@ -588,7 +608,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     calls += uses.length;
 
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
-    const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
+    const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number; cached?: true }> => {
       const s0 = now();
       if (u.name === "create_draft_order" && mode === "customer") {
         const issue = orderWriteError(u.input, input.history, previousQuote);
@@ -637,16 +657,25 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         : u.name === "recommend_size"
           ? normalizeSizeInput(u.input, input.history)
           : u.input;
+      if (u.name === "search_products") {
+        const refused = shortQueryRun(effectiveInput);
+        if (refused) return { run: refused, ms: now() - s0, startMs: s0 - t0 };
+      }
+      const hit = toolCache.get(u.name, effectiveInput);
+      if (hit) return { run: hit, ms: now() - s0, startMs: s0 - t0, cached: true };
       const run = await executeTool(u.name, effectiveInput, ctx, mode, deps.handlers, deps.db);
+      toolCache.set(u.name, effectiveInput, run);
       return { run, ms: now() - s0, startMs: s0 - t0 };
     });
 
     // runs are in tool_use order.
     uses.forEach((u, i) => {
-      const { run, ms, startMs } = runs[i];
-      if (run.log) logs.push(run.log);
+      const { run, ms, startMs, cached } = runs[i];
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
+      // A cached hit adds no log and changes no state: the first run did both.
+      if (cached) return;
+      if (run.log) logs.push(run.log);
       if (u.name === "recommend_size" && !run.isError) {
         sizeStatus = sizeStatusOf(run.content);
         const out = run.log?.output as { status?: string } | undefined;

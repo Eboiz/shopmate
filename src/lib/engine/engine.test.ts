@@ -15,6 +15,7 @@ import {
   SIZE_OUT_OF_RANGE_HANDOFF_TEXT,
   runBatch,
   runEngine,
+  SHORT_QUERY_ERROR,
   STAFF_DRAFT_GIVE_UP_TEXT,
   type EngineDeps,
   type EngineResult,
@@ -485,11 +486,14 @@ describe("runEngine", () => {
   });
 
   describe("tool call limit", () => {
+    // Distinct inputs: identical read-only calls are answered from the turn cache (F5).
+    const search = (i: number) => toolUse("search_products", { query: `váy mẫu ${i}` });
+
     it("hands off after more than 5 tool calls", async () => {
-      const responses = Array.from({ length: 6 }, () => toolCalls(toolUse("get_policy", { kind: "doi_tra" })));
+      const responses = Array.from({ length: 6 }, (_, i) => toolCalls(search(i)));
       const { store, handlers, model, run } = setup(responses);
       const result = await run(customerInput());
-      expect(handlers.get_policy).toHaveBeenCalledTimes(5);
+      expect(handlers.search_products).toHaveBeenCalledTimes(5);
       expect(result.handoffReason).toBe("too_many_tool_calls");
       expect(store.setNeedsHuman).toHaveBeenCalledTimes(1);
       expect(store.setNeedsHuman).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
@@ -514,12 +518,12 @@ describe("runEngine", () => {
 
     it("exactly 5 calls is allowed", async () => {
       const { handlers, run } = setup([
-        toolCalls(...Array.from({ length: 5 }, () => toolUse("get_policy", { kind: "doi_tra" }))),
+        toolCalls(...Array.from({ length: 5 }, (_, i) => search(i))),
         reply("Xong"),
       ]);
       const result = await run(customerInput());
       expect(result.handoffReason).toBeNull();
-      expect(handlers.get_policy).toHaveBeenCalledTimes(5);
+      expect(handlers.search_products).toHaveBeenCalledTimes(5);
       expect(result.output.reply.text).toBe("Xong");
     });
   });
@@ -1213,7 +1217,7 @@ describe("runEngine", () => {
       expect(onMetrics.mock.calls[0][0].toolCalls.map((c) => c.name)).toEqual(["get_policy", "get_stock", "get_pairings"]);
     });
 
-    it("default is sequential", async () => {
+    it("two read-only tool_use blocks run concurrently by default (F5)", async () => {
       const { handlers, run } = setup([
         toolCalls(
           toolUse("get_policy", { kind: "doi_tra" }),
@@ -1227,7 +1231,30 @@ describe("runEngine", () => {
       handlers.get_stock.mockImplementation(() => t.track(5, stockOut));
       handlers.get_pairings.mockImplementation(() => t.track(5, { pairings: [] }));
       await run(customerInput());
-      expect(t.max()).toBe(1);
+      expect(t.max()).toBe(3);
+    });
+
+    it("identical search twice in one turn hits the database once (F5)", async () => {
+      const { handlers, model, store, run } = setup([
+        toolCalls(toolUse("search_products", { query: "váy linen" })),
+        toolCalls(toolUse("search_products", { query: "váy linen" })),
+        reply(),
+      ]);
+      const result = await run(customerInput());
+      expect(handlers.search_products).toHaveBeenCalledTimes(1);
+      // The model still gets the same result back the second time.
+      expect(toolResults(model.calls[2])[0].content).toBe(toolResults(model.calls[1])[0].content);
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].tool_calls).toHaveLength(1);
+    });
+
+    it('search_products("a") is refused without a database call (F7)', async () => {
+      const { handlers, model, run } = setup([toolCalls(toolUse("search_products", { query: "a" })), reply()]);
+      await run(customerInput());
+      expect(handlers.search_products).not.toHaveBeenCalled();
+      const [res] = toolResults(model.calls[1]);
+      expect(res.is_error).toBe(true);
+      expect(res.content).toBe(SHORT_QUERY_ERROR);
     });
 
     it("write tools never run concurrently", async () => {
