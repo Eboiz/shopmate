@@ -10,9 +10,7 @@ import {
 import {
   HANDOFF_TEXT,
   MAX_OUTPUT_TOKENS,
-  NO_SIZE_CHART_HANDOFF_TEXT,
   PRODUCT_NOT_FOUND_HANDOFF_TEXT,
-  SIZE_OUT_OF_RANGE_HANDOFF_TEXT,
   runBatch,
   runEngine,
   STAFF_DRAFT_GIVE_UP_TEXT,
@@ -768,6 +766,150 @@ describe("runEngine", () => {
       expect(result.output.reply.products).toEqual([card(PRODUCT)]);
       expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
       expect(result.handoffReason).toBeNull();
+    });
+  });
+
+  describe("PB-31: fewer handoffs (tool loop)", () => {
+    const say = (text: string) => customerInput({ history: [{ sender: "shopper", text }] });
+    const offeredBefore = (previousHandoffOffer: TurnContext["previousHandoffOffer"]) =>
+      fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: null, previousHandoffOffer });
+    const afterOffer = (answer: string) => customerInput({
+      history: [
+        { sender: "shopper", text: "cao 1m75 nặng 80kg mặc size gì" },
+        { sender: "ai", text: `Dạ, số đo của bạn nằm ngoài bảng size. ${OFFER_QUESTION}` },
+        { sender: "shopper", text: answer },
+      ],
+    });
+    const lastToolResult = (params: Anthropic.MessageCreateParamsNonStreaming) => toolResults(params)[0];
+
+    it("'Có, gặp nhân viên' after an offer hands off with the offered reason, no model call", async () => {
+      const { handlers, model, run } = setup([], { store: offeredBefore("size_out_of_range") });
+      const result = await run(afterOffer(OFFER_YES));
+      expect(model.calls).toHaveLength(0);
+      expect(handlers.handoff_to_staff).toHaveBeenCalledWith({ reason: "size_out_of_range" }, expect.anything(), expect.anything());
+      expect(result.handoffReason).toBe("size_out_of_range");
+      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    });
+
+    it("'Không cần' after an offer is acknowledged; no handoff", async () => {
+      const { handlers, run } = setup([], { store: offeredBefore("policy_not_covered") });
+      const result = await run(afterOffer(OFFER_NO));
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe(OFFER_DECLINED_TEXT);
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+    });
+
+    it("(c) the reason comes from this turn: a size reason with no size result this turn is not_covered_by_data", async () => {
+      const { handlers, store, run } = setup(
+        [toolCalls(toolUse("handoff_to_staff", { reason: "size_out_of_range" }))],
+        { store: offeredBefore("size_out_of_range") },
+      );
+      const result = await run(afterOffer("Tôi có thể biết tên nhân viên sắp tư vấn cho mình không?"));
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).not.toContain("bảng size");
+      expect(result.output.reply.text).toContain(OFFER_QUESTION);
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("not_covered_by_data");
+    });
+
+    it("(a) 'cho mua 1 áo blazer màu đen size S' is not asked_for_human: the model is told once and reads the order back", async () => {
+      const confirm = reply("Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?", [], ["Đúng, đặt luôn", "Chọn món khác"]);
+      const { handlers, model, run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "asked_for_human" })), confirm]);
+      const result = await run(say("cho mua 1 áo blazer màu đen size S"));
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.handoffReason).toBeNull();
+      const note = lastToolResult(model.calls[1]);
+      expect(note.is_error).toBe(true);
+      expect(String(note.content)).toContain("đặt hàng");
+      expect(result.output.reply.text).toContain("bạn muốn đặt Áo blazer");
+      expect(result.output.reply.quickReplies).toEqual(["Đúng, đặt luôn", "Chọn món khác"]);
+    });
+
+    it("(a) PB-14 stays: asking for a person while ordering still hands off at once", async () => {
+      const { handlers, run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "asked_for_human" }))]);
+      const result = await run(say("cho gặp nhân viên để đặt hàng"));
+      expect(handlers.handoff_to_staff).toHaveBeenCalledTimes(1);
+      expect(result.handoffReason).toBe("asked_for_human");
+    });
+
+    it("(a) the model insisting a second time is not blocked again", async () => {
+      const handoff = toolCalls(toolUse("handoff_to_staff", { reason: "asked_for_human" }));
+      const { handlers, run } = setup([handoff, toolCalls(toolUse("handoff_to_staff", { reason: "asked_for_human" }))]);
+      const result = await run(say("lấy cái đen size S"));
+      expect(handlers.handoff_to_staff).toHaveBeenCalledTimes(1);
+      expect(result.handoffReason).toBe("asked_for_human");
+    });
+
+    it("(b) 'hiện tại bên mình có những sản phẩm gì': the shop's groups with a few products each, no model call", async () => {
+      const store = {
+        ...fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: null, previousTurnMissedProduct: true }),
+        catalog: vi.fn(async () => [
+          { id: PRODUCT, name: "Váy suông linen", category: "vay", colors: ["Be"], sizes: ["M"] },
+          { id: VARIANT, name: "Áo blazer", category: "ao", colors: ["Đen"], sizes: ["S"] },
+        ]),
+      };
+      const { model, onMetrics, run } = setup([], { store });
+      const result = await run(say("hiện tại bên mình có những sản phẩm gì"));
+      expect(model.calls).toHaveLength(0);
+      expect(store.catalog).toHaveBeenCalledWith(SHOP_A);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain("Áo: Áo blazer");
+      expect(result.output.reply.text).toContain("Váy & đầm: Váy suông linen");
+      expect(result.output.reply.quickReplies).toEqual(["Áo", "Váy & đầm"]);
+      expect(onMetrics.mock.calls[0][0].route).toEqual({ path: "catalog" });
+    });
+
+    it("(d) a returns question is answered from doi_tra: a data handoff before get_policy is sent back once", async () => {
+      const { handlers, model, run } = setup([
+        toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" })),
+        toolCalls(toolUse("get_policy", { kind: "doi_tra" })),
+        reply("Dạ, shop đổi trong 7 ngày nếu mặc không vừa ạ."),
+      ]);
+      const result = await run(say("Mua về mặc không vừa thì đổi được không shop?"));
+      expect(String(lastToolResult(model.calls[1]).content)).toContain("doi_tra");
+      expect(handlers.get_policy).toHaveBeenCalledTimes(1);
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe("Dạ, shop đổi trong 7 ngày nếu mặc không vừa ạ.");
+      expect(result.output.reply.quickReplies).toEqual([]);
+    });
+
+    it("(e) 'áo khoác da' with close jackets: no product_not_found handoff, the model asks which one", async () => {
+      const jackets = [{ productId: PRODUCT, name: "Áo khoác jean", category: "ao_khoac", price: 1, imageUrl: null, description: null, colors: ["Đen"], sizes: ["M"] }];
+      const ask = reply("Dạ shop chưa có áo khoác da. Ý bạn là Áo khoác jean hay Áo khoác bomber?", [], ["Áo khoác jean", "Áo khoác bomber"]);
+      const { handlers, model, run } = setup([
+        toolCalls(toolUse("search_products", { query: "áo khoác da" })),
+        toolCalls(toolUse("handoff_to_staff", { reason: "product_not_found" })),
+        ask,
+      ]);
+      handlers.search_products.mockResolvedValue({ match: "close", products: jackets } as never);
+      const result = await run(say("loại áo khoác da màu đen ấy"));
+      expect(String(lastToolResult(model.calls[2]).content)).toContain("Ý bạn là");
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.quickReplies).toEqual(["Áo khoác jean", "Áo khoác bomber"]);
+    });
+
+    it("'bớt 50k' is refused without a handoff", async () => {
+      const { handlers, run } = setup([
+        toolCalls(toolUse("get_policy", { kind: "khuyen_mai" })),
+        reply("Dạ, shop không giảm giá thêm được ạ. Bạn cần tư vấn thêm món nào không?"),
+      ]);
+      handlers.get_policy.mockResolvedValue({ kind: "khuyen_mai", content: null });
+      const result = await run(say("Mình lấy 2 cái, shop bớt cho mình 50k được không?"));
+      expect(result.handoffReason).toBeNull();
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.output.reply.text).not.toContain("50");
+    });
+
+    it("an offer question without the buttons still records the offer and gets them", async () => {
+      const { store, run } = setup([reply(`Dạ, mô tả chưa nói áo có co giãn không. ${OFFER_QUESTION}`)]);
+      const result = await run(say("áo này co giãn không"));
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("not_covered_by_data");
     });
   });
 

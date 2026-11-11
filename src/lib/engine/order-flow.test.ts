@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryMessage, ToolCallLog } from "@/contract";
 import {
-  isOrderConfirmation, isOrderIntent, latestQuote, missingCustomerDetails,
+  answersOrderConfirm, isOrderConfirmation, isOrderIntent, isOrderMessage, latestQuote, missingCustomerDetails,
+  ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText,
   orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameItems,
   sameQuote,
 } from "./order-flow";
@@ -79,5 +80,29 @@ describe("PB-11 order flow", () => {
     expect(text).toContain("size L màu be");
     expect(text).not.toContain("Shop còn Váy suông linen size M màu be");
     expect(orderOutOfStockText([VARIANT], { items, quote }, [])).toContain("mẫu khác còn hàng");
+  });
+});
+
+describe("PB-31: a message that could be an order is read back first", () => {
+  it("isOrderMessage spots buying words in the latest message only", () => {
+    for (const t of ["cho mua 1 áo blazer màu đen size S", "lấy cái đen size S", "đặt 2 cái nha", "chốt đơn"]) expect(isOrderMessage(t), t).toBe(true);
+    for (const t of ["váy này còn không", "Shop có giao hàng vào Chủ nhật không?", "Thảo 0912345678, Q1"]) expect(isOrderMessage(t), t).toBe(false);
+  });
+
+  it("orderConfirmText names the product, the color and the size", () => {
+    expect(orderConfirmText("Áo blazer", "Đen", "S")).toBe("Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?");
+    expect(orderConfirmText("Áo blazer", null, null)).toBe("Dạ, bạn muốn đặt Áo blazer đúng không?");
+  });
+
+  it("answersOrderConfirm: a yes to the read-back, nothing else", () => {
+    const asked: HistoryMessage[] = [
+      { sender: "shopper", text: "lấy cái đen size S" },
+      { sender: "ai", text: orderConfirmText("Áo blazer", "Đen", "S") },
+    ];
+    for (const t of [ORDER_CONFIRM_YES, "đúng rồi", "ok", "Dạ đúng"]) {
+      expect(answersOrderConfirm([...asked, { sender: "shopper", text: t }]), t).toBe(true);
+    }
+    expect(answersOrderConfirm([...asked, { sender: "shopper", text: ORDER_CONFIRM_NO }])).toBe(false);
+    expect(answersOrderConfirm([{ sender: "ai", text: "Dạ chào bạn" }, { sender: "shopper", text: "ok" }])).toBe(false);
   });
 });

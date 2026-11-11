@@ -58,6 +58,15 @@ describe("buildJevRequest", () => {
     expect(JSON.stringify(request)).not.toContain("id-vay");
   });
 
+  it("PB-31: off-topic and personal questions about staff are their own intent; asking for a person stays 'human'", () => {
+    const { request } = buildJevRequest({ model: "m", history: [], viewing: null, catalog: [] });
+    const criteria = (request.questions.intent as { criteria: Record<string, string> }).criteria;
+    expect(INTENTS).toContain("off_topic");
+    expect(criteria.off_topic).toContain("name");
+    expect(criteria.human).not.toContain("who the staff member is");
+    expect(criteria.human).toContain("not a request for a person");
+  });
+
   it("has no 'viewing' option when no product is on screen, and keeps only the last 10 messages", () => {
     const long = Array.from({ length: 15 }, (_, i) => ({ sender: "shopper" as const, text: `m${i}` }));
     const { request } = buildJevRequest({ model: "m", history: long, viewing: null, catalog: [] });

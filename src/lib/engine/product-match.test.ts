@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonical, productsForOccasion, productsNamedIn, rankProducts } from "./product-match";
+import { canonical, isCatalogQuestion, isReturnsQuestion, productsForOccasion, productsNamedIn, rankProducts } from "./product-match";
 
 const P = (name: string, category: string | null = null) => ({ name, category });
 const catalog = [
@@ -83,5 +83,25 @@ describe("productsNamedIn", () => {
   });
   it("ignores questions and fillers", () => {
     expect(productsNamedIn("shop còn hàng không", catalog, 3)).toEqual([]);
+  });
+});
+
+describe("PB-31 question kinds", () => {
+  it("isCatalogQuestion: what does the shop sell, not a question about one product", () => {
+    for (const t of ["hiện tại bên mình có những sản phẩm gì", "shop có gì", "Shop bán những gì vậy?", "có những mặt hàng nào", "shop co nhung mon gi"]) {
+      expect(isCatalogQuestion(t), t).toBe(true);
+    }
+    for (const t of ["áo này có màu gì", "váy có size gì", "đồ đi tiệc", "còn hàng size M không", "áo này có hàng size gì"]) {
+      expect(isCatalogQuestion(t), t).toBe(false);
+    }
+  });
+
+  it("isReturnsQuestion: exchanges and returns, with or without diacritics", () => {
+    for (const t of ["Mua về mặc không vừa thì đổi được không shop?", "đổi size được không", "chính sách đổi trả thế nào", "tra hang duoc khong"]) {
+      expect(isReturnsQuestion(t), t).toBe(true);
+    }
+    for (const t of ["váy này có đôi bông tai đi kèm không", "doi lau khong shop", "áo co giãn không"]) {
+      expect(isReturnsQuestion(t), t).toBe(false);
+    }
   });
 });

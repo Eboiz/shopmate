@@ -7,10 +7,11 @@
 // LLM tool loop, so PB-07 and the PB-10 eval read both paths alike.
 import type { EngineMode, HandoffReason, HistoryMessage, ProductCard, Reply, ToolName, ToolOutput } from "@/contract";
 import { groupRank, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
-import { OFFER_QUESTION, offerReply, sizeOfferText, type OfferReason } from "./handoff-offer";
+import { asksForHuman, OFFER_QUESTION, offerReply, sizeOfferText, type OfferReason } from "./handoff-offer";
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
-import { productsForOccasion, productsNamedIn } from "./product-match";
+import { answersOrderConfirm, isOrderMessage, ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
+import { isReturnsQuestion, productsForOccasion, productsNamedIn } from "./product-match";
 import { knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
 import { fold } from "./text";
@@ -34,6 +35,9 @@ export const STAFF_NO_DATA_TEXT = "Dữ liệu shop chưa có thông tin này. B
 export const STAFF_NO_POLICY_TEXT = "Shop chưa viết chính sách này. Bạn tự trả lời khách nhé.";
 export const STAFF_POLICY_SILENT_TEXT = "Chính sách của shop chưa nói tới điều khách hỏi. Bạn kiểm tra và tự trả lời khách nhé.";
 export const STAFF_NO_SIZE_TEXT = "Số đo nằm ngoài bảng size hoặc sản phẩm chưa có bảng size, nên chưa tư vấn được size. Bạn kiểm tra và tự trả lời khách nhé.";
+export const STAFF_OFF_TOPIC_TEXT = "Câu hỏi không liên quan tới sản phẩm hay chính sách của shop. Bạn tự trả lời khách nhé.";
+// PB-31: off-topic ("php2shell là gì", the owner's name): only the shop, then the offer.
+export const OFF_TOPIC_TEXT = `Dạ, mình chỉ hỗ trợ về sản phẩm, đơn hàng và chính sách của shop thôi ạ. ${OFFER_QUESTION}`;
 
 export type ToolResult = { ok: boolean; output: unknown; code?: string };
 // Runs one tool through executeTool and records it (logs, metrics) in the engine.
@@ -135,16 +139,56 @@ export function catalogGroups(catalog: CatalogItem[]): ProductGroup[] {
   return [...groups].sort((a, b) => groupRank(a) - groupRank(b));
 }
 
+// PB-31: each group of the shop with a few of its products, groups as buttons.
+// Built from the catalog: no price, nothing the model wrote.
+export function catalogOverview(catalog: CatalogItem[], perGroup = 3): Reply | null {
+  const groups = catalogGroups(catalog);
+  if (groups.length === 0) return null;
+  const lines = groups.map((g) => {
+    const names = catalog.filter((p) => productGroup(p.category, p.name) === g).slice(0, perGroup).map((p) => p.name);
+    return `${g}: ${names.join(", ")}`;
+  });
+  return { text: ["Dạ, shop đang có:", ...lines, "Bạn muốn xem nhóm nào ạ?"].join("\n"), products: [], quickReplies: groups };
+}
+
 const lastShopperText = (history: HistoryMessage[]) => history.findLast((m) => m.sender === "shopper")?.text ?? "";
 
 const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_mai: "khuyến mãi" } as const;
 
-export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
-  const { decision: d, mode } = input;
-  const customer = mode === "customer";
+// PB-31: corrections to Jev's intent that the words of the message settle.
+//  - buying words and no person named: an order, never asked_for_human;
+//  - "mặc không vừa thì đổi được không": the doi_tra policy, not product data.
+function settledDecision(d: JevDecision, text: string): JevDecision {
+  if (d.intent === "human" && isOrderMessage(text) && !asksForHuman(text)) return { ...d, intent: "order" };
+  if (["product_detail", "size", "stock", "unclear"].includes(d.intent) && isReturnsQuestion(text)) {
+    return { ...d, intent: "policy", policyKind: "doi_tra" };
+  }
+  return d;
+}
 
+// The AI already read an order back in this conversation.
+const orderReadBack = (history: HistoryMessage[]) =>
+  history.some((m) => m.sender === "ai" && /ban muon dat .* dung khong/.test(fold(m.text)));
+
+export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
+  const { mode } = input;
+  const customer = mode === "customer";
+  const last = lastShopperText(input.history);
+  const d = settledDecision(input.decision, last);
+
+  // PB-31: a yes to the order read-back goes on with the order (tool loop).
+  if (customer && answersOrderConfirm(input.history)) return { kind: "fallback", reason: "order" };
   if (d.confidence !== null && d.confidence < MIN_INTENT_CONFIDENCE) return { kind: "fallback", reason: "low_confidence" };
-  if (d.intent === "order") return { kind: "fallback", reason: "order" };
+  if (d.intent === "order") {
+    // PB-31: a message that could be an order is read back once before the order
+    // flow: "Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?". An order
+    // that also asks for a discount goes to the tool loop, which refuses it.
+    const readBack = customer && d.discountTrick < DISCOUNT_TRICK_THRESHOLD && isOrderMessage(last) && !orderReadBack(input.history);
+    const product = readBack ? resolveProduct(input) : null;
+    if (!product) return { kind: "fallback", reason: "order" };
+    const text = orderConfirmText(product.name, requestedColor(input.history, product.colors), requestedSize(input.history, product.sizes));
+    return { kind: "fixed", reply: { text, products: [], quickReplies: [ORDER_CONFIRM_YES, ORDER_CONFIRM_NO] } };
+  }
 
   // A discount or "ignore your rules" message: no other tool runs, whatever else
   // it asks (PB-17). Only the shop's own promotion text may be quoted.
@@ -170,6 +214,8 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         : { kind: "write", facts: {}, task: "Soạn một câu ngắn cho biết nhân viên shop đang hỗ trợ trực tiếp.", productIds: [] };
     case "greeting":
       return { kind: "write", facts: {}, task: "Chào lại ngắn gọn và hỏi bạn đang tìm món gì.", productIds: [] };
+    case "off_topic":
+      return customer ? offer(OFF_TOPIC_TEXT, "not_covered_by_data") : fixed(STAFF_OFF_TOPIC_TEXT);
     case "browse": {
       // PB-31: "shop có gì", "đồ đi tiệc": the groups as buttons, plus a few
       // products whose description fits the occasion.
@@ -229,11 +275,12 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   // stock, size, pairing: about one product.
   const product = resolveProduct(input);
   if (!product) {
-    if (customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
-    if (d.intent === "pairing") return fixed(ASK_PAIRING_PRODUCT_TEXT);
     // PB-31: the shop doesn't have exactly what was named, but has close
-    // products ("áo khoác da" -> its jackets): ask which one, with buttons.
-    const close = productsNamedIn(lastShopperText(input.history), input.catalog, 3);
+    // products ("áo khoác da" -> its jackets): ask which one, with buttons. The
+    // shopper was understood, so this comes before "misunderstood twice".
+    const close = d.intent === "pairing" ? [] : productsNamedIn(last, input.catalog, 3);
+    if (close.length === 0 && customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
+    if (d.intent === "pairing") return fixed(ASK_PAIRING_PRODUCT_TEXT);
     if (close.length > 0) {
       return {
         kind: "write",
