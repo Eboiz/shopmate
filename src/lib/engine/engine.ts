@@ -26,7 +26,7 @@ import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
-import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
+import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
 import { isCatalogQuestion } from "./product-match";
@@ -613,6 +613,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         return { run, ms: now() - s0, startMs: s0 - t0 };
       }
       if (u.name === "create_draft_order" && mode === "customer") {
+        // The shopper confirms the quoted items, so those are written: the model
+        // only supplies the contact details (it once typed an invented variant id).
+        if (previousQuote && u.input && typeof u.input === "object") {
+          u = { ...u, input: { ...u.input, items: previousQuote.items } };
+        }
         const issue = orderWriteError(u.input, input.history, previousQuote);
         if (issue) {
           orderIssue = issue;
@@ -622,7 +627,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
           orderIssue = { code: "duplicate_order_call" };
           return { run: blockedOrderRun(u.input, "duplicate_order_call"), ms: now() - s0, startMs: s0 - t0 };
         }
-        createAttempted = true;
+        // A call the contract rejects writes nothing, so it doesn't count as the
+        // turn's one order write (preview 11/11: an invalid id blocked the right call).
+        createAttempted = tools.create_draft_order.input.safeParse(u.input).success;
         const candidate = u.input as { customerPhone?: unknown } | null;
         if (typeof candidate?.customerPhone === "string" && !/^0\d{9}$/.test(candidate.customerPhone)) {
           orderIssue = { code: "invalid_phone" };
@@ -801,7 +808,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
     const summary = orderSummary(finalQuote.quote, shippingPolicy);
     quotedOrderPresented = summary !== null;
-    reply = { text: summary ?? "Đơn có quá nhiều món để đọc lại trong một tin. Bạn chia thành các đơn nhỏ hơn giúp mình nhé.", products: [], quickReplies: [] };
+    reply = { text: summary ?? "Đơn có quá nhiều món để đọc lại trong một tin. Bạn chia thành các đơn nhỏ hơn giúp mình nhé.", products: [], quickReplies: summary ? [ORDER_SUMMARY_YES, ORDER_SUMMARY_EDIT] : [] };
   } else if (finalOrderIssue?.code === "invalid_phone") {
     reply = { text: "Số điện thoại chưa hợp lệ. Bạn gửi lại số di động Việt Nam gồm 10 chữ số, bắt đầu bằng 0 nhé.", products: [], quickReplies: [] };
   } else if (finalOrderIssue?.code === "customer_details_missing") {

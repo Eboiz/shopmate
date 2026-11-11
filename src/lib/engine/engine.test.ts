@@ -20,6 +20,7 @@ import {
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { OFFER_DECLINED_TEXT, OFFER_NO, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_YES } from "./handoff-offer";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
+import { isOrderConfirmation, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES } from "./order-flow";
 import { PROMPT_VERSION, VIEWING_PRODUCT_REF } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
@@ -159,6 +160,9 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("Tổng tiền hàng: 350.000đ (chưa gồm phí giao hàng)");
       expect(result.output.reply.text).toContain("Nội thành 20.000đ");
       expect(result.output.reply.text).toContain("Bạn xác nhận đơn này chứ?");
+      expect(result.output.reply.quickReplies).toEqual([ORDER_SUMMARY_YES, ORDER_SUMMARY_EDIT]);
+      expect(isOrderConfirmation([{ sender: "ai", text: result.output.reply.text }, { sender: "shopper", text: ORDER_SUMMARY_YES }])).toBe(true);
+      expect(isOrderConfirmation([{ sender: "ai", text: result.output.reply.text }, { sender: "shopper", text: ORDER_SUMMARY_EDIT }])).toBe(false);
       expect(model.calls).toHaveLength(1);
       expect(store.insertTurn).toHaveBeenCalledTimes(1);
     });
@@ -172,16 +176,47 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("COD");
     });
 
-    it("blocks a write before confirmation or when the customer changes the items", async () => {
+    // PB-19 main flow on the preview, 11/11: a call the contract rejected wrote
+    // nothing, yet the correct call after it was blocked as duplicate_order_call.
+    it("still creates the draft when an earlier call in the turn was invalid and wrote nothing", async () => {
+      const invalid = { ...draftOrder, customerName: "" };
+      const { handlers, run } = setup(
+        [toolCalls(toolUse("create_draft_order", invalid)), toolCalls(toolUse("create_draft_order", draftOrder))],
+        { store: orderStore() },
+      );
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      const result = await run(customerInput({ history: orderHistory }));
+      expect(handlers.create_draft_order).toHaveBeenCalledTimes(1);
+      expect(result.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
+    });
+
+    it("writes at most one draft per turn when the model sends two valid calls", async () => {
+      const { handlers, run } = setup(
+        [toolCalls(toolUse("create_draft_order", draftOrder), toolUse("create_draft_order", draftOrder))],
+        { store: orderStore() },
+      );
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      await run(customerInput({ history: orderHistory }));
+      expect(handlers.create_draft_order).toHaveBeenCalledTimes(1);
+    });
+
+    it("blocks a write before confirmation", async () => {
       const before = setup([toolCalls(toolUse("create_draft_order", draftOrder)), reply()], { store: orderStore() });
       const first = await before.run(customerInput({ history: [orderHistory[0]] }));
       expect(before.handlers.create_draft_order).not.toHaveBeenCalled();
       expect(first.output.reply.text).toContain("xin bạn xác nhận");
+    });
 
-      const changed = setup([toolCalls(toolUse("create_draft_order", { ...draftOrder, items: [{ variantId: VARIANT, quantity: 2 }] })), reply()], { store: orderStore() });
-      const second = await changed.run(customerInput({ history: orderHistory }));
-      expect(changed.handlers.create_draft_order).not.toHaveBeenCalled();
-      expect(second.output.reply.text).toContain("báo giá đúng các món");
+    // The shopper confirmed the summary, so the order is written with the quoted
+    // items whatever ids or quantities the model typed (preview 11/11: the model
+    // invented a variant id and no order was created).
+    it("writes the quoted items, not the ids the model typed", async () => {
+      const typo = setup([toolCalls(toolUse("create_draft_order", { ...draftOrder, items: [{ variantId: "b2f3a1c0-4e6d-4f8a-9c7b-1d2e3f4a5b6c", quantity: 2 }] }))], { store: orderStore() });
+      typo.handlers.quote_order.mockResolvedValue(orderQuote);
+      const second = await typo.run(customerInput({ history: orderHistory }));
+      expect(typo.handlers.create_draft_order).toHaveBeenCalledTimes(1);
+      expect(typo.handlers.create_draft_order.mock.calls[0][0]).toMatchObject({ items: draftOrder.items });
+      expect(second.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
     });
 
     it("asks again for an invalid phone and never writes", async () => {
