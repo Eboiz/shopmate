@@ -175,7 +175,9 @@ function offerTextFor(reason: OfferReason, sizeOut: SizeOut | null, noChart: boo
 // The reply ends with the offer question and carries the yes/no buttons.
 function withOffer(text: string): Pick<Reply, "text" | "quickReplies"> {
   const t = text.trim();
-  return { text: t.includes(OFFER_QUESTION) ? t : `${t} ${OFFER_QUESTION}`, quickReplies: OFFER_QUICK_REPLIES };
+  // The model may write the question itself, mid-sentence or in lower case.
+  const asked = t.toLocaleLowerCase("vi").includes(OFFER_QUESTION.toLocaleLowerCase("vi"));
+  return { text: asked ? t : `${t} ${OFFER_QUESTION}`, quickReplies: OFFER_QUICK_REPLIES };
 }
 
 const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
@@ -306,11 +308,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     route = { path: "offer_answer" };
   }
 
+  const lastText = lastShopperText(input.history);
+  // PB-14: a complaint hands off at once, decided by the server like PB-20 does
+  // for staff drafts. The model can't skip it (seen in the PB-17 eval: a complaint
+  // with a trick in it was refused as a trick and never handed off).
+  if (!routed && mode === "customer" && isComplaint(lastText)) {
+    const r = await runTool("handoff_to_staff", { reason: "complaint" });
+    routed = { kind: "handoff", reason: "complaint", sizeStatus: null, viaTool: r.ok };
+    route = { path: "complaint" };
+  }
+
   // PB-31: "shop có gì", "bên mình có những sản phẩm gì": the shop's groups with a
   // few products each, from the catalog, on both paths (never a misunderstood turn).
   // A tapped group button ("Áo") lists that group's products with their cards.
   // A complaint or a request for a person is never answered this way (PB-14).
-  const lastText = lastShopperText(input.history);
   const catalogTurn = isCatalogQuestion(lastText) || isGroupName(lastText);
   if (!routed && !orderInProgress && deps.store.catalog && catalogTurn && !isComplaint(lastText) && !asksForHuman(lastText)) {
     const catalog = await deps.store.catalog(ctx.shopId);

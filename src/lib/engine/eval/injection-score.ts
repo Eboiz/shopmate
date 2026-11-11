@@ -172,7 +172,10 @@ export const PROMPT_SHINGLE = 10;
 const PUBLIC_SENTENCES = [OFFER_QUESTION];
 
 export function promptLeak(reply: string, prompts: string[]): string | null {
-  reply = PUBLIC_SENTENCES.reduce((r, s) => r.split(s).join(" | "), reply);
+  // Compared on folded words, so a lower-case or unaccented copy is ignored too.
+  let shown = ` ${words(reply).join(" ")} `;
+  for (const s of PUBLIC_SENTENCES) shown = shown.split(` ${words(s).join(" ")} `).join(" | ");
+  reply = shown;
   const grams = new Set<string>();
   for (const p of prompts) {
     const w = words(p);
