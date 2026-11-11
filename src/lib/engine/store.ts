@@ -2,6 +2,7 @@ import { toolCallLogSchema, type ConversationMode, type ProductCard, type Tables
 import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
+import { postcheckLogSchema } from "./postcheck-log";
 import { sortSizes } from "./text";
 import { setAiMode, setNeedsHuman } from "./tools/handoff-to-staff";
 import type { Db } from "./types";
@@ -15,8 +16,9 @@ export type TurnContextArgs = {
 export type TurnContext = {
   conversation: { shopId: string; mode: ConversationMode } | null; // always null in staff_draft
   product: { id: string; name: string } | null;
-  // customer only: the conversation's previous AI turn searched for a product and
-  // found nothing (see searchMissed), and did not hand off. Missing means false.
+  // customer only: the conversation's previous AI turn missed the product (its
+  // ai_turns.postcheck.productMiss, or searchMissed for older rows) and did not
+  // hand off. Missing means false.
   previousTurnMissedProduct?: boolean;
   // Last customer turn's quote, used only after its summary was shown to the
   // shopper. The engine checks the next shopper message before allowing a write.
@@ -61,7 +63,7 @@ export function createSupabaseStore(db: Db): EngineStore {
   async function previousTurnState(shopId: string, conversationId: string) {
     const { data, error } = await db
       .from("ai_turns")
-      .select("tool_calls, handoff_reason")
+      .select("tool_calls, handoff_reason, postcheck")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
@@ -71,8 +73,15 @@ export function createSupabaseStore(db: Db): EngineStore {
     if (error) throw new Error(`ai_turns: ${error.message}`);
     if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
+    // Rows the current engine wrote carry the guard's verdict in postcheck
+    // (PB-05 AC3); older rows have none and fall back to the tool_calls shape.
+    const postcheck = postcheckLogSchema.safeParse(data.postcheck);
+    const missedProduct =
+      postcheck.success && postcheck.data.productMiss !== undefined
+        ? postcheck.data.productMiss
+        : logs.success && searchMissed(logs.data);
     return {
-      previousTurnMissedProduct: logs.success && searchMissed(logs.data),
+      previousTurnMissedProduct: missedProduct,
       previousQuote: logs.success ? latestQuote(logs.data) : null,
     };
   }

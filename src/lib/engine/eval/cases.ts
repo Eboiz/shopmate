@@ -115,6 +115,21 @@ export const evalCases: EvalCase[] = [
     handoff: "misunderstood_twice",
   },
   {
+    id: "product-not-found-twice-broadened",
+    description: "PB-05 AC3, second miss with the model's broadened search: still hands off to staff.",
+    history: [
+      { sender: "shopper", text: UNKNOWN_ASK },
+      { sender: "ai", text: "Dạ shop chưa tìm thấy áo khoác da. Bạn tìm áo khoác kiểu nào, màu gì ạ?" },
+      { sender: "shopper", text: "loại áo khoác da màu đen ấy" },
+    ],
+    previousTurn: [{ name: "search_products", input: { query: "áo khoác da", limit: 5 }, output: { products: [] } }],
+    expected: [
+      { tool: "search_products", required: true },
+      { tool: "handoff_to_staff", args: { reason: "misunderstood_twice" }, required: false },
+    ],
+    handoff: "misunderstood_twice",
+  },
+  {
     id: "size-advice",
     description: "Height and weight go to recommend_size as whole numbers.",
     history: shopper("Mình cao 1m60 nặng 50kg thì mặc size nào?"),

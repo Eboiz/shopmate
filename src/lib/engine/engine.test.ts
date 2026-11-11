@@ -778,6 +778,36 @@ describe("runEngine", () => {
       expect(store.insertTurn.mock.calls[0][0].handoff_reason).toBe("misunderstood_twice");
     });
 
+    it("second miss hands off misunderstood_twice although the model also searched a broader query", async () => {
+      // Valid 12-char hex tails ("01".."05"), so get_stock really runs ok on one.
+      const jackets = [1, 2, 3, 4, 5].map((n) => `a0000000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`);
+      const { handlers, store, run } = setup(
+        [
+          toolCalls(
+            toolUse("search_products", { query: "áo khoác" }),
+            toolUse("search_products", { query: "áo khoác da" }),
+            toolUse("get_stock", { productId: jackets[0] }),
+          ),
+          clarify,
+        ],
+        { store: missedBefore(true) },
+      );
+      handlers.search_products.mockImplementation(async (...args: unknown[]) => {
+        const query = (args[0] as { query?: string }).query;
+        return query === "áo khoác"
+          ? { products: jackets.map((productId) => ({ productId, name: "Áo khoác", category: "áo khoác", price: 350000, imageUrl: null, colors: [], sizes: [] })) }
+          : { products: [] };
+      });
+      const result = await run(followUp("loại áo khoác da màu đen ấy"));
+      expect(result.handoffReason).toBe("misunderstood_twice");
+      expect(result.output.reply).toEqual({ text: PRODUCT_NOT_FOUND_HANDOFF_TEXT, products: [], quickReplies: [] });
+      expect(store.setNeedsHuman).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
+      await result.turnLogged;
+      const row = store.insertTurn.mock.calls[0][0];
+      expect(row.handoff_reason).toBe("misunderstood_twice");
+      expect(row.postcheck).toEqual({ productMiss: true });
+    });
+
     it("the answer finds a product: no handoff", async () => {
       const { handlers, store, run } = setup([emptySearch("váy suông"), reply("Dạ váy suông linen còn ạ")], { store: missedBefore(true) });
       handlers.search_products.mockResolvedValue({
@@ -791,11 +821,16 @@ describe("runEngine", () => {
     it("the answer is about the product being viewed (get_stock works): no handoff", async () => {
       const { store, run } = setup(
         [toolCalls(toolUse("search_products", { query: "da" }), toolUse("get_stock", { productId: PRODUCT })), reply("Dạ còn ạ")],
-        { store: missedBefore(true) },
+        {
+          // The product is on screen, so the turn's product tool ran on a found id.
+          store: fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: { id: PRODUCT, name: "Váy suông linen" }, previousTurnMissedProduct: true }),
+        },
       );
       const result = await run(followUp("cái mình đang xem đó"));
       expect(result.handoffReason).toBeNull();
       expect(store.setNeedsHuman).not.toHaveBeenCalled();
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false });
     });
 
     it("no search this turn, a failed search, or a fresh question: no handoff", async () => {

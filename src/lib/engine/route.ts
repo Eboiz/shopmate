@@ -43,7 +43,8 @@ export type RouteOutcome =
   | { kind: "fixed"; reply: Reply }
   // The reply model writes the text; productIds are chosen here, not by the model.
   // sizeAdvice: the reply must advise exactly this size (PB-06 post-check).
-  | { kind: "write"; facts: Record<string, unknown>; task: string; productIds: string[]; sizeAdvice?: SizeAdvice };
+  // productMiss: the clarifying question about which product is meant (PB-05 AC3).
+  | { kind: "write"; facts: Record<string, unknown>; task: string; productIds: string[]; sizeAdvice?: SizeAdvice; productMiss?: true };
 
 export type RouteInput = {
   mode: EngineMode;
@@ -175,6 +176,7 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       facts: {},
       task: "Hỏi một câu ngắn: bạn đang hỏi sản phẩm nào (tên hoặc loại, màu). Không đoán sản phẩm.",
       productIds: [],
+      productMiss: true,
     };
   }
 

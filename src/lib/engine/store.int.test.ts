@@ -45,8 +45,8 @@ describe("createSupabaseStore", () => {
     });
 
     it("says whether the conversation's latest AI turn searched and found nothing (PB-05)", async () => {
-      const turn = (tool_calls: Json[], handoff_reason: "misunderstood_twice" | null = null) =>
-        store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls, handoff_reason });
+      const turn = (tool_calls: Json[], handoff_reason: "misunderstood_twice" | null = null, postcheck?: Json) =>
+        store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls, handoff_reason, postcheck });
       const missed = () =>
         store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null }).then((tc) => tc.previousTurnMissedProduct);
       const emptySearch = { name: "search_products", input: { query: "áo khoác da", limit: 5 }, output: { products: [] } };
@@ -61,6 +61,12 @@ describe("createSupabaseStore", () => {
       await turn([emptySearch], "misunderstood_twice");
       expect(await missed()).toBe(false);
       await turn([]);
+      expect(await missed()).toBe(false);
+      // postcheck.productMiss wins over the tool_calls shape: a router clarifying
+      // turn logs no search but missed; a logged false overrides an empty search.
+      await turn([], null, { productMiss: true });
+      expect(await missed()).toBe(true);
+      await turn([emptySearch], null, { productMiss: false });
       expect(await missed()).toBe(false);
     });
 

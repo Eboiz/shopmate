@@ -118,6 +118,17 @@ describe("routeTurn", () => {
     expect(second.runTool).toHaveBeenCalledWith("handoff_to_staff", { reason: "misunderstood_twice" });
   });
 
+  it("no-product clarifying write carries productMiss", async () => {
+    const { run } = setup();
+    const out = await run({ viewing: null, decision: decision({ product: { kind: "none" } }) });
+    expect(out).toMatchObject({ kind: "write", productIds: [], productMiss: true });
+    // The other no-product outcomes are not a search miss.
+    const pairing = await setup().run({ viewing: null, decision: decision({ intent: "pairing", product: { kind: "none" } }) });
+    expect(pairing).toEqual({ kind: "fixed", reply: { text: ASK_PAIRING_PRODUCT_TEXT, products: [], quickReplies: [] } });
+    const handoff = await setup().run({ viewing: null, decision: decision({ product: { kind: "none" }, askedToClarify: 0.9 }) });
+    expect(handoff).toMatchObject({ kind: "handoff", reason: "misunderstood_twice" });
+  });
+
   it("size: asks only for what is missing, without a tool", async () => {
     const { run, runTool } = setup();
     const out = await run({ decision: decision({ intent: "size" }), history: said("mình cao 1m58 thì mặc size nào") });

@@ -23,7 +23,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model
 import { checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
-import { answersAiMessage, searchMissed } from "./misunderstood";
+import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION } from "./prompt";
@@ -235,6 +235,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let reply: Reply | null = null;
   let quotedOrderPresented = false;
   let personalReplyNeeded = false;
+  let productMiss = false;
   let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
@@ -318,6 +319,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         // more try with the reason added to the task; after that the server's
         // own text (size) or a handoff (discount) is sent.
         const write = routed;
+        // PB-05 AC3: the router's "which product do you mean" question is this
+        // turn's miss; the second one in a row hands off before the reply model
+        // runs (the guard is customer-only).
+        productMiss = mode === "customer" && write.productMiss === true;
+        if (productMiss && tc.previousTurnMissedProduct === true && answersAiMessage(input.history)) {
+          productMissedTwice = true;
+          handoff = "misunderstood_twice";
+          await deps.store.setNeedsHuman(ctx);
+          reply = { text: PRODUCT_NOT_FOUND_HANDOFF_TEXT, products: [], quickReplies: [] };
+          break;
+        }
         const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
         let task = write.task;
         for (let attempt = 1; ; attempt++) {
@@ -583,9 +595,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // PB-05: the product name matched nothing last turn (the AI asked one
   // clarifying question) and the shopper's answer matches nothing again. The
-  // engine hands off itself; the model's second guess is not sent.
+  // miss is decided by the search for the shopper's own words (productMissed),
+  // not by the broader queries the model also ran; a router turn logs no
+  // search, so the previous turn's postcheck carries it (store.ts). The engine
+  // hands off itself; the model's second guess is not sent.
+  productMiss = mode === "customer"
+    ? productMissed(logs, shopperTurnText(input.history), tc.product?.id ?? null)
+    : false;
   productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
-    && answersAiMessage(input.history) && searchMissed(logs);
+    && answersAiMessage(input.history) && productMiss;
   if (productMissedTwice) handoff = "misunderstood_twice";
   else if (discountBlocked) handoff = "postcheck_failed";
 
@@ -745,6 +763,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         latency_ms: latencyMs,
         tool_calls: logs as NonNullable<Json>,
         handoff_reason: handoff,
+        postcheck: { productMiss },
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         ttft_ms: metrics.ttftMs,
