@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { tools } from "@/contract";
-import { NO_SIZE_CHART_HANDOFF_TEXT, SIZE_OUT_OF_RANGE_HANDOFF_TEXT } from "../engine";
+import { OFFER_QUICK_REPLIES, sizeOfferText } from "../handoff-offer";
 import { extractMeasurements } from "../measurements";
 import { recommendSize } from "../tools/recommend-size";
 import { toModelMessages } from "../messages";
@@ -31,13 +31,24 @@ const correct: Record<string, { calls: ActualCall[]; outcome: RunOutcome }> = {
   "size-phrase-cao-1m6": { calls: [size(V, 160, 50)], outcome: { handoffReason: null, replyText: "Dạ bạn mặc size M ạ." } },
   "size-phrase-weight-first": { calls: [size(V, 160, 50)], outcome: { handoffReason: null, replyText: "Dạ size M nhé." } },
   "size-phrase-1-65m": { calls: [size(V, 165, 55)], outcome: { handoffReason: null, replyText: "Dạ bạn lấy size L nhé." } },
+  // PB-31 soft handoff: the server's size text offers staff.
   "size-out-of-range": {
     calls: [size(V, 180, 75)],
-    outcome: { handoffReason: "size_out_of_range", replyText: SIZE_OUT_OF_RANGE_HANDOFF_TEXT },
+    outcome: {
+      handoffReason: null,
+      handoffOffer: "size_out_of_range",
+      replyText: sizeOfferText({ nearestSize: "L", offCm: 8, offKg: 15 }),
+      quickReplies: OFFER_QUICK_REPLIES,
+    },
   },
   "size-no-chart": {
     calls: [size(AO, 160, 50)],
-    outcome: { handoffReason: "not_covered_by_data", replyText: NO_SIZE_CHART_HANDOFF_TEXT },
+    outcome: {
+      handoffReason: null,
+      handoffOffer: "not_covered_by_data",
+      replyText: sizeOfferText(null),
+      quickReplies: OFFER_QUICK_REPLIES,
+    },
   },
 };
 
@@ -48,6 +59,7 @@ const wrong: Record<string, RunOutcome> = {
   "size-phrase-1-65m": { handoffReason: null, replyText: "Dạ bạn lấy size M nhé." },
   "size-out-of-range": { handoffReason: null, replyText: "Dạ bạn mặc size L nhé." },
   "size-no-chart": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
+  // (A hard handoff where an offer is expected is checked below.)
 };
 
 describe("pb06Cases", () => {
@@ -76,7 +88,7 @@ describe("pb06Cases", () => {
     expect(recommendSize(chart, 158, 50)).toMatchObject({ status: "ok", size: "M" });
     expect(recommendSize(chart, 160, 50)).toMatchObject({ status: "ok", size: "M" });
     expect(recommendSize(chart, 165, 55)).toMatchObject({ status: "ok", size: "L" });
-    expect(recommendSize(chart, 180, 75)).toMatchObject({ status: "out_of_range" });
+    expect(recommendSize(chart, 180, 75)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 8, offKg: 15 });
     expect(recommendSize([], 160, 50)).toEqual({ status: "no_chart" });
   });
 
@@ -88,6 +100,15 @@ describe("pb06Cases", () => {
       expect(scoreRun(c, run.calls, run.outcome).passed, c.id).toBe(true);
       expect(scoreRun(c, run.calls, wrong[c.id]).passed, c.id).toBe(false);
       expect(scoreRun(c, run.calls).passed, c.id).toBe(false);
+    }
+  });
+
+  it("rejects a hard handoff where the soft handoff offers staff", () => {
+    for (const id of ["size-out-of-range", "size-no-chart"]) {
+      const c = pb06Cases.find((x) => x.id === id)!;
+      const reason = id === "size-no-chart" ? "not_covered_by_data" : "size_out_of_range";
+      const run = correct[id];
+      expect(scoreRun(c, run.calls, { handoffReason: reason, replyText: run.outcome.replyText }).passed, id).toBe(false);
     }
   });
 });
