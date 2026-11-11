@@ -16,7 +16,7 @@ import { cartCount, cartMessage, useCart } from "./cart";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
-import { AskRow, GroupTiles, ShopFooter, ShopHeader, ShopHero, ShopMarquee, SizeBand, type GroupLink } from "./storefront-sections";
+import { GroupTiles, ShopFooter, ShopHeader, ShopHero, ShopMarquee, SizeBand, type GroupLink } from "./storefront-sections";
 
 type Props = { slug: string; previewCatalog?: ShopCatalog; detailProductId?: string };
 
@@ -431,7 +431,6 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           productHref={(productId) => `${shopHref}/p/${encodeURIComponent(productId)}`}
           onSearch={searchProducts}
         />
-        <AskRow onAsk={askText} />
         <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
 
         <section id="san-pham" aria-labelledby="san-pham-title" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">

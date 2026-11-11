@@ -151,17 +151,6 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
   );
 }
 
-export function AskRow({ onAsk }: { onAsk: (text: string) => void }) {
-  return (
-    <div className="border-b border-[#e3dfd8] bg-[#f5f3ef]">
-      <div className="mx-auto flex max-w-[1400px] items-center gap-2.5 overflow-x-auto px-4 py-2.5 [scrollbar-width:none] sm:px-6 lg:px-10">
-        <span className="mr-1 shrink-0 text-xs font-extrabold uppercase tracking-[.14em] text-[#706d67]">Khách hay hỏi</span>
-        {QUICK_ASKS.map((text) => <button key={text} type="button" onClick={() => onAsk(text)} className={chipClass}>{text}</button>)}
-      </div>
-    </div>
-  );
-}
-
 type HeroProps = {
   shopName: string;
   featured: ShopProduct[];
