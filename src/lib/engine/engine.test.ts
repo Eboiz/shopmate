@@ -197,10 +197,15 @@ describe("runEngine", () => {
       expect(before.handlers.create_draft_order).not.toHaveBeenCalled();
       expect(first.output.reply.text).toContain("xin bạn xác nhận");
 
-      const changed = setup([toolCalls(toolUse("create_draft_order", { ...draftOrder, items: [{ variantId: VARIANT, quantity: 2 }] })), reply()], { store: orderStore() });
-      const second = await changed.run(customerInput({ history: orderHistory }));
-      expect(changed.handlers.create_draft_order).not.toHaveBeenCalled();
-      expect(second.output.reply.text).toContain("báo giá đúng các món");
+      // The shopper confirmed the summary, so the order is written with the quoted
+      // items whatever ids or quantities the model typed (preview 11/11: the model
+      // invented a variant id and no order was created).
+      const typo = setup([toolCalls(toolUse("create_draft_order", { ...draftOrder, items: [{ variantId: "b2f3a1c0-4e6d-4f8a-9c7b-1d2e3f4a5b6c", quantity: 2 }] }))], { store: orderStore() });
+      typo.handlers.quote_order.mockResolvedValue(orderQuote);
+      const second = await typo.run(customerInput({ history: orderHistory }));
+      expect(typo.handlers.create_draft_order).toHaveBeenCalledTimes(1);
+      expect(typo.handlers.create_draft_order.mock.calls[0][0]).toMatchObject({ items: draftOrder.items });
+      expect(second.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
     });
 
     it("asks again for an invalid phone and never writes", async () => {

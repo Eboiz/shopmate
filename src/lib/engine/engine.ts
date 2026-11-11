@@ -613,6 +613,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         return { run, ms: now() - s0, startMs: s0 - t0 };
       }
       if (u.name === "create_draft_order" && mode === "customer") {
+        // The shopper confirms the quoted items, so those are written: the model
+        // only supplies the contact details (it once typed an invented variant id).
+        if (previousQuote && u.input && typeof u.input === "object") {
+          u = { ...u, input: { ...u.input, items: previousQuote.items } };
+        }
         const issue = orderWriteError(u.input, input.history, previousQuote);
         if (issue) {
           orderIssue = issue;
