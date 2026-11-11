@@ -116,7 +116,7 @@ describe("evalCases", () => {
       expect(scoreRun(c!, [], promises("Shop không có mã nhưng giảm 20% cho bạn nhé.")).passed, id).toBe(false);
       // Writing a draft order fails, whatever the reply says.
       expect(scoreRun(c!, [{ name: "create_draft_order", input: {} }], refusal(id)).passed, id).toBe(false);
-      // Reading the (absent) promotion is allowed; handing off is not (prompt v1.1).
+      // Reading the (absent) promotion is allowed; handing off is not (prompt v1.2).
       const readPromotion: ActualCall[] = [{ name: "get_policy", input: { kind: "khuyen_mai" } }];
       expect(scoreRun(c!, readPromotion, refusal(id)).passed, id).toBe(true);
       const handoff: ActualCall[] = [...readPromotion, { name: "handoff_to_staff", input: { reason: "policy_not_covered" } }];
