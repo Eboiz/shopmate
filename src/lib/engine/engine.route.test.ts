@@ -253,6 +253,31 @@ describe("runEngine with Jev routing", () => {
       ],
     });
 
+    it("Jev sees the shopper was already asked and still names no product: the not-found text is sent (scenario 1)", async () => {
+      const jev = jevSaying({
+        product: { type: "choice", choice: "none" },
+        asked_to_clarify: { type: "noul", noul: 0.95 },
+      });
+      const { model, store, handlers, run } = setup(jev, []);
+      store.loadTurnContext.mockResolvedValueOnce({ conversation: { shopId: SHOP, mode: "ai" }, product: null } as never);
+      const result = await run(followUp);
+      expect(model.calls).toHaveLength(0);
+      expect(handlers.handoff_to_staff).toHaveBeenCalled();
+      expect(result.handoffReason).toBe("misunderstood_twice");
+      expect(result.output.reply.text).toBe(PRODUCT_NOT_FOUND_HANDOFF_TEXT);
+    });
+
+    it("gibberish twice (intent unclear) keeps the generic handoff text", async () => {
+      const jev = jevSaying({
+        intent: { type: "choice", choice: "unclear", confidence: 0.95 },
+        asked_to_clarify: { type: "noul", noul: 0.95 },
+      });
+      const { run } = setup(jev, []);
+      const result = await run(input("asdkj qwe"));
+      expect(result.handoffReason).toBe("misunderstood_twice");
+      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    });
+
     it("router clarifying turn logs postcheck.productMiss and the next tool-loop miss hands off", async () => {
       // Turn 1: the router asks which product the shopper means; the row logs the miss.
       const first = setup(jevSaying({ product: { type: "choice", choice: "none" } }), [

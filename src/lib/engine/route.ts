@@ -37,7 +37,9 @@ type SizeStatus = "out_of_range" | "no_chart" | null;
 export type RouteOutcome =
   | { kind: "fallback"; reason: "order" | "low_confidence" | "tool_error" }
   // customer only; handoff_to_staff already ran when viaTool is true
-  | { kind: "handoff"; reason: HandoffReason; sizeStatus: SizeStatus; viaTool: boolean }
+  // productMiss: the second turn in a row that names no product the shop has
+  // (PB-05 AC3): the shopper is told the product was not found.
+  | { kind: "handoff"; reason: HandoffReason; sizeStatus: SizeStatus; viaTool: boolean; productMiss?: true }
   // staff_draft complaint the server's word list missed (PB-20)
   | { kind: "personal" }
   | { kind: "fixed"; reply: Reply }
@@ -100,9 +102,14 @@ type Variant = ToolOutput<"get_stock">["variants"][number];
 const inStock = (variants: Variant[]) =>
   variants.filter((v) => v.stock > 0).map((v) => ({ size: v.size, color: v.color, tonKho: v.stock }));
 
-async function handoff(input: RouteInput, reason: HandoffReason, sizeStatus: SizeStatus = null): Promise<RouteOutcome> {
+async function handoff(
+  input: RouteInput,
+  reason: HandoffReason,
+  sizeStatus: SizeStatus = null,
+  extra: { productMiss?: true } = {},
+): Promise<RouteOutcome> {
   const r = await input.runTool("handoff_to_staff", { reason });
-  return { kind: "handoff", reason, sizeStatus, viaTool: r.ok };
+  return { kind: "handoff", reason, sizeStatus, viaTool: r.ok, ...extra };
 }
 
 const fixed = (text: string): RouteOutcome => ({ kind: "fixed", reply: { text, products: [], quickReplies: [] } });
@@ -171,7 +178,9 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   // stock, size, pairing: about one product.
   const product = resolveProduct(input);
   if (!product) {
-    if (customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
+    if (customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) {
+      return handoff(input, "misunderstood_twice", null, { productMiss: true });
+    }
     if (d.intent === "pairing") return fixed(ASK_PAIRING_PRODUCT_TEXT);
     return {
       kind: "write",

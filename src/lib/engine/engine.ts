@@ -381,7 +381,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         sizeStatus = routed.sizeStatus;
         // handoff_to_staff moved the conversation already, unless it failed.
         if (!routed.viaTool) await deps.store.setNeedsHuman(ctx);
-        reply = { text: handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
+        // PB-05 AC3: Jev saw the shopper was already asked which product and
+        // still named none the shop has: same text as the tool loop's second miss.
+        productMissedTwice = routed.productMiss === true;
+        reply = {
+          text: productMissedTwice ? PRODUCT_NOT_FOUND_HANDOFF_TEXT : handoffText(handoff, sizeStatus),
+          products: [],
+          quickReplies: [],
+        };
         break;
       case "personal":
         personalReplyNeeded = true;

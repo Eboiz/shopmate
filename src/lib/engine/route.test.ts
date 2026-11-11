@@ -114,7 +114,7 @@ describe("routeTurn", () => {
     expect(first.runTool).not.toHaveBeenCalled();
     const second = setup();
     const out = await second.run({ viewing: null, decision: decision({ product: { kind: "none" }, askedToClarify: 0.9 }) });
-    expect(out).toEqual({ kind: "handoff", reason: "misunderstood_twice", sizeStatus: null, viaTool: true });
+    expect(out).toEqual({ kind: "handoff", reason: "misunderstood_twice", sizeStatus: null, viaTool: true, productMiss: true });
     expect(second.runTool).toHaveBeenCalledWith("handoff_to_staff", { reason: "misunderstood_twice" });
   });
 
@@ -241,10 +241,10 @@ describe("routeTurn", () => {
 
   it("unclear: asks once, hands off when the last AI message already asked", async () => {
     expect(await setup().run({ decision: decision({ intent: "unclear" }) })).toMatchObject({ kind: "write" });
-    expect(await setup().run({ decision: decision({ intent: "unclear", askedToClarify: 0.8 }) })).toMatchObject({
-      kind: "handoff",
-      reason: "misunderstood_twice",
-    });
+    const twice = await setup().run({ decision: decision({ intent: "unclear", askedToClarify: 0.8 }) });
+    expect(twice).toMatchObject({ kind: "handoff", reason: "misunderstood_twice" });
+    // Gibberish twice is not a product miss: the generic handoff text stays.
+    expect(twice).not.toHaveProperty("productMiss");
     expect(await setup().run({ mode: "staff_draft", decision: decision({ intent: "unclear", askedToClarify: 0.8 }) })).toMatchObject({
       kind: "write",
     });
