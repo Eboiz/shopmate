@@ -27,6 +27,7 @@ import { normalizeSizeInput } from "./measurements";
 import { findUncheckedNumbers, NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import type { PostcheckLog } from "./postcheck-log";
 import { findEnglish, VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
+import { answeredFromData } from "./resume";
 import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
@@ -819,9 +820,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     };
   }
   } // end of the LLM tool loop path
-  // Auto-resume: if the conversation was in needs_human and the AI produced an
-  // answer without handing off, move the conversation back to ai mode.
-  if (mode === "customer" && tc.conversation?.mode === "needs_human" && handoff === null && !truncated) {
+  // Auto-resume (PB-14 AC2, D2): a conversation in needs_human goes back to the
+  // AI only when this turn answered from shop data without handing off; "ok cảm
+  // ơn" after a complaint stays in the staff queue.
+  if (mode === "customer" && tc.conversation?.mode === "needs_human" && handoff === null && !truncated
+    && !numberBlocked && !discountBlocked && answeredFromData(logs)) {
     await deps.store.setAiMode?.(ctx);
   }
 

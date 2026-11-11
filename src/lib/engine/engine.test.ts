@@ -1408,15 +1408,40 @@ describe("runEngine", () => {
       expect(store.setNeedsHuman).not.toHaveBeenCalled();
     });
 
-    it("conversation in needs_human mode auto-resumes and calls setAiMode on successful answer", async () => {
-      const { store, model, run } = setup([reply("Dạ shop còn hàng nhé")], {
-        store: fakeStore({ conversation: { shopId: SHOP_A, mode: "needs_human" }, product: null }),
-      });
-      const result = await run(customerInput({ history: [{ sender: "shopper", text: "áo còn không shop?" }] }));
-      expect(result.output.reply.text).toBe("Dạ shop còn hàng nhé");
-      expect(model.calls).toHaveLength(1);
+    const needsHuman = () => fakeStore({ conversation: { shopId: SHOP_A, mode: "needs_human" }, product: null });
+
+    it("a stock answer in needs_human resumes (PB-14 AC2, D2)", async () => {
+      const { store, model, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy còn hàng, giá 350.000đ nhé", [PRODUCT]),
+      ], { store: needsHuman() });
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "váy còn không shop?" }] }));
+      expect(result.output.reply.text).toBe("Dạ váy còn hàng, giá 350.000đ nhé");
+      expect(model.calls).toHaveLength(2);
       expect(store.setAiMode).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
       expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    });
+
+    it("a greeting or thanks turn in needs_human does not resume (Review Focus 4)", async () => {
+      const { store, run } = setup([reply("Dạ không có gì ạ, nhân viên shop sẽ hỗ trợ bạn sớm nhé")], { store: needsHuman() });
+      const result = await run(customerInput({
+        history: [
+          { sender: "shopper", text: "Hàng giao bị rách, mình bực quá" },
+          { sender: "ai", text: "Dạ mình đã chuyển cho nhân viên shop." },
+          { sender: "shopper", text: "ok cảm ơn" },
+        ],
+      }));
+      expect(result.handoffReason).toBeNull();
+      expect(store.setAiMode).not.toHaveBeenCalled();
+    });
+
+    it("an empty search in needs_human does not resume", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("search_products", { query: "áo khoác da" })),
+        reply("Dạ bạn đang tìm loại áo khoác nào ạ?"),
+      ], { store: needsHuman() });
+      await run(customerInput({ history: [{ sender: "shopper", text: "có áo khoác da không" }] }));
+      expect(store.setAiMode).not.toHaveBeenCalled();
     });
 
     it("foreign productId is ignored", async () => {
