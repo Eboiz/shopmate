@@ -186,10 +186,14 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     return () => observer.disconnect();
   }, [catalog, catalogLoading, detailProductId]);
 
+  // A toast left over from "Thêm vào giỏ" would sit on top of the cart's send
+  // button on phones, so opening the cart clears it.
+  const [cartNotice, setCartNotice] = useState<{ text: string; added: boolean } | null>(null);
   // The cart panel gives focus back to the button that opened it.
   const cartOpenerRef = useRef<HTMLElement | null>(null);
   const openCart = useCallback(() => {
     cartOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCartNotice(null);
     setCartOpen(true);
   }, []);
   const closeCart = useCallback(() => {
@@ -202,7 +206,6 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // "Thêm vào giỏ" on a product card: adds at once when there is one colour
   // and size, otherwise asks for them in a small dialog.
   const [quickAdd, setQuickAdd] = useState<ShopProduct | null>(null);
-  const [cartNotice, setCartNotice] = useState<{ text: string; added: boolean } | null>(null);
   const closeQuickAdd = useCallback(() => setQuickAdd(null), []);
   const addToCart = useCallback((item: CartItem, maxQuantity: number) => {
     const added = cart.add(item, maxQuantity);

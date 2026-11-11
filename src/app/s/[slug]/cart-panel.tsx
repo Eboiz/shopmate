@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
 import { displayColor } from "@/lib/shop/catalog-view";
-import { cartSubtotal, type CartItem } from "./cart";
+import { CART_MAX_LINES, cartSubtotal, type CartItem } from "./cart";
 
 type Props = {
   items: CartItem[];
@@ -67,12 +67,13 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onSend,
 
         {items.length > 0 && (
           <footer className="border-t border-[#e3dfd8] px-5 py-4">
+            {items.length >= CART_MAX_LINES && <p role="status" className="mb-3 bg-[#fff0eb] px-3 py-2 text-xs font-semibold leading-5 text-[#a83826]">Giỏ đã đủ {CART_MAX_LINES} món. Gửi đơn này trước rồi thêm tiếp nhé.</p>}
             <p className="flex justify-between text-base font-bold"><span>Tạm tính</span><span className="tabular-nums">{formatPrice(subtotal)}</span></p>
             <p className="mt-1 text-xs leading-5 text-[#706d67]">
               {shippingPolicy ? `Giao hàng: ${shippingPolicy}` : "Phí giao hàng: shop báo khi xác nhận đơn."}
             </p>
-            <button type="button" onClick={onSend} className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#a83826]">Gửi đơn cho shop qua chat</button>
-            <p className="mt-2 text-xs leading-5 text-[#706d67]">Tin nhắn đặt hàng được soạn sẵn trong chat. Shop kiểm tra tồn kho và xác nhận trước khi giao.</p>
+            <button type="button" onClick={onSend} className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#a83826]">Soạn tin đặt hàng →</button>
+            <p className="mt-2 text-xs leading-5 text-[#706d67]">Tin đặt hàng hiện sẵn trong chat, bấm Gửi để gửi cho shop. Shop kiểm tra tồn kho và xác nhận trước khi giao.</p>
           </footer>
         )}
       </section>
