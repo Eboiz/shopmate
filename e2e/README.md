@@ -30,7 +30,7 @@ Never set `E2E_SUPABASE_*` to the team's shared project: these tests write conve
 - One spec file per feature; inside it, happy path first, then edge cases, then worst cases.
 - A test that writes data starts with `test.skip(!db, NEEDS_DB)`. A test that is safe on production is read-only and has `@smoke` in its title.
 - Unique ids per test (`uid()`, `fakeChatId()`); webhooks answer before they work, so wait with `waitForConversation()`, and use `settle()` before asserting that nothing was stored.
-- No real Claude, Meta or Telegram calls, no secrets, no hard-coded shop ids.
+- No real Claude, Meta or Telegram calls, no secrets, no hard-coded shop ids. The one exception is `main-flow.spec.ts`, which needs the real AI: in CI only the nightly `ai` job runs it (`E2E_REAL_AI=1`).
 - Features not on `main` yet are listed as `test.fixme` in `backlog.spec.ts`; turn them into real tests when the story merges.
 
 ## The test agent
@@ -42,3 +42,12 @@ The `agent` job of `.github/workflows/e2e-nightly.yml` uses Playwright's own tes
 3. The whole suite runs again without the key; the `report` job writes `docs/e2e-reports/<date>.md` and opens a PR. A person reviews and merges it in the morning.
 
 Secrets: `ANTHROPIC_API_KEY` (gateway key, with a spending limit) and `DOCUMENTS_READ_TOKEN` (fine-grained, Issues: Read on `Eboiz/Documents`). Safeguards: the agent has no shell, reads only the workspace and writes only `e2e/`; the MCP server that runs the app and the tests starts without the key; the patch and results are scanned for the key before leaving the job; the job that opens the PR has the only write token and applies changes under `e2e/` only. The PR is opened by the workflow token, so GitHub does not start CI on it by itself: push any commit to the branch (or close and reopen it) to run CI before merging.
+
+## The real-AI job
+
+The `ai` job of the same workflow calls Claude only when `src/lib/engine/` or `src/contract/` changed in the last 24 hours, or when the workflow is started by hand with `ai` ticked. It runs, on its own throwaway stack:
+
+1. `pnpm eval:injection` with `EVAL_SEVERITY=critical EVAL_RUNS=1`: the 31 critical PB-17 prompt-injection cases once each, estimated ~356k tokens, stopped by `EVAL_MAX_TOKENS=400000` before it goes over and at once on a 429.
+2. `main-flow.spec.ts` (ask → size advice → draft order → staff confirm) with the key given to the app.
+
+The report gets an "AI thật" section (case ids and failed checks only); the full HTML report with every reply is in the run's `e2e-ai` artifact (14 days). The outputs are scanned for the key before they leave the job.
