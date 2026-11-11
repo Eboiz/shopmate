@@ -55,16 +55,20 @@ export function isOrderConfirmation(history: HistoryMessage[]): boolean {
   return last?.sender === "shopper" && summary.startsWith(ORDER_SUMMARY_PREFIX) && saysYes(last.text);
 }
 
-// A yes to a read-back or a summary: it starts with a yes ("Đúng rồi, bạn chốt đơn
-// giúp mình nhé") and changes nothing. A number, a size or color, or a change word
-// ("nhưng", "đổi", "thêm") means the shopper wants something else; matched on the
-// accented text, so "đôi" or "thấy" are not read as "đổi" or "thay" (L031).
+// A yes to a read-back or a summary ("Đúng rồi, bạn chốt đơn giúp mình nhé"): it
+// starts with a yes word and every other word is a yes or polite filler. Anything
+// else ("ko", "đen", "M", "bỏ", a number) may change or refuse the order, so the AI
+// asks again rather than guess. ORDER_CONFIRM_YES folds to "dung dat luon".
+const YES_START = new Set(["ok", "oke", "okie", "okay", "dong", "xac", "chot", "dat", "len", "lay", "dung", "chinh", "chuan", "vang", "uh", "um"]);
+const YES_OR_FILLER = new Set([
+  ...YES_START, "y", "nhan", "don", "hang", "roi", "vay", "luon", "di", "lun",
+  "da", "a", "nha", "nhe", "nhen", "nghen", "ne", "hen", "oi", "shop", "ban", "minh", "em", "giup", "gium", "cho", "voi",
+]);
+
 function saysYes(text: string): boolean {
-  const changes = /\d|không|chưa|nhưng|đổi|thay|thêm|bớt|sửa|hủy|huỷ|khác|\bsize\b|\bmàu\b|\b(?:khong|chua|nhung|doi|them|bot|sua|huy|khac)\b/;
-  if (changes.test(text.toLowerCase())) return false;
-  // ORDER_CONFIRM_YES folds to "dung dat luon".
-  const answer = fold(text).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
-  return /^(?:(?:da|vang) )?(?:(?:minh|em) )?(?:ok|oke|dong y|xac nhan|chot|dat hang|dat luon|dat di|len don|lay|dung|chinh xac|vang|uh|chuan)\b/.test(answer);
+  const words = fold(text).replace(/[^a-z0-9]+/g, " ").trim().split(" ");
+  const first = words.find((word) => word !== "da" && word !== "minh" && word !== "em");
+  return first !== undefined && YES_START.has(first) && words.every((word) => YES_OR_FILLER.has(word));
 }
 
 export function sameItems(

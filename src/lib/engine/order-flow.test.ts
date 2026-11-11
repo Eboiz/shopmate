@@ -56,7 +56,12 @@ describe("PB-11 order flow", () => {
     for (const t of [
       "ok nhưng đổi sang màu đen", "đúng rồi, lấy 2 cái nhé", "ok size L nhé", "đúng rồi thêm 1 áo nữa",
       "chưa, để mình xem lại", "lấy cho mình mẫu khác", "không chốt nữa", "ok bớt 1 cái", "dung roi nhung doi size", "huỷ đơn giúp mình",
+      // Review 11/11: teen-code refusals, a color or size without the word, combining accents (NFD).
+      "ok ko lấy nữa", "oke hem lấy", "ok chx chốt nha", "oke thôi khỏi", "ok để mình xem lại đã", "ok cancel nha",
+      "Đúng rồi, bỏ cái váy ra", "đúng ko shop", "lấy cái đen nhé", "chốt cái xanh", "lấy M đi",
+      "ok đổi sang đen".normalize("NFD"),
     ]) expect(answer(t), t).toBe(false);
+    expect(answer("Đúng rồi, chốt đơn giúp mình nhé".normalize("NFD"))).toBe(true);
   });
 
   it("rejects a changed item or contact details not supplied by the shopper", () => {
