@@ -14,7 +14,8 @@ export type TurnContextArgs = {
 
 export type TurnContext = {
   conversation: { shopId: string; mode: ConversationMode } | null; // always null in staff_draft
-  product: { id: string; name: string } | null;
+  // description (PB-31): the shop's text, for details questions on the tool loop.
+  product: { id: string; name: string; description?: string | null } | null;
   // customer only: the conversation's previous AI turn searched for a product and
   // found nothing (see searchMissed), and did not hand off. Missing means false.
   previousTurnMissedProduct?: boolean;
@@ -53,7 +54,7 @@ export function createSupabaseStore(db: Db): EngineStore {
     if (productId === null) return null;
     const { data, error } = await db
       .from("products")
-      .select("id, name")
+      .select("id, name, description")
       .eq("id", productId)
       .eq("shop_id", shopId)
       .maybeSingle();

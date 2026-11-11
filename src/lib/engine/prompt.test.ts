@@ -211,6 +211,17 @@ describe("prompt", () => {
     expect(buildStablePrompt("staff_draft")).not.toContain(OFFER_QUESTION);
   });
 
+  it("review: the viewed product's description is in the volatile block, and the rule points to it", () => {
+    const withDesc = { ...productA, description: "Vải linen thoáng mát, co giãn nhẹ." };
+    const blocks = buildSystemPrompt({ mode: "customer", product: withDesc });
+    expect(blocks[1].text).toContain("Vải linen thoáng mát, co giãn nhẹ.");
+    expect(blocks[1].text).not.toContain(productA.id);
+    expect(blocks[0].text).toBe(buildSystemPrompt({ mode: "customer", product: null })[0].text);
+    expect(buildStablePrompt("customer")).toContain("mô tả của sản phẩm đang xem");
+    // no description: nothing invented
+    expect(buildVolatilePrompt(productA)).not.toContain("Mô tả");
+  });
+
   it("reply prompt: no tools, facts and task in the volatile block, stable part cached and product-free", () => {
     const facts = { product: "Váy suông linen", price: 389000 };
     const blocks = buildReplySystemPrompt({ mode: "customer", product: productA, facts, task: "Báo còn hàng." });

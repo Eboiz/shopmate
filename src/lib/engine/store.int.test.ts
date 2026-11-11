@@ -18,7 +18,8 @@ describe("createSupabaseStore", () => {
         await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: FX.a.vay01 }),
       ).toEqual({
         conversation: { shopId: FX.a.shop, mode: "ai" },
-        product: { id: FX.a.vay01, name: "Váy suông linen" },
+        // PB-31: the description comes along for the tool-loop prompt
+        product: { id: FX.a.vay01, name: "Váy suông linen", description: expect.any(String) },
         previousTurnMissedProduct: false,
         previousQuote: null,
         previousHandoffOffer: null,
@@ -88,7 +89,7 @@ describe("createSupabaseStore", () => {
       const staff = await store.loadTurnContext({ conversationId: null, shopId: FX.a.shop, productId: FX.b.vay01 });
       expect(staff.product).toBeNull();
       const own = await store.loadTurnContext({ conversationId: null, shopId: FX.a.shop, productId: FX.a.vay01 });
-      expect(own).toEqual({ conversation: null, product: { id: FX.a.vay01, name: "Váy suông linen" } });
+      expect(own).toEqual({ conversation: null, product: { id: FX.a.vay01, name: "Váy suông linen", description: expect.any(String) } });
     });
 
     it("needs exactly one of conversationId and shopId", async () => {
