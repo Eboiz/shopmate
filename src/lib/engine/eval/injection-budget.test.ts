@@ -5,7 +5,9 @@ import {
   addUsage,
   countingModel,
   DEFAULT_MAX_TOKENS,
+  fmtDuration,
   fmtTokens,
+  progressTime,
   isQuotaError,
   maxTokensFromEnv,
   parseRunsBySeverity,
@@ -90,6 +92,20 @@ describe("token budget", () => {
     expect(fmtTokens(950)).toBe("950");
     expect(fmtTokens(12_345)).toBe("12.3k");
     expect(fmtTokens(1_500_000)).toBe("1.50M");
+  });
+
+  it("fmtDuration: m:ss under an hour, h:mm:ss above", () => {
+    expect(fmtDuration(0)).toBe("0:00");
+    expect(fmtDuration(65_000)).toBe("1:05");
+    expect(fmtDuration(3_725_000)).toBe("1:02:05");
+    expect(fmtDuration(-5)).toBe("0:00");
+  });
+
+  it("progressTime: elapsed and the time left at the pace so far", () => {
+    expect(progressTime(60_000, 10, 100)).toBe("đã chạy 1:00, còn ~9:00");
+    expect(progressTime(60_000, 100, 100)).toBe("đã chạy 1:00, còn ~0:00");
+    // Nothing finished yet: no estimate.
+    expect(progressTime(5_000, 0, 100)).toBe("đã chạy 0:05");
   });
 });
 

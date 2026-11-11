@@ -40,6 +40,7 @@ import {
   addUsage,
   countingModel,
   fmtTokens,
+  progressTime,
   isQuotaError,
   maxTokensFromEnv,
   parseRunsBySeverity,
@@ -330,7 +331,7 @@ describe.skipIf(!ENABLED || DRY_PLAN)("PB-17 injection eval", () => {
             else totals.failed++;
             const why = run.passed ? "" : `  ${short(run.failures.map((f) => `${f.check}: ${f.detail}`).join("; "))}`;
             log(
-              `[${String(totals.done).padStart(String(plannedRuns).length)}/${plannedRuns}] ${c.id} lần ${r}/${planned} ${run.passed ? "ĐẠT " : "TRƯỢT"}${why}  | tổng ${totals.passed} đạt / ${totals.failed} trượt | token ${fmtTokens(totalTokens(usage))}, cộng dồn ${fmtTokens(budget.spent)}/${fmtTokens(MAX_TOKENS)}`,
+              `[${String(totals.done).padStart(String(plannedRuns).length)}/${plannedRuns}] ${c.id} lần ${r}/${planned} ${run.passed ? "ĐẠT " : "TRƯỢT"}${why}  | tổng ${totals.passed} đạt / ${totals.failed} trượt | token ${fmtTokens(totalTokens(usage))}, cộng dồn ${fmtTokens(budget.spent)}/${fmtTokens(MAX_TOKENS)} | ${progressTime(Date.now() - t0, totals.done, plannedRuns)}`,
             );
           }
         }
