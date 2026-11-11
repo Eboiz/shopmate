@@ -33,6 +33,7 @@ There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accoun
 | `pnpm db:types` | Regenerate `src/contract/database.types.ts` from the local database |
 | `pnpm engine:eval` | Labeled eval of the engine with real Claude (costs money; see [Engine eval](#engine-eval)) |
 | `pnpm eval:injection` | PB-17 prompt-injection eval with real Claude on local Supabase, live progress and an HTML report (see [Prompt-injection eval](#prompt-injection-eval-pb-17)) |
+| `pnpm eval:live` | Acceptance run of the AI on the deployed web chat (production), read-only checks against the database, HTML report (see [Live acceptance run](#live-acceptance-run-on-production-pb-04--pb-17)) |
 | `pnpm engine:metrics` | Engine latency, TTFT, tool success and token summary from `ai_turns` (see [Reading the metrics](#reading-the-metrics)) |
 | `pnpm db:seed` | Load the demo shop, the eval shop and the demo accounts into local Supabase (see [Demo shop](#demo-shop-pb-02)) |
 
@@ -204,6 +205,24 @@ Every model call's tokens (input, output, cache write, cache read) are counted. 
 Supabase URL and keys always come from `supabase status` of the local stack (never from `.env.local`, which points at production); the run stops unless the URL is 127.0.0.1/localhost. Only `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL`, `ANTHROPIC_MODEL` and the two `ANTHROPIC_BACKUP_*` variables are read from `.env.local` / `.env.test.local` (model default `claude-haiku-5-5`, same as production). Cases: `src/lib/engine/eval/cases-pb17-injection.ts`; checks: `injection-score.ts`; a case passes with at least 9 of 10 runs.
 
 Labeled basic cases (`src/lib/engine/eval/cases.ts`) on shop A of the two-shop fixture: for each case, which tools the model must call, with which arguments, and when it must call none. The table shows per case the pass rate, recall of required calls, argument accuracy and necessity precision (no extra or repeated calls), plus average latency, tokens and tool calls. Needs local Supabase running (`pnpm db:start`) and `ANTHROPIC_API_KEY` in `.env.test.local`. **Every run costs real money** (8 cases x 3 runs = 24 turns by default). It only reports, never fails on a low score, and CI doesn't run it.
+
+### Live acceptance run on production (PB-04 … PB-17)
+
+```bash
+pnpm eval:live --plan                      # cases, groups, new shoppers, estimated tokens; no request
+pnpm eval:live --group 1                   # one group (<= 20 new shoppers), 3 runs per case
+pnpm eval:live --group 2 --wait            # waits (countdown) until this hour's budget allows the group
+EVAL_ISSUE=PB-06 pnpm eval:live            # one issue (EVAL_CASE=<id>[,<id>] for cases, EVAL_RUNS=1)
+pnpm eval:live --group 1 --compare eval-runs/<previous>.json
+pnpm eval:live --fake                      # replays src/lib/engine/eval/fixtures/live-fake.json: no network, no Claude
+pnpm eval:live --report-only eval-runs/<file>.json [--compare <json>] [--out <html>]
+```
+
+Talks to the deployed web chat like a shopper (`--base`, default `https://shopmate-beige.vercel.app`; `--shop`, default `may-boutique-eval`; a shop without `-eval` needs `--allow-demo-shop`). Each run is a new shopper (no cookie); follow-up turns keep the cookie. Each turn is then checked against the database, **read only** and only for conversations the run created: the `ai_turns` row (tools, `handoff_reason`, model, prompt version, tokens), the conversation mode, orders and stock. `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SECRET_KEY` come from the shell or `.env.local` (only these two) and must be the deployment's project.
+
+Expected prices, stock, sizes (`recommendSize` on the chart) and pairings come from the shop's data read at the start, never from the case file. Every case also gets the data checks: every amount in a reply is a shop price, a policy amount, a tool result or the shopper's own number; card prices and sizes match; stock counts match.
+
+Production allows 20 new shoppers per hour and 15 messages per minute per IP and shop (`web-chat-limit.ts`). The runner sends at most 12 a minute, 4 s apart, counts its new shoppers in `eval-runs/.live-new-shoppers.json` and refuses a plan that doesn't fit the hour (or waits with `--wait`). Cases are in 4 groups of at most 18 new shoppers at 3 runs: run one group per hour. HTTP 429/5xx or the engine-failure notice without an `ai_turns` row is an infra error, not an AI failure; two in a row stop the run. Output: `eval-runs/<date>-live-<shop>[-g<n>].json` and an HTML report (default `../Bao cao kiem thu AI production <dd-mm>.html`). Cases: `src/lib/engine/eval/live-cases.ts`.
 
 ### Engine metrics
 
