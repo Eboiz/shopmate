@@ -61,3 +61,6 @@ next-env.d.ts
 
 # local UI design review mockup
 /src/shopmate-ui-review.html
+
+# pnpm eval:live: new shoppers sent from this machine in the last hour
+/eval-runs/.live-new-shoppers.json
