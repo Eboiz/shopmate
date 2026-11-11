@@ -2,7 +2,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { Spinner } from "./skeleton";
 
 const VARIANTS = {
-  primary: "bg-[#171717] text-white hover:bg-[#e9573f]",
+  primary: "bg-[#171717] text-white hover:bg-[#c2412b]",
   secondary: "border border-[#d5d0c8] bg-white text-[#171717] hover:border-[#171717] hover:bg-[#f5f3ef]",
   danger: "bg-[#c94332] text-white hover:bg-[#a53023]",
 };

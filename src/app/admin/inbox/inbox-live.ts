@@ -9,6 +9,10 @@ export type InboxConversation = {
   mode: ConversationMode;
   lastMessageAt: string;
   latestMessage: string | undefined;
+  // The shopper's own newest message: what staff need to read to triage, since
+  // the newest message overall is often the AI's handoff notice.
+  customerMessage?: string;
+  customerMessageAt?: string;
 };
 
 const conversationLimit = 50;
@@ -17,12 +21,16 @@ export const historyLimit = 50;
 export async function listLiveConversations(): Promise<InboxConversation[]> {
   const db = createClient();
   const query = () => db.from("conversations")
-    .select("id, mode, last_message_at, shoppers!inner(channel, display_name), messages(text)")
+    .select("id, mode, last_message_at, shoppers!inner(channel, display_name), messages(text), customer_message:messages(text, created_at)")
+    .eq("customer_message.sender", "shopper")
     .order("last_message_at", { ascending: false })
     .order("id")
     .order("created_at", { referencedTable: "messages", ascending: false })
     .order("id", { referencedTable: "messages", ascending: false })
     .limit(1, { referencedTable: "messages" })
+    .order("created_at", { referencedTable: "customer_message", ascending: false })
+    .order("id", { referencedTable: "customer_message", ascending: false })
+    .limit(1, { referencedTable: "customer_message" })
     .limit(conversationLimit);
 
   // Keep the queue in front even when the shop has many newer AI conversations.
@@ -39,6 +47,8 @@ export async function listLiveConversations(): Promise<InboxConversation[]> {
     mode: conversation.mode,
     lastMessageAt: conversation.last_message_at,
     latestMessage: conversation.messages[0]?.text,
+    customerMessage: conversation.customer_message[0]?.text || undefined,
+    customerMessageAt: conversation.customer_message[0]?.created_at,
   }));
 }
 

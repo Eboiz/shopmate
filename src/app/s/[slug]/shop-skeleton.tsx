@@ -15,8 +15,7 @@ function ShopHeaderSkeleton({ detail = false }: { detail?: boolean }) {
           <Skeleton className="h-6 w-36" />
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Skeleton className={`h-10 w-10 lg:w-32 ${detail ? "rounded-lg" : "rounded-none"}`} />
-          <Skeleton className={detail ? "h-10 w-10 rounded-lg sm:w-28" : "h-10 w-20 rounded-none sm:w-32"} />
+          <Skeleton className={detail ? "h-11 w-16 rounded-lg" : "h-11 w-16 rounded-none sm:w-36"} />
         </div>
       </div>
     </div>
@@ -27,17 +26,16 @@ export function ShopFrontSkeleton() {
   return (
     <LoadingRegion label="Đang tải cửa hàng…" className="flex-1">
       {/* The announcement bar is fixed text: show it as is. */}
-      <div aria-hidden="true" className="bg-[#171717] px-4 py-2 text-center text-[10px] font-bold uppercase tracking-[.16em] text-white sm:text-xs">Tìm đúng món đồ bạn yêu · Tư vấn cùng ShopMate 24/7</div>
+      <div aria-hidden="true" className="bg-[#171717] px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[.08em] text-white sm:text-xs sm:tracking-[.16em]">Tìm đúng món đồ bạn yêu · Tư vấn 24/7</div>
       <ShopHeaderSkeleton />
 
       <div className="bg-[#171717]">
         <div className="mx-auto grid min-h-[560px] max-w-[1400px] lg:grid-cols-[1.05fr_.95fr]">
           <div className="flex flex-col justify-center px-5 py-16 sm:px-10 lg:px-16 lg:py-24">
-            <Skeleton tone="dark" className="mb-6 h-4 w-56" />
-            {/* Three lines of the hero headline: clamp(3.5rem,8vw,8rem) at leading .88. */}
-            <div className="space-y-[.18em] py-[.09em] text-[clamp(3.5rem,8vw,8rem)]">
-              {["w-[2.6em]", "w-[2.4em]", "w-[3em]"].map((width) => (
-                <Skeleton key={width} tone="dark" className={`h-[.7em] ${width}`} />
+            {/* Three lines of the hero headline: clamp(2.25rem,6vw,5.5rem) at leading 1.02. */}
+            <div className="max-w-2xl space-y-[.27em] py-[.135em] text-[clamp(2.25rem,6vw,5.5rem)]">
+              {["w-[4em]", "w-[7em]", "w-[5em]"].map((width) => (
+                <Skeleton key={width} tone="dark" className={`h-[.75em] max-w-full ${width}`} />
               ))}
             </div>
             <div className="mt-7 max-w-md space-y-3 py-1.5">
@@ -46,8 +44,8 @@ export function ShopFrontSkeleton() {
               <Skeleton tone="dark" className="h-4 w-2/3" />
             </div>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Skeleton tone="dark" className="h-12 w-44 rounded-none" />
-              <Skeleton tone="dark" className="h-12 w-52 rounded-none" />
+              <Skeleton tone="dark" className="h-12 w-36 rounded-none" />
+              <Skeleton tone="dark" className="h-12 w-36 rounded-none" />
             </div>
           </div>
           <div aria-hidden="true" className="min-h-[320px] animate-pulse bg-[#33312d] lg:min-h-full" />
@@ -58,7 +56,6 @@ export function ShopFrontSkeleton() {
       <div className="mx-auto max-w-[1400px] px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <Skeleton className="mb-3 h-3 w-36" />
             <Skeleton className="h-10 w-72 max-w-full sm:h-12" />
             <Skeleton className="mt-3 h-4 w-64 max-w-full" />
           </div>

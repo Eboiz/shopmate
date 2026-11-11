@@ -64,14 +64,15 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   await page.goto(`/s/${DEMO_SHOP_SLUG}`);
   await page
     .locator("article", { has: page.getByRole("heading", { name: PRODUCT, exact: true }) })
-    .getByRole("link", { name: "Xem chi tiết", exact: true })
+    .getByRole("link", { name: PRODUCT, exact: true })
     .click();
   await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
 
-  // Each AI reply has the label "Shop" (PB-04) followed by its text bubble. Only
-  // the bubble is read: the product cards under it list every size in stock.
-  const chat = page.getByRole("region", { name: "Trò chuyện với shop" });
-  const aiLabels = chat.getByText("Shop", { exact: true });
+  // Each shop reply has a label ("Trợ lý AI", or "Shop" for a system notice)
+  // followed by its text bubble. Only the bubble is read: the product cards
+  // under it list every size in stock.
+  const chat = page.getByRole("dialog", { name: "Trò chuyện với shop" });
+  const aiLabels = chat.getByText(/^(Trợ lý AI|Shop)$/);
   const send = async (text: string) => {
     const before = await aiLabels.count();
     await chat.getByRole("textbox", { name: "Tin nhắn" }).fill(text);
