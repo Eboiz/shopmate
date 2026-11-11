@@ -50,11 +50,16 @@ export type TurnMetrics = {
   inputTokens: number;
   outputTokens: number;
   handoffReason: HandoffReason | null;
+  // PB-31: the turn offered staff (soft handoff) for this reason instead of handing off.
+  handoffOffer?: HandoffReason | null;
   truncated: boolean;
   // PB-10: how the turn was decided. "router": Jev picked the intent and the
   // tools ran in a fixed order (route.ts); "llm_loop": the model chose the tools.
   route?: {
-    path: "router" | "llm_loop";
+    // "offer_answer" (PB-31): the shopper answered a staff offer with yes/no.
+    // "catalog" (PB-31): "shop có gì", answered from the catalog by the server.
+    // "complaint" (PB-14): a complaint the server recognized, handed off with no model call.
+    path: "router" | "llm_loop" | "offer_answer" | "catalog" | "complaint";
     fallbackReason?: string;
     jevModel?: string;
     jevMs?: number;

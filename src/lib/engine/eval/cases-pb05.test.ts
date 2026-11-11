@@ -30,8 +30,8 @@ const correct: Record<string, { calls: ActualCall[]; outcome: RunOutcome }> = {
     outcome: { handoffReason: null, replyText: "Dạ màu be size L hết hàng rồi ạ. Váy còn size M màu be và màu đen nhé." },
   },
   "pb05-ac3-no-diacritics": {
-    calls: [{ name: "search_products", input: { query: "ao khoac da", limit: 5 } }],
-    outcome: { handoffReason: null, replyText: "Dạ shop chưa tìm thấy áo khoác da. Bạn tìm kiểu áo nào, màu gì ạ?" },
+    calls: [{ name: "search_products", input: { query: "tui xach da", limit: 5 } }],
+    outcome: { handoffReason: null, replyText: "Dạ shop chưa tìm thấy túi xách da. Bạn tìm kiểu túi nào, màu gì ạ?" },
   },
 };
 
@@ -40,7 +40,7 @@ const wrong: Record<string, RunOutcome> = {
   "pb05-ac1-exact": { handoffReason: null, replyText: "Dạ váy màu be size M còn hàng, giá 389.000đ ạ." },
   "pb05-no-diacritics-by-name": { handoffReason: null, replyText: "Dạ màu be size M tạm hết rồi ạ, giá 350.000đ." },
   "pb05-ac2-no-diacritics": { handoffReason: null, replyText: "Dạ size L còn hàng ạ." },
-  "pb05-ac3-no-diacritics": { handoffReason: null, replyText: "Ý bạn là áo khoác jean? Hay áo khoác dù?" },
+  "pb05-ac3-no-diacritics": { handoffReason: null, replyText: "Ý bạn là túi tote? Hay túi đeo chéo?" },
 };
 
 describe("pb05EvalCases", () => {
