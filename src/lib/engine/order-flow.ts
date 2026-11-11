@@ -33,6 +33,25 @@ export function isOrderIntent(history: HistoryMessage[]): boolean {
 export const ORDER_CONFIRM_YES = "Đúng, đặt luôn";
 export const ORDER_CONFIRM_NO = "Chọn món khác";
 
+// The latest message uses a buying word ("cho mua", "lấy", "đặt", "chốt").
+export const isOrderMessage = (text: string) => /\b(lay|mua|dat|chot|order)\b/.test(fold(text));
+
+// "Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?"
+export function orderConfirmText(name: string, color: string | null, size: string | null): string {
+  return `Dạ, bạn muốn đặt ${name}${color ? ` màu ${color.toLowerCase()}` : ""}${size ? ` size ${size}` : ""} đúng không?`;
+}
+
+// The AI's last message read an order back ("bạn muốn đặt … đúng không?") and
+// the shopper says yes: the order flow goes on (LLM tool loop).
+export function answersOrderConfirm(history: HistoryMessage[]): boolean {
+  const last = history.at(-1);
+  const asked = history.slice(0, -1).findLast(({ sender }) => sender === "ai")?.text ?? "";
+  if (last?.sender !== "shopper" || !/ban muon dat .* dung khong/.test(fold(asked))) return false;
+  const answer = fold(last.text).replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+  // ORDER_CONFIRM_YES folds to "dung dat luon".
+  return /^(da )?(dung|dung roi|dung vay|dung dat luon|ok|oke|vang|uh|chuan|dat luon|dat di)( a| nha| nhe)?$/.test(answer);
+}
+
 export function isOrderConfirmation(history: HistoryMessage[]): boolean {
   const last = history.at(-1);
   const summary = history.slice(0, -1).findLast(({ sender }) => sender === "ai")?.text ?? "";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNearChart, OFFER_NO, OFFER_YES, offerAnswer, offersStaff, sizeOfferText } from "./handoff-offer";
+import { asksForHuman, isNearChart, OFFER_NO, OFFER_QUESTION, OFFER_YES, offerAnswer, offersStaff, sizeOfferText } from "./handoff-offer";
 
 describe("offerAnswer", () => {
   it("reads the quick replies", () => {
@@ -34,4 +34,14 @@ describe("size offers", () => {
 it("offersStaff spots the yes button", () => {
   expect(offersStaff({ quickReplies: [OFFER_YES, OFFER_NO] })).toBe(true);
   expect(offersStaff({ quickReplies: ["Váy"] })).toBe(false);
+  // the model asked the offer question but forgot the buttons
+  expect(offersStaff({ text: `Dạ shop chưa có thông tin này. ${OFFER_QUESTION}`, quickReplies: [] })).toBe(true);
+  expect(offersStaff({ text: "Dạ còn ạ", quickReplies: [] })).toBe(false);
+});
+
+it("asksForHuman: a person, staff or the owner is named; an order is not a request for a human", () => {
+  for (const t of ["cho gặp nhân viên", "kêu chủ ra", "cho gặp chủ shop", "mình muốn nói chuyện với người thật", "cho gap nhan vien de dat hang"]) {
+    expect(asksForHuman(t), t).toBe(true);
+  }
+  for (const t of ["cho mua 1 áo blazer màu đen size S", "lấy cái đen size S", "chủ nhật có giao không"]) expect(asksForHuman(t), t).toBe(false);
 });

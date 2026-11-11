@@ -111,3 +111,20 @@ export function productsNamedIn<T extends Matchable>(message: string, products: 
     .slice(0, limit)
     .map((s) => s.p);
 }
+
+// PB-31: "shop có gì", "bên mình có những sản phẩm gì": the whole catalog, not one
+// product. "áo này có màu gì" names a product and a property, so it isn't.
+const CATALOG_QUESTION = [
+  /\b(shop|ben minh|ben ban|ben em|ben shop|cua hang)\s+(co|ban)\s+(nhung\s+)?(gi|nhung gi)\b/,
+  /\b(co|ban)\s+(nhung\s+)?(san pham|mon|mat hang|loai do|do|hang)\s+(gi|nao)\b/,
+];
+export function isCatalogQuestion(text: string): boolean {
+  const t = fold(text).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  return CATALOG_QUESTION.some((re) => re.test(t));
+}
+
+// PB-31: exchanges and returns ("mặc không vừa thì đổi được không"): the doi_tra
+// policy answers them, not the product data. "đổi" without diacritics is also
+// "đợi"/"đôi", so it counts only next to an exchange word.
+const RETURNS = /\b(doi (duoc|size|sang|hang|tra|lai|mau|cai|mon|ao|vay|quan)|tra (hang|lai)|hoan tien|doi tra)\b/;
+export const isReturnsQuestion = (text: string) => RETURNS.test(fold(text).replace(/[^a-z0-9]+/g, " "));

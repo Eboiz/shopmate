@@ -3,7 +3,9 @@
 // with two quick replies. Only a "yes" on the next turn hands off, with the
 // reason the offer was made for. Complaints, asking for a human and two
 // misunderstood turns still hand off at once (PB-14).
-import type { HandoffReason, Reply } from "@/contract";
+import type { HandoffReason, Reply, ToolCallLog } from "@/contract";
+import { isOrderMessage } from "./order-flow";
+import { isReturnsQuestion } from "./product-match";
 import { fold } from "./text";
 
 export const OFFER_YES = "Có, gặp nhân viên";
@@ -50,5 +52,30 @@ export function offerAnswer(text: string): OfferAnswer {
   return null;
 }
 
-// Whether a model reply offered staff (LLM tool loop): it carries the yes button.
-export const offersStaff = (reply: { quickReplies: string[] }) => reply.quickReplies.includes(OFFER_YES);
+// Whether a model reply offered staff (LLM tool loop): it carries the yes button,
+// or asks the offer question without it.
+export const offersStaff = (reply: { text?: string; quickReplies: string[] }) =>
+  reply.quickReplies.includes(OFFER_YES) || (reply.text ?? "").includes(OFFER_QUESTION);
+
+// The shopper names a person to talk to (staff, the owner, a real person). An
+// order like "cho mua 1 áo blazer" names none, so it is never asked_for_human.
+const HUMAN = /\b(nhan vien|nguoi that|nguoi ban hang|nguoi tu van|tu van vien|admin|quan ly|chu (shop|cua hang|tiem)|(gap|keu|goi) chu|chu ra)\b/;
+export const asksForHuman = (text: string) => HUMAN.test(fold(text).replace(/[^a-z0-9 ]+/g, " "));
+
+// LLM tool loop: a handoff the shopper's message and this turn's tools don't
+// support is sent back to the model once, with what to do instead. null: let it run.
+export function handoffCorrection(reason: unknown, text: string, logs: readonly ToolCallLog[]): string | null {
+  if (reason === "asked_for_human" && isOrderMessage(text) && !asksForHuman(text)) {
+    return "Khách muốn đặt hàng, không đòi gặp người. Không chuyển nhân viên: xác nhận lại món, màu, size khách muốn đặt rồi tiếp tục luồng đặt hàng.";
+  }
+  const readReturns = logs.some((l) => l.name === "get_policy" && (l.input as { kind?: unknown } | null)?.kind === "doi_tra");
+  if ((reason === "not_covered_by_data" || reason === "policy_not_covered") && isReturnsQuestion(text) && !readReturns) {
+    return "Khách hỏi đổi trả: gọi get_policy với kind doi_tra và trả lời từ nội dung đó trước.";
+  }
+  const foundClose = logs.some((l) => l.name === "search_products" && !l.error
+    && ((l.output as { products?: unknown[] } | undefined)?.products?.length ?? 0) > 0);
+  if (reason === "product_not_found" && foundClose) {
+    return "search_products đã tìm thấy món gần giống. Không chuyển nhân viên: hỏi khách \"Ý bạn là A hay B?\" với tối đa 3 tên món đó trong quickReplies.";
+  }
+  return null;
+}
