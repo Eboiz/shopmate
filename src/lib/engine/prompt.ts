@@ -14,7 +14,11 @@ import type { EngineMode } from "@/contract";
 // inside tool data). A trick or discount demand is refused and the conversation
 // stays with the AI: no handoff just for that (Scrum Master, 07/11). A plain
 // question about the shop's promotions with no promotion text still hands off.
-export const PROMPT_VERSION = "v1.2";
+// v1.3: no uuid in the system prompt. The team gateway rewrites every uuid in the
+// system prompt to "fixed-uuid", so the model never saw the viewed product's id and
+// get_stock / recommend_size failed. The model now uses VIEWING_PRODUCT_REF and
+// the server swaps in the real id (resolveViewingProduct).
+export const PROMPT_VERSION = "v1.3";
 
 type Product = { id: string; name: string };
 
@@ -72,7 +76,7 @@ export function buildStablePrompt(mode: EngineMode): string {
     ...voiceRules(mode),
     "",
     "## Dùng tool",
-    "- Khách đang xem một sản phẩm (có productId bên dưới) thì dùng thẳng productId đó, không search_products lại.",
+    "- Khách đang xem một sản phẩm (ghi ở cuối hướng dẫn) thì gọi tool với productId đúng như ghi ở đó, không search_products lại.",
     "- search_products chỉ gọi một lần mỗi lượt, không lặp lại cùng truy vấn. Các tool không phụ thuộc nhau thì gọi cùng lúc.",
     "- Không tự tính tiền: luôn gọi quote_order để có giá từng món và tổng tiền.",
     "- Khi khách hỏi món phối, gọi get_pairings cho sản phẩm đang xem; truyền size khách đã nói (nếu có). Chỉ dùng cặp shop đã khai báo, không tự gợi ý món khác, tối đa 2 món. Nếu tool trả rỗng thì nói chưa có món phù hợp.",
@@ -115,9 +119,21 @@ export function buildStablePrompt(mode: EngineMode): string {
 }
 
 // Changes per request: the product the shopper is looking at.
+// What the model passes as productId for the product on screen. Not a uuid on
+// purpose: see v1.3 above.
+export const VIEWING_PRODUCT_REF = "san-pham-dang-xem";
+
 export function buildVolatilePrompt(product: Product | null): string | null {
   if (product === null) return null;
-  return `Khách đang xem sản phẩm "${product.name}" (productId: ${product.id}).`;
+  return `Khách đang xem sản phẩm "${product.name}" (productId: ${VIEWING_PRODUCT_REF}).`;
+}
+
+// Swaps VIEWING_PRODUCT_REF in a tool input for the real id of the product on
+// screen. Other ids (from search_products, for instance) pass through unchanged.
+export function resolveViewingProduct(input: unknown, product: Product | null): unknown {
+  if (!product || !input || typeof input !== "object" || Array.isArray(input)) return input;
+  const record = input as Record<string, unknown>;
+  return record.productId === VIEWING_PRODUCT_REF ? { ...record, productId: product.id } : input;
 }
 
 // Block 0 is the stable part, marked for caching; block 1 (only with a product)

@@ -26,7 +26,7 @@ import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
-import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
 import { routeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
@@ -522,11 +522,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       }
       // recommend_size gets the height and weight the shopper actually wrote
       // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.
-      const effectiveInput = u.name === "get_pairings" && u.input && typeof u.input === "object"
-        ? { ...u.input, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
+      // v1.3: the model names the product on screen by VIEWING_PRODUCT_REF.
+      const toolInput = resolveViewingProduct(u.input, tc.product);
+      const effectiveInput = u.name === "get_pairings" && toolInput && typeof toolInput === "object"
+        ? { ...toolInput, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
         : u.name === "recommend_size"
-          ? normalizeSizeInput(u.input, input.history)
-          : u.input;
+          ? normalizeSizeInput(toolInput, input.history)
+          : toolInput;
       const run = await executeTool(u.name, effectiveInput, ctx, mode, deps.handlers, deps.db);
       return { run, ms: now() - s0, startMs: s0 - t0 };
     });
@@ -695,7 +697,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     reply = {
       text: modelReply.text,
       // Cards come from the database for this shop only; foreign ids drop out.
-      products: await deps.store.productCards(ctx.shopId, modelReply.productIds),
+      products: await deps.store.productCards(
+        ctx.shopId,
+        // VIEWING_PRODUCT_REF is the product on screen; with none on screen it is dropped.
+        modelReply.productIds.flatMap((id) => (id !== VIEWING_PRODUCT_REF ? [id] : tc.product ? [tc.product.id] : [])),
+      ),
       quickReplies: modelReply.quickReplies,
     };
   }
