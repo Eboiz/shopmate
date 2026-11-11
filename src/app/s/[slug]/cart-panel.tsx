@@ -56,7 +56,7 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onSend,
                         <button type="button" aria-label={`Tăng số lượng ${item.name}`} disabled={item.quantity >= 99} onClick={() => onQuantity(index, item.quantity + 1)} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">+</button>
                       </div>
                       <span className="text-sm font-bold tabular-nums">{formatPrice(item.price * item.quantity)}</span>
-                      <button type="button" onClick={() => onRemove(index)} className="ml-auto min-h-11 px-1 text-sm font-semibold text-[#b2382a] hover:underline">Bỏ</button>
+                      <button type="button" onClick={() => onRemove(index)} aria-label={`Bỏ ${item.name} khỏi giỏ`} title="Bỏ khỏi giỏ" className="ml-auto inline-grid size-11 place-items-center rounded-lg text-[#b2382a] hover:bg-[#fff0eb]"><Icon name="trash" className="size-5" /></button>
                     </div>
                   </div>
                 </li>

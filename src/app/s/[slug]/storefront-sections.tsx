@@ -365,7 +365,7 @@ export function ShopFooter({ shopName, groups, policyItems, onChoose, onAsk }: F
       </div>
       <div className="mx-auto mt-12 flex max-w-[1400px] flex-wrap items-center justify-between gap-3 border-t border-[#e3dfd8] px-4 pt-5 text-xs text-[#706d67] sm:px-6 lg:px-10">
         <span>Được hỗ trợ bởi ShopMate</span>
-        <a href="#dau-trang" className="inline-flex min-h-11 items-center font-extrabold uppercase tracking-[.12em] text-[#171717] hover:text-[#c2412b]">Lên đầu trang</a>
+        <a href="#dau-trang" aria-label="Lên đầu trang" title="Lên đầu trang" className="inline-grid size-11 place-items-center border-[1.5px] border-[#171717] text-[#171717] transition-colors hover:bg-[#171717] hover:text-white"><Icon name="up" className="size-5" /></a>
       </div>
     </footer>
   );

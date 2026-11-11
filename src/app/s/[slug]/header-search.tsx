@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
+import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
 import { matchesQuery, productGroup } from "@/lib/shop/catalog-view";
 import type { ShopProduct } from "@/lib/shop/types";
@@ -54,7 +55,7 @@ export function HeaderSearch({ products, productHref, onSearch, onAsk, className
           onFocus={() => setOpen(true)}
           className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#706d67]"
         />
-        <button type="submit" className="min-h-8 bg-[#e9573f] px-3 text-[11px] font-extrabold uppercase tracking-[.1em] text-[#171717] hover:bg-[#c2412b] hover:text-white">Tìm</button>
+        <button type="submit" aria-label="Tìm" className="inline-grid size-9 shrink-0 place-items-center bg-[#e9573f] text-[#171717] hover:bg-[#c2412b] hover:text-white"><Icon name="search" className="size-[18px]" /></button>
       </form>
 
       {showList && (

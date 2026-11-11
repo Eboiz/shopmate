@@ -659,7 +659,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 placeholder="Nhập câu hỏi của bạn"
                 readOnly={sending || loading}
               />
-              <Button type="submit" disabled={loading || !draft.trim()} loading={sending}>Gửi</Button>
+              <Button type="submit" aria-label="Gửi" title="Gửi" className="w-11 shrink-0 px-0!" disabled={loading || !draft.trim()} loading={sending}>{!sending && <Icon name="send" className="size-5 shrink-0" />}</Button>
             </form>
           </div>
         </section>

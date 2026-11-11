@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
+import { Icon } from "@/components/ui/icon";
 import { SubmitButton } from "@/components/ui/submit-button";
 import { TextInput } from "@/components/ui/text-input";
 import { INITIAL_FORM_STATE, type FormAction } from "./form-state";
@@ -75,8 +76,8 @@ export function PairingManager({
                 <form action={deleteAction}>
                   <input type="hidden" name="pairingId" value={pairing.id} />
                   {/* Every row shares deleteAction: only the pressed row spins, the others wait. */}
-                  <SubmitButton variant="danger" disabled={deleting} loadingText="Đang xoá…">
-                    Xoá
+                  <SubmitButton variant="danger" aria-label={`Xoá cặp ${pairing.productName1} + ${pairing.productName2}`} title="Xoá" className="px-3!" disabled={deleting}>
+                    <Icon name="trash" className="size-5" />
                   </SubmitButton>
                 </form>
               )}
