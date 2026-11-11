@@ -21,7 +21,7 @@ import {
 } from "./engine";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
-import { PROMPT_VERSION } from "./prompt";
+import { PROMPT_VERSION, VIEWING_PRODUCT_REF } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
 import type { TurnDetail, TurnMetrics } from "./metrics";
@@ -273,6 +273,19 @@ describe("runEngine", () => {
     expect(handlers.get_pairings).not.toHaveBeenCalled();
     expect(result.output.reply.products).toEqual([]);
     expect(result.output.reply.text).toContain("sản phẩm nào");
+  });
+
+  it("v1.3: the viewed product's reference reaches the tool and the cards as its real id", async () => {
+    const store = fakeStore({ conversation: { shopId: SHOP_A, mode: "ai" }, product: { id: PRODUCT, name: "Váy suông linen" } });
+    const { handlers, model, run } = setup(
+      [toolCalls(toolUse("get_stock", { productId: VIEWING_PRODUCT_REF, size: "M" })), reply("Dạ còn ạ", [VIEWING_PRODUCT_REF])],
+      { store },
+    );
+    const { output } = await run(customerInput({ productId: PRODUCT }));
+    expect(handlers.get_stock.mock.calls[0][0]).toEqual({ productId: PRODUCT, size: "M" });
+    expect(output.reply.products.map((p) => p.productId)).toEqual([PRODUCT]);
+    // The real id never goes into the system prompt (the gateway rewrites uuids there).
+    expect(JSON.stringify(model.calls[0].system)).not.toContain(PRODUCT);
   });
 
   it("server adds shop_id", async () => {
@@ -1008,7 +1021,8 @@ describe("runEngine", () => {
     const system = model.calls[0].system as Anthropic.TextBlockParam[];
     expect(system[0].cache_control).toEqual({ type: "ephemeral" });
     expect(system).toHaveLength(2);
-    expect(system[1].text).toContain(PRODUCT);
+    expect(system[1].text).toContain(VIEWING_PRODUCT_REF);
+    expect(system[1].text).not.toContain(PRODUCT);
   });
 
   describe("concurrency", () => {
