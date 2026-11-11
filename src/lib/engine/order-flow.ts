@@ -28,6 +28,11 @@ export function isOrderIntent(history: HistoryMessage[]): boolean {
     /\b(lay|mua|dat|chot|order|len don)\b/.test(fold(text)));
 }
 
+// PB-31: a message that could be an order ("lấy cái đen size S") is read back
+// first; these are the buttons of that question.
+export const ORDER_CONFIRM_YES = "Đúng, đặt luôn";
+export const ORDER_CONFIRM_NO = "Chọn món khác";
+
 export function isOrderConfirmation(history: HistoryMessage[]): boolean {
   const last = history.at(-1);
   const summary = history.slice(0, -1).findLast(({ sender }) => sender === "ai")?.text ?? "";

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { OFFER_QUESTION } from "./handoff-offer";
 import {
   buildReplyStablePrompt,
   buildReplySystemPrompt,
@@ -31,7 +32,7 @@ describe("prompt", () => {
 
   it("customer prompt has the handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v1.4");
+    expect(PROMPT_VERSION).toBe("v1.5");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human", "not_covered_by_data", "misunderstood_twice"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
   });
@@ -168,6 +169,46 @@ describe("prompt", () => {
     for (const reason of ["complaint", "asked_for_human", "policy_not_covered"]) expect(customer).toContain(reason);
     expect(buildStablePrompt("staff_draft")).not.toContain("KHÔNG gọi handoff_to_staff");
     expect(buildReplyStablePrompt("customer")).not.toContain("handoff_to_staff");
+  });
+
+  it("v1.5 (PB-31): fewer handoffs, ask before handing off", () => {
+    const customer = buildStablePrompt("customer");
+    for (const phrase of [
+      // (a) product details only from search_products' description, else the offer
+      "chất liệu, form, độ dài, co giãn, cách giặt hay dịp mặc",
+      "chỉ trả lời từ description",
+      OFFER_QUESTION,
+      // (b) a partial answer: what the data says, what it doesn't, then the offer
+      "nói phần dữ liệu có",
+      "size chỉ vượt bảng một chút",
+      // (c) off-topic -> only helps with the shop + offer; owner/human stays immediate
+      "php2shell",
+      "tên chủ shop",
+      "đòi gặp chủ shop hay nhân viên",
+      // (d) near match
+      'match là "close"',
+      "Ý bạn là A hay B?",
+      "tối đa 3 tên sản phẩm",
+      // (e) vague questions
+      "shop có gì",
+      "đồ đi tiệc",
+      "Váy, Chân váy, Áo, Quần, Áo khoác",
+      // (f) a possible order is confirmed and is never a request for a human
+      "lấy cái đen size S",
+      "Bạn muốn đặt",
+      "không bao giờ là đòi gặp người",
+      // (g) every clarifying question has quick replies
+      "Mọi câu hỏi lại đều có quickReplies",
+    ]) {
+      expect(customer, phrase).toContain(phrase);
+    }
+    // the old "hand off at once when the data is missing" rule is gone
+    expect(customer).not.toContain("gọi handoff_to_staff ngay với reason not_covered_by_data");
+    // per-request data never goes in the cached prompt, and no uuid anywhere
+    for (const p of [customer, buildStablePrompt("staff_draft"), buildReplyStablePrompt("customer")]) {
+      expect(p).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+    }
+    expect(buildStablePrompt("staff_draft")).not.toContain(OFFER_QUESTION);
   });
 
   it("reply prompt: no tools, facts and task in the volatile block, stable part cached and product-free", () => {
