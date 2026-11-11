@@ -48,7 +48,9 @@ function query(table: string) {
     order: (_k: string, o: { ascending: boolean }) => ((descending = !o.ascending), chain),
     limit: (n: number) => ((limit = n), chain),
     single: async () => {
-      const data = run().data ?? [];
+      const result = run();
+      if (result.error) return result; // as Supabase: the insert's error, e.g. 23505
+      const data = result.data ?? [];
       return data.length === 1 ? { data: data[0], error: null } : { data: null, error: { message: `${data.length} rows` } };
     },
     then: (resolve: (v: unknown) => void) => {
@@ -309,5 +311,78 @@ describe("receiveChannelMessage on web chat (PB-04)", () => {
     rateLimited.mockResolvedValue(true);
     expect(await receiveChannelMessage(web, webText("c-1"))).toBe("rate_limited");
     expect(engine).not.toHaveBeenCalled();
+  });
+});
+
+describe("only the newest shopper message gets a reply (R3)", () => {
+  // Another request stores a newer shopper message while this turn's engine runs.
+  const newerMessageArrives = (t = "size M nha") => {
+    tables.messages.push({
+      id: `messages-${nextId++}`, shop_id: "shop-a", conversation_id: conversation().id,
+      sender: "shopper", text: t, created_at: String(++nextId).padStart(4, "0"),
+    });
+  };
+
+  it("older turn finishing after a newer shopper message sends nothing (Review Focus 5)", async () => {
+    engine.mockImplementationOnce(async () => {
+      newerMessageArrives();
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1", "Váy babydoll còn màu gì?"))).toBe("superseded");
+    expect(sent).toEqual([]);
+  });
+
+  it("the newest turn still sends, with both messages in its history", async () => {
+    engine.mockImplementationOnce(async () => {
+      newerMessageArrives("size M nha");
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    await receiveChannelMessage(account, text("mid-1", "Váy babydoll còn màu gì?"));
+    // The newer message's own turn (delivered by the channel as mid-2).
+    tables.messages.pop();
+    expect(await receiveChannelMessage(account, text("mid-2", "size M nha"))).toBe("answered");
+    expect(engine.mock.calls[1]).toEqual([
+      expect.objectContaining({
+        history: [
+          { sender: "shopper", text: "Váy babydoll còn màu gì?" },
+          { sender: "shopper", text: "size M nha" },
+        ],
+      }),
+    ]);
+    expect(sent).toEqual([{ conversationId: conversation().id, reply: answer, from: "ai" }]);
+  });
+
+  it("an AI message stored meanwhile does not supersede the turn", async () => {
+    engine.mockImplementationOnce(async () => {
+      tables.messages.push({ id: "ai-x", shop_id: "shop-a", conversation_id: conversation().id, sender: "ai", text: "x", created_at: String(++nextId).padStart(4, "0") });
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("answered");
+    expect(sent).toHaveLength(1);
+  });
+
+  it("a superseded turn that handed off leaves the conversation in needs_human and still tells the shopper", async () => {
+    const closing: Reply = { text: "Dạ mình đã chuyển cho nhân viên shop", products: [], quickReplies: [] };
+    sendResult = (from) => (from === "ai" ? { ok: false, messageId: null, error: "not_in_ai_mode" } : { ok: true, messageId: "m" });
+    engine.mockImplementationOnce(async () => {
+      conversation().mode = "needs_human"; // the engine's handoff_to_staff
+      newerMessageArrives("alo shop");
+      return { reply: closing, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1", "Hàng bị rách, mình bực quá"))).toBe("handed_off");
+    expect(conversation().mode).toBe("needs_human");
+    expect(sent.filter((m) => m.from === "system")).toEqual([{ conversationId: conversation().id, reply: closing, from: "system" }]);
+  });
+
+  it("a superseded turn in a conversation already waiting for staff sends nothing", async () => {
+    await receiveChannelMessage(account, text("mid-0", "câu trước"));
+    conversation().mode = "needs_human";
+    sent.length = 0;
+    engine.mockImplementationOnce(async () => {
+      newerMessageArrives("alo shop");
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1", "ok cảm ơn"))).toBe("superseded");
+    expect(sent).toEqual([]);
   });
 });

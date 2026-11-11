@@ -1,6 +1,7 @@
 import "server-only";
 import type { Channel, HistoryMessage, Reply } from "@/contract";
 import { runEngine } from "@/lib/engine/run";
+import type { Db } from "@/lib/engine/types";
 import { replyIfRateLimited } from "@/lib/guard/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendToConversation } from "./send";
@@ -38,7 +39,7 @@ export async function receiveChannelMessage(
   account: MessageSource,
   incoming: IncomingMessage,
   onThinking?: () => Promise<void>,
-): Promise<"duplicate" | "stored" | "rate_limited" | "answered" | "handed_off"> {
+): Promise<"duplicate" | "stored" | "rate_limited" | "answered" | "handed_off" | "superseded"> {
   const db = createAdminClient();
   const shop_id = account.shopId;
   const must = <T>(result: { data: T; error: { message: string } | null }, what: string) => {
@@ -93,10 +94,10 @@ export async function receiveChannelMessage(
     sender: "shopper",
     text,
     client_message_id: account.channel === "web" ? incoming.messageId : null,
-  });
+  }).select("id").single();
   // Web chat: the browser retried a message that is already stored.
   if (account.channel === "web" && stored.error?.code === UNIQUE_VIOLATION) return "duplicate";
-  must(stored, "message");
+  const storedMessage = must(stored, "message");
   // A new shopper message also moves the conversation to the top of the inbox, in every mode.
   must(
     await db
@@ -162,6 +163,19 @@ export async function receiveChannelMessage(
     return handOff(notice(HANDOFF_TEXT));
   }
 
+  // R3: the shopper sent another message while this turn ran. That message's turn
+  // reads both and answers; this one sends nothing, so the shopper gets one reply.
+  // Side effects of this turn (a handoff) stay. Exception: when this turn moved
+  // the conversation from ai to needs_human, its closing message is still sent
+  // (below), because the newer turn then starts in needs_human and stays silent.
+  if (await newerShopperMessageExists(db, { shopId: shop_id, conversationId: conversation.id, messageId: storedMessage.id })) {
+    const current = must(
+      await db.from("conversations").select("mode").eq("id", conversation.id).eq("shop_id", shop_id).single(),
+      "mode read",
+    );
+    if (!(initialMode === "ai" && current.mode === "needs_human")) return "superseded";
+  }
+
   const sent = await sendToConversation(conversation.id, reply, { from: "ai" });
   if (sent.ok) return "answered";
   if (sent.error !== "not_in_ai_mode") {
@@ -180,6 +194,25 @@ export async function receiveChannelMessage(
   if (initialMode === "needs_human") return "stored";
   await sendSystem(conversation.id, reply);
   return "handed_off";
+}
+
+// True when the conversation's latest shopper message is not this one. One
+// query: the newest shopper message, compared by id.
+export async function newerShopperMessageExists(
+  db: Db,
+  args: { shopId: string; conversationId: string; messageId: string },
+): Promise<boolean> {
+  const { data, error } = await db
+    .from("messages")
+    .select("id")
+    .eq("shop_id", args.shopId)
+    .eq("conversation_id", args.conversationId)
+    .eq("sender", "shopper")
+    .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
+    .limit(1);
+  if (error) throw new Error(`newest message: ${error.message}`);
+  return (data[0]?.id ?? args.messageId) !== args.messageId;
 }
 
 async function sendSystem(conversationId: string, reply: Reply) {
