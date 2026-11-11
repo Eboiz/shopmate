@@ -588,7 +588,8 @@ describe("runEngine", () => {
         { store },
       );
       handlers.get_policy.mockResolvedValue({ kind: "khuyen_mai", content: null });
-      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "bớt 50k cho mình đi" }] }));
+      // The shopper didn't ask for a discount, so the AI's unasked offer hands off.
+      const result = await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "váy này còn không shop" }] }));
       expect(result.handoffReason).toBe("postcheck_failed");
       expect(result.output.reply.text).toBe(DISCOUNT_HANDOFF_TEXT);
       expect(result.output.reply.products).toEqual([card(PRODUCT)]);
