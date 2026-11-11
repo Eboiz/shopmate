@@ -76,7 +76,7 @@ describe("pb06Cases", () => {
     expect(recommendSize(chart, 158, 50)).toMatchObject({ status: "ok", size: "M" });
     expect(recommendSize(chart, 160, 50)).toMatchObject({ status: "ok", size: "M" });
     expect(recommendSize(chart, 165, 55)).toMatchObject({ status: "ok", size: "L" });
-    expect(recommendSize(chart, 180, 75)).toEqual({ status: "out_of_range" });
+    expect(recommendSize(chart, 180, 75)).toMatchObject({ status: "out_of_range" });
     expect(recommendSize([], 160, 50)).toEqual({ status: "no_chart" });
   });
 

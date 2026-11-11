@@ -91,7 +91,7 @@ function fakeHandlers() {
 }
 
 const draftOrder = { items: [{ variantId: VARIANT, quantity: 1 }], customerName: "Thảo", customerPhone: "0912345678", customerAddress: "Q1" };
-const reply = (text = "Chào bạn", productIds: string[] = []) => finalJson({ text, productIds, quickReplies: [] });
+const reply = (text = "Chào bạn", productIds: string[] = [], quickReplies: string[] = []) => finalJson({ text, productIds, quickReplies });
 
 let clock: { t: number };
 let results: EngineResult[];
