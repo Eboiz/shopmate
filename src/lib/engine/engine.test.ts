@@ -20,6 +20,7 @@ import {
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { OFFER_DECLINED_TEXT, OFFER_NO, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_YES } from "./handoff-offer";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
+import { isOrderConfirmation, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES } from "./order-flow";
 import { PROMPT_VERSION, VIEWING_PRODUCT_REF } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
@@ -159,6 +160,9 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("Tổng tiền hàng: 350.000đ (chưa gồm phí giao hàng)");
       expect(result.output.reply.text).toContain("Nội thành 20.000đ");
       expect(result.output.reply.text).toContain("Bạn xác nhận đơn này chứ?");
+      expect(result.output.reply.quickReplies).toEqual([ORDER_SUMMARY_YES, ORDER_SUMMARY_EDIT]);
+      expect(isOrderConfirmation([{ sender: "ai", text: result.output.reply.text }, { sender: "shopper", text: ORDER_SUMMARY_YES }])).toBe(true);
+      expect(isOrderConfirmation([{ sender: "ai", text: result.output.reply.text }, { sender: "shopper", text: ORDER_SUMMARY_EDIT }])).toBe(false);
       expect(model.calls).toHaveLength(1);
       expect(store.insertTurn).toHaveBeenCalledTimes(1);
     });

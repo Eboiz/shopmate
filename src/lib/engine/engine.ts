@@ -26,7 +26,7 @@ import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
-import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
+import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
 import { isCatalogQuestion } from "./product-match";
@@ -801,7 +801,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
     const summary = orderSummary(finalQuote.quote, shippingPolicy);
     quotedOrderPresented = summary !== null;
-    reply = { text: summary ?? "Đơn có quá nhiều món để đọc lại trong một tin. Bạn chia thành các đơn nhỏ hơn giúp mình nhé.", products: [], quickReplies: [] };
+    reply = { text: summary ?? "Đơn có quá nhiều món để đọc lại trong một tin. Bạn chia thành các đơn nhỏ hơn giúp mình nhé.", products: [], quickReplies: summary ? [ORDER_SUMMARY_YES, ORDER_SUMMARY_EDIT] : [] };
   } else if (finalOrderIssue?.code === "invalid_phone") {
     reply = { text: "Số điện thoại chưa hợp lệ. Bạn gửi lại số di động Việt Nam gồm 10 chữ số, bắt đầu bằng 0 nhé.", products: [], quickReplies: [] };
   } else if (finalOrderIssue?.code === "customer_details_missing") {

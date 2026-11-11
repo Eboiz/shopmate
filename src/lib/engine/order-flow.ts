@@ -9,6 +9,10 @@ export type PendingQuote = {
 };
 
 export const ORDER_SUMMARY_PREFIX = "Dạ, đơn hàng dự kiến:";
+// Buttons under the summary, so the shopper doesn't have to type a yes that
+// isOrderConfirmation may not read.
+export const ORDER_SUMMARY_YES = "Xác nhận đơn";
+export const ORDER_SUMMARY_EDIT = "Sửa đơn";
 
 export function latestQuote(logs: ToolCallLog[]): PendingQuote | null {
   for (const log of logs.toReversed()) {
@@ -55,19 +59,28 @@ export function isOrderConfirmation(history: HistoryMessage[]): boolean {
   return last?.sender === "shopper" && summary.startsWith(ORDER_SUMMARY_PREFIX) && saysYes(last.text);
 }
 
-// A yes to a read-back or a summary ("Đúng rồi, bạn chốt đơn giúp mình nhé"): it
-// starts with a yes word and every other word is a yes or polite filler. Anything
-// else ("ko", "đen", "M", "bỏ", a number) may change or refuse the order, so the AI
-// asks again rather than guess. ORDER_CONFIRM_YES folds to "dung dat luon".
-const YES_START = new Set(["ok", "oke", "okie", "okay", "dong", "xac", "chot", "dat", "len", "lay", "dung", "chinh", "chuan", "vang", "uh", "um"]);
-const YES_OR_FILLER = new Set([
-  ...YES_START, "y", "nhan", "don", "hang", "roi", "vay", "luon", "di", "lun",
-  "da", "a", "nha", "nhe", "nhen", "nghen", "ne", "hen", "oi", "shop", "ban", "minh", "em", "giup", "gium", "cho", "voi",
+// A yes to a read-back or a summary ("Đúng rồi, bạn chốt đơn giúp mình nhé"): no
+// question mark, it starts with a yes word, and every other word is a yes or polite
+// filler. Anything else ("ko", "đen", "M", "bỏ", a number) may change or refuse the
+// order, so the AI asks again rather than guess. Words are matched with their
+// accents, because folding turns "đừng" into "đúng", "chờ" into "cho", "đã" into
+// "dạ"; the unaccented spellings listed are for shoppers who type without accents.
+const YES_START = new Set([
+  "ok", "oke", "okie", "oki", "okay", "uk", "yes", "ừ", "u", "uh", "đồng", "dong", "xác", "xac", "chốt", "chot",
+  "đặt", "dat", "lên", "len", "lấy", "lay", "đúng", "dung", "chính", "chinh", "chuẩn", "chuan", "vâng", "vang",
+  "được", "duoc", "đc", "dc", "có", "co", "phải", "phai",
 ]);
+const YES_OR_FILLER = new Set([
+  ...YES_START, "ý", "y", "nhận", "nhan", "đơn", "don", "hàng", "hang", "rồi", "roi", "r", "vậy", "vay", "luôn", "luon",
+  "lun", "đi", "di", "dạ", "da", "ạ", "a", "nha", "nhé", "nhe", "nhen", "nghen", "nè", "ne", "hen", "ơi", "oi", "shop",
+  "bạn", "ban", "mình", "minh", "em", "anh", "chị", "chi", "giúp", "giup", "giùm", "gium", "cho", "với", "voi",
+]);
+const SPEAKER = new Set(["dạ", "da", "mình", "minh", "em"]);
 
 function saysYes(text: string): boolean {
-  const words = fold(text).replace(/[^a-z0-9]+/g, " ").trim().split(" ");
-  const first = words.find((word) => word !== "da" && word !== "minh" && word !== "em");
+  if (text.includes("?")) return false;
+  const words = text.normalize("NFC").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const first = words.find((word) => !SPEAKER.has(word));
   return first !== undefined && YES_START.has(first) && words.every((word) => YES_OR_FILLER.has(word));
 }
 

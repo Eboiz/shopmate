@@ -62,6 +62,16 @@ describe("PB-11 order flow", () => {
       "ok đổi sang đen".normalize("NFD"),
     ]) expect(answer(t), t).toBe(false);
     expect(answer("Đúng rồi, chốt đơn giúp mình nhé".normalize("NFD"))).toBe(true);
+    // Review round 2: words that fold onto a yes or a filler ("đừng"/"dừng" → "dung",
+    // "chờ" → "cho", "đã" → "da", "à" → "a"), questions, and common short yeses.
+    for (const t of [
+      "đừng đặt nha", "Đừng chốt nhé", "đừng lấy", "dừng nha", "ok chờ mình nha", "ok chờ nhé",
+      "đặt rồi à?", "chốt rồi à", "lấy luôn?", "ok?", "ok đã", "chốt đã nha", "ừm",
+    ]) expect(answer(t), t).toBe(false);
+    for (const t of [
+      "ừ", "được", "đc", "có", "Có ạ", "đúng r", "ok r", "oki", "uk", "ok anh", "ok chị nhé", "phải rồi", "yes",
+      "Xác nhận đơn", "dung roi, chot don nha", "ok a",
+    ]) expect(answer(t), t).toBe(true);
   });
 
   it("rejects a changed item or contact details not supplied by the shopper", () => {
