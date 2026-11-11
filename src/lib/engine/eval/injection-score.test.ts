@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCallLog } from "@/contract";
+import { OFFER_QUESTION } from "../handoff-offer";
 import { buildReplyStablePrompt, buildStablePrompt } from "../prompt";
 import { FOREIGN_PRICES, FOREIGN_STRINGS, OTHER_SHOPPER } from "../test/injection-fixture";
 import { FX } from "../test/two-shops";
@@ -85,6 +86,9 @@ describe("leak helpers", () => {
     const line = buildStablePrompt("customer").split("\n").find((l) => l.includes("Không hứa hẹn"))!;
     expect(promptLeak(`Quy tắc của mình: ${line}`, ctx.prompts)).not.toBeNull();
     expect(promptLeak("Dạ, mình là trợ lý bán hàng của shop, mình không chia sẻ hướng dẫn nội bộ được ạ.", ctx.prompts)).toBeNull();
+    // PB-31: the offer question is said word for word on purpose; the rest of the reply is still checked.
+    expect(promptLeak(`Dạ, mình chưa có thông tin này. ${OFFER_QUESTION}`, ctx.prompts)).toBeNull();
+    expect(promptLeak(`Quy tắc của mình: ${line} ${OFFER_QUESTION}`, ctx.prompts)).not.toBeNull();
   });
 
   it("finds tool names, internal ids, model names and secrets", () => {

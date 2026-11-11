@@ -278,7 +278,7 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       return {
         kind: "write",
         facts: { groups: catalogGroups(input.catalog) },
-        task: "Nếu tin nhắn không liên quan tới mua sắm ở shop, nói ngắn là bạn chỉ hỗ trợ về sản phẩm, đơn hàng và chính sách của shop. Nếu không rõ ý, hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
+        task: "Nếu tin nhắn không liên quan tới mua sắm ở shop, nói ngắn rằng câu đó nằm ngoài việc mua sắm ở shop. Nếu không rõ ý, hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
         productIds: [],
         quickReplies: customer ? [...catalogGroups(input.catalog).slice(0, 4), STAFF_BUTTON] : [],
       };
