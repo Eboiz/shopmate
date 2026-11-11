@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonical, isCatalogQuestion, isReturnsQuestion, productsForOccasion, productsNamedIn, rankProducts } from "./product-match";
+import { canonical, isCatalogQuestion, productCoveringMessage, isReturnsQuestion, productsForOccasion, productsNamedIn, rankProducts } from "./product-match";
 
 const P = (name: string, category: string | null = null) => ({ name, category });
 const catalog = [
@@ -94,19 +94,44 @@ describe("PB-31 question kinds", () => {
     for (const t of ["áo này có màu gì", "váy có size gì", "đồ đi tiệc", "còn hàng size M không", "áo này có hàng size gì",
       // review: pairing, promotion, stock and a complaint are not catalog questions
       "Có món gì phối với áo blazer này không?", "Shop có gì khuyến mãi không?", "bên mình có gì giảm giá không",
-      "Áo này có hàng nào size S không?", "Shop có gì đó sai rồi, áo mình nhận bị rách"]) {
+      "Áo này có hàng nào size S không?", "Shop có gì đó sai rồi, áo mình nhận bị rách",
+      // review r2: a product, color or size before "có hàng/món nào" is a stock question
+      "Váy đen có hàng nào không shop", "Màu đen có món nào không", "Áo này size S có hàng nào không?", "Size M có hàng nào không ạ",
+      "Đồ đi tiệc có món nào không?"]) {
       expect(isCatalogQuestion(t), t).toBe(false);
     }
   });
 
   it("isReturnsQuestion: exchanges and returns, with or without diacritics", () => {
-    for (const t of ["Mua về mặc không vừa thì đổi được không shop?", "đổi size được không", "chính sách đổi trả thế nào", "tra hang duoc khong"]) {
+    for (const t of ["Mua về mặc không vừa thì đổi được không shop?", "Mặc không vừa thì đổi được không shop?", "chính sách đổi trả thế nào",
+      "tra hang duoc khong", "Mình đã mua áo hôm qua, đổi size được không?", "nhận hàng rồi muốn trả lại hàng thì sao", "hoàn tiền được không shop"]) {
       expect(isReturnsQuestion(t), t).toBe(true);
     }
     for (const t of ["váy này có đôi bông tai đi kèm không", "doi lau khong shop", "áo co giãn không",
       // review: changing color or item before buying is not a return
-      "đổi màu khác cho mình xem", "đổi sang áo khác cho mình", "Mình đợi lâu quá, đổi lại cho mình địa chỉ"]) {
+      "đổi màu khác cho mình xem", "đổi sang áo khác cho mình", "Mình đợi lâu quá, đổi lại cho mình địa chỉ",
+      // review r2: "trả lời", "đợi", "đôi" and size worries before buying are not returns
+      "Shop trả lời giúp mình: mình 1m55 45kg mặc size M có bị rộng quá không?", "Mình 1m60 mặc S có bị chật quá không, trả lời giúp mình",
+      "đợi mãi không thấy trả lời, áo này mặc có rộng quá không", "Đôi này chật quá không shop", "cho mình đổi size sang M nha"]) {
       expect(isReturnsQuestion(t), t).toBe(false);
     }
+  });
+});
+
+describe("productCoveringMessage (PB-31 r2: Jev picked no product)", () => {
+  const shop = [
+    { name: "Quần jean ống đứng", category: "quan", colors: ["xanh"] },
+    { name: "Áo khoác bomber", category: "ao_khoac", colors: ["đen"] },
+    { name: "Áo khoác jean", category: "ao_khoac", colors: ["xanh"] },
+  ];
+  it("every product word the shopper said (synonyms applied, colors allowed) fits exactly one product", () => {
+    expect(productCoveringMessage("Shop có quần bò không?", shop)?.name).toBe("Quần jean ống đứng");
+    expect(productCoveringMessage("quần bò xanh còn không", shop)?.name).toBe("Quần jean ống đứng");
+    expect(productCoveringMessage("có jacket bomber không", shop)?.name).toBe("Áo khoác bomber");
+  });
+  it("several products or a word the shop doesn't have: null (ask which one)", () => {
+    expect(productCoveringMessage("Shop có áo khoác không?", shop)).toBeNull();
+    expect(productCoveringMessage("loại áo khoác da màu đen ấy", shop)).toBeNull();
+    expect(productCoveringMessage("shop còn hàng không", shop)).toBeNull();
   });
 });

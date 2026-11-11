@@ -60,11 +60,21 @@ export const offersStaff = (reply: { text?: string; quickReplies: string[] }) =>
   reply.quickReplies.includes(OFFER_YES) || (reply.text ?? "").includes(OFFER_QUESTION);
 
 // The shopper asks for a person (staff, the owner, "ai đó", not the bot). An order
-// like "cho mua 1 áo blazer" asks for none, so it is never asked_for_human. Broad
-// on purpose: a request for a person always wins over an order (PB-14, AC7), so
-// when in doubt the message counts as one. "chủ nhật" (Sunday) is not the owner.
-const HUMAN = /\b(nhan vien|nguoi|admin|quan ly|bot|ai do|ban nao|gap|goi|keu|noi chuyen|chu(?! nhat))\b/;
-export const asksForHuman = (text: string) => HUMAN.test(fold(text).replace(/[^a-z0-9 ]+/g, " "));
+// like "cho mua 1 áo blazer" asks for none, so it is never asked_for_human; a
+// request for a person always wins over an order (PB-14, AC7).
+// Phrases, matched on the text WITH diacritics (r2): folded, "chữ"/"chú" read as
+// "chủ", "gói" as "gọi", "gấp" as "gặp". Folded text only adds phrases that mean
+// nothing else, for shoppers typing without diacritics.
+const PERSON = "nhân viên|người|ai|ai đó|chủ|chủ shop|chủ tiệm|chị chủ|anh chủ|admin|quản lý";
+const HUMAN = new RegExp(
+  `(?<!\\p{L})(nhân viên|người thật|người (bán hàng|tư vấn)|tư vấn viên|admin|quản lý|ai đó|bạn nào|bot|` +
+    `gặp (${PERSON})|(kêu|gọi) (nhân viên|người|chủ|chị chủ|anh chủ|admin|quản lý)|nói chuyện (với|cùng) (${PERSON})|` +
+    `chủ (shop|tiệm|cửa hàng)|chủ ra)(?!\\p{L})`,
+  "u",
+);
+const HUMAN_PLAIN = /\b(nhan vien|nguoi that|tu van vien|admin|bot|ai do|chu shop|gap (nhan vien|nguoi that|chu shop|ai do)|noi chuyen voi (nguoi|nhan vien))\b/;
+export const asksForHuman = (text: string) =>
+  HUMAN.test(text.normalize("NFC").toLowerCase().replace(/\s+/g, " ")) || HUMAN_PLAIN.test(fold(text).replace(/[^a-z0-9 ]+/g, " "));
 
 // LLM tool loop: a handoff the shopper's message and this turn's tools don't
 // support is sent back to the model once, with what to do instead. null: let it run.

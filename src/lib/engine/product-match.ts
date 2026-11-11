@@ -112,28 +112,51 @@ export function productsNamedIn<T extends Matchable>(message: string, products: 
     .map((s) => s.p);
 }
 
-// PB-31: "shop có gì", "bên mình có những sản phẩm gì": the whole catalog, not one
-// product. "áo này có màu gì" names a product and a property, so it isn't. The
-// question must END there (only particles after "gì/nào"): "shop có gì khuyến
-// mãi", "có món gì phối với…", "có hàng nào size S" and "shop có gì đó sai rồi"
-// ask something else. It runs before Jev, so it errs toward "not a catalog question".
-const ENDS = "(gi|nao)( (vay|the|a|nhi|khong|ha|nha|nhe|shop|ban|ah|day))*$";
-const CATALOG_QUESTION = [
-  new RegExp(`\\b(shop|ben minh|ben ban|ben em|ben shop|cua hang)\\s+(co|ban)\\s+(nhung\\s+)?${ENDS}`),
-  new RegExp(`\\b(co|ban)\\s+(nhung\\s+)?(san pham|mon|mat hang|loai do|do|hang)\\s+${ENDS}`),
-];
+// PB-31 r2: Jev picked no product, but every product word of the message
+// (synonyms applied, the product's own colors allowed) fits exactly ONE product:
+// "Shop có quần bò không?" is the shop's "Quần jean ống đứng". Several fits or a
+// word the shop doesn't have ("áo khoác da"): null, the caller asks which one.
+export function productCoveringMessage<T extends Matchable & { colors?: string[] }>(message: string, products: T[]): T | null {
+  const said = [...new Set(words(message).filter((w) => !NOISE.has(w)))];
+  if (said.length === 0) return null;
+  const fits = products.filter((p) => {
+    const own = [...haystack(p), ...(p.colors ?? []).flatMap(words)];
+    return said.every((w) => contains(own, w));
+  });
+  return fits.length === 1 ? fits[0] : null;
+}
+
+// PB-31: "shop có gì", "bên mình có những sản phẩm gì": the whole catalog. The
+// WHOLE message must be that question (r2): only a shop subject may come before
+// "có/bán" and only particles after "gì/nào", so "Váy đen có hàng nào không",
+// "Size M có hàng nào", "shop có gì khuyến mãi" or "shop có gì đó sai rồi" ask
+// something else. It runs before Jev, so it errs toward "not a catalog question".
+const CATALOG_QUESTION = new RegExp(
+  "^((hien tai|cho minh hoi|cho hoi|oi|da|vay|the) )*((shop|ben minh|ben ban|ben em|ben shop|cua hang|minh) )?(hien )?(dang )?" +
+    "(co|ban) (nhung )?((san pham|mon|mon do|mat hang|loai do|loai hang|do|hang) )?(gi|nao)" +
+    "( (vay|the|a|nhi|khong|ha|nha|nhe|shop|ban|ah|day|z))*$",
+);
 export function isCatalogQuestion(text: string): boolean {
-  const t = fold(text).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
-  return CATALOG_QUESTION.some((re) => re.test(t));
+  return CATALOG_QUESTION.test(fold(text).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim());
 }
 
 // PB-31: exchanges and returns after buying ("mua về mặc không vừa thì đổi được
-// không"): the doi_tra policy answers them. "đổi màu khác", "đổi sang áo khác" or
-// "đổi lại địa chỉ" happen before buying, and "đổi" without diacritics is also
-// "đợi"/"đôi", so "đổi"/"trả" counts only with a sign the item was bought.
-const RETURNS = /\b(doi tra|tra hang|tra lai hang|hoan tien|doi size)\b/;
-const AFTER_BUYING = /\b(mua ve|nhan hang|nhan duoc|khong vua|da mua|bi rong|bi chat|chat qua|rong qua)\b/;
+// không"): the doi_tra policy answers them. Matched on the text WITH diacritics
+// (r2): without them "đổi"/"trả" collide with "đợi", "đôi", "trả lời". A bare
+// "đổi"/"trả" needs a sign the item was bought; "đổi size sang M" while ordering
+// or "rộng quá không" before buying is not a return.
+const word = (alts: string) => new RegExp(`(?<!\\p{L})(${alts})(?!\\p{L})`, "u");
+const RETURNS = word("đổi trả|trả hàng|trả lại (hàng|đồ|áo|váy|quần|tiền)|hoàn tiền|đổi hàng");
+const RETURNS_PLAIN = /\b(doi tra|tra hang|hoan tien)\b/;
+const RETURN_VERB = word("đổi|trả");
+const AFTER_BUYING = word("mua về|nhận hàng|nhận được hàng|đã mua|(mặc|mang) (không|ko|k) vừa");
+const AFTER_BUYING_PLAIN = /\b(mua ve|nhan hang|nhan duoc hang|da mua|mac (khong|ko|k) vua)\b/;
 export function isReturnsQuestion(text: string): boolean {
-  const t = fold(text).replace(/[^a-z0-9]+/g, " ");
-  return RETURNS.test(t) || (/\b(doi|tra)\b/.test(t) && AFTER_BUYING.test(t));
+  const t = text.normalize("NFC").toLowerCase().replace(/\s+/g, " ");
+  const plain = fold(text).replace(/[^a-z0-9]+/g, " ");
+  if (RETURNS.test(t) || RETURNS_PLAIN.test(plain)) return true;
+  // Typed without diacritics: the folded words are all there is to go on.
+  const noMarks = !/[^\x00-\x7f]/.test(t);
+  const verb = RETURN_VERB.test(t) || (noMarks && /\b(doi|tra)\b/.test(plain));
+  return verb && (AFTER_BUYING.test(t) || AFTER_BUYING_PLAIN.test(plain));
 }

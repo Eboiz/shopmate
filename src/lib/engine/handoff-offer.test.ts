@@ -49,5 +49,10 @@ it("asksForHuman: a person, staff or the owner is named; an order is not a reque
     "Mình không muốn đặt với bot, cho gặp ai đó đi", "Cho mình gặp chị chủ để mua áo blazer"]) {
     expect(asksForHuman(t), t).toBe(true);
   }
-  for (const t of ["cho mua 1 áo blazer màu đen size S", "lấy cái đen size S", "chủ nhật có giao không"]) expect(asksForHuman(t), t).toBe(false);
+  for (const t of ["cho mua 1 áo blazer màu đen size S", "lấy cái đen size S", "chủ nhật có giao không",
+    // review r2: words that only look like "chủ", "gọi", "gặp", "kêu" once diacritics are dropped
+    "Mua váy chữ A size M", "lấy 2 áo gói quà", "đặt gấp 1 áo", "chốt đơn, kêu ship giao nha",
+    "lấy áo này cho người yêu mình", "mua quần cho chú mình"]) {
+    expect(asksForHuman(t), t).toBe(false);
+  }
 });
