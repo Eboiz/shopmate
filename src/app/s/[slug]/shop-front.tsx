@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { ProductCard } from "@/components/ui/product-card";
@@ -505,7 +506,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       {!detailProductId && (
         <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
           <button ref={mobileChatRef} type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap bg-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em] text-white"><span aria-hidden="true" className="size-[7px] rounded-full bg-[#4cc47a]" />Chat với shop</button>
-          <button type="button" onClick={openCart} className="inline-flex min-h-12 items-center justify-center whitespace-nowrap border-[1.5px] border-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em]">Giỏ đặt ({itemCount})</button>
+          <button type="button" onClick={openCart} aria-label={`Giỏ đặt hàng, ${itemCount} món`} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap border-[1.5px] border-[#171717] px-3 text-sm font-extrabold tabular-nums"><Icon name="cart" className="size-5" />{itemCount}</button>
         </div>
       )}
 

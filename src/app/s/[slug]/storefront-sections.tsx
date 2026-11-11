@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { formatPrice } from "@/lib/format";
 import type { ShopProduct, SizeChartRow } from "@/lib/shop/types";
+import { Icon } from "@/components/ui/icon";
 import { HeaderSearch } from "./header-search";
 
 // Presentational blocks of the shop front. Every block that can start a
@@ -125,8 +126,8 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
 
         <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
           <HeaderSearch products={products} productHref={productHref} onSearch={search} onAsk={ask} className="hidden w-[280px] lg:block" />
-          <button type="button" onClick={onOpenCart} className="hidden min-h-11 items-center gap-2 px-2 text-xs font-extrabold uppercase tracking-[.1em] hover:text-[#c2412b] sm:inline-flex">
-            Giỏ <span className="inline-grid h-5 min-w-5 place-items-center rounded-full bg-[#171717] px-1.5 text-[11px] tabular-nums text-white">{itemCount}</span>
+          <button type="button" onClick={onOpenCart} aria-label={`Giỏ đặt hàng, ${itemCount} món`} title="Giỏ đặt hàng" className="hidden size-11 items-center justify-center transition-colors hover:text-[#c2412b] sm:inline-flex">
+            <span className="relative"><Icon name="cart" className="size-6" /><span className="absolute -right-1.5 -top-1 inline-grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[#e9573f] px-1 text-[10px] font-extrabold tabular-nums text-[#171717]">{itemCount}</span></span>
           </button>
         </div>
       </div>
