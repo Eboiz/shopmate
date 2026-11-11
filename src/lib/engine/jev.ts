@@ -29,6 +29,7 @@ export const INTENTS = [
   "human",
   "greeting",
   "browse",
+  "off_topic",
   "unclear",
 ] as const;
 export type Intent = (typeof INTENTS)[number];
@@ -45,11 +46,15 @@ const INTENT_CRITERIA: Record<Intent, string> = {
   order:
     "Wants to buy or place an order (e.g. 'cho mua 1 áo blazer đen size S', 'lấy cái này'), confirms an order, or gives order details (quantity, name, phone, address).",
   complaint: "Complains about something that went wrong: damaged, wrong or missing item, late delivery, bad service.",
-  human: "Asks to talk to a person, staff member, or the shop owner instead of the assistant, or asks who the staff member is.",
+  human:
+    "Asks to talk to or meet a person, staff member, or the shop owner instead of the assistant (e.g. 'cho gặp chủ shop', 'kêu chủ ra'). Wanting to buy an item is an order, not a request for a person.",
   greeting: "Only greets, thanks, or says goodbye, with no question.",
   browse:
     "Asks what the shop sells, or for items by occasion, style or type without naming one product (e.g. 'shop có những gì', 'đồ đi tiệc', 'có đồ công sở không').",
-  unclear: "The message can't be understood, is off-topic, or doesn't say what the shopper wants.",
+  // PB-31: answered "only the shop's products" plus a staff offer, not a clarifying question.
+  off_topic:
+    "Asks about something other than shopping at this shop (general knowledge, technology, e.g. 'php2shell là gì'), or asks personal details about the owner or staff such as their name, without asking to talk to them.",
+  unclear: "The message can't be understood or doesn't say what the shopper wants.",
 };
 
 const POLICY_CRITERIA: Record<PolicyKind, string> = {

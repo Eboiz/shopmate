@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { HistoryMessage, ToolName } from "@/contract";
 import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import type { CatalogItem, JevDecision } from "./jev";
+import { ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
 import {
   ASK_PAIRING_PRODUCT_TEXT,
   catalogGroups,
+  catalogOverview,
+  STAFF_OFF_TOPIC_TEXT,
   STAFF_BUTTON,
   requestedColor,
   requestedSize,
@@ -317,5 +320,89 @@ describe("routeTurn", () => {
   it("a tool error falls back to the tool loop", async () => {
     const { run } = setup({ get_stock: { ok: false, output: undefined, code: "product_not_found" } });
     expect(await run({})).toEqual({ kind: "fallback", reason: "tool_error" });
+  });
+
+  describe("PB-31 bugs and parity with the tool loop", () => {
+    const BLAZER = "a0000000-0000-4000-8000-000000000013";
+    const shop: CatalogItem[] = [
+      ...catalog,
+      { id: BLAZER, name: "Áo blazer", category: "Áo", colors: ["Đen", "Be"], sizes: ["S", "M"] },
+    ];
+    const blazer = { kind: "catalog" as const, id: BLAZER };
+
+    it("'cho mua 1 áo blazer màu đen size S' read as human is an order: read back, no handoff", async () => {
+      const { run, runTool } = setup();
+      const out = await run({ catalog: shop, viewing: null, history: said("cho mua 1 áo blazer màu đen size S"), decision: decision({ intent: "human", product: blazer }) });
+      expect(out).toEqual({
+        kind: "fixed",
+        reply: { text: orderConfirmText("Áo blazer", "Đen", "S"), products: [], quickReplies: [ORDER_CONFIRM_YES, ORDER_CONFIRM_NO] },
+      });
+      expect(runTool).not.toHaveBeenCalled();
+    });
+
+    it("an order that also asks for a person still hands off (asked_for_human)", async () => {
+      const out = await setup().run({ catalog: shop, history: said("cho gặp nhân viên để đặt hàng"), decision: decision({ intent: "human", product: blazer }) });
+      expect(out).toMatchObject({ kind: "handoff", reason: "asked_for_human" });
+    });
+
+    it("order: read back first; a yes to the read-back and order details go to the tool loop", async () => {
+      const { run } = setup();
+      const first = await run({ catalog: shop, history: said("lấy cái đen size S"), decision: decision({ intent: "order", product: blazer }) });
+      expect(first).toMatchObject({ kind: "fixed", reply: { text: "Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?" } });
+      const yes: HistoryMessage[] = [
+        { sender: "shopper", text: "lấy cái đen size S" },
+        { sender: "ai", text: orderConfirmText("Áo blazer", "Đen", "S") },
+        { sender: "shopper", text: ORDER_CONFIRM_YES },
+      ];
+      expect(await run({ catalog: shop, history: yes, decision: decision({ intent: "greeting" }) })).toEqual({ kind: "fallback", reason: "order" });
+      expect(await run({ catalog: shop, history: said("Thảo 0912345678, Q1"), decision: decision({ intent: "order", product: blazer }) }))
+        .toEqual({ kind: "fallback", reason: "order" });
+      // an order with a discount demand ("lấy 2 cái, bớt 50k"): the tool loop refuses it
+      expect(await run({ catalog: shop, history: said("lấy 2 cái đen size S, bớt 50k nha"), decision: decision({ intent: "order", product: blazer, discountTrick: 0.9 }) }))
+        .toEqual({ kind: "fallback", reason: "order" });
+      // no product known: the tool loop asks which one
+      expect(await run({ viewing: null, history: said("lấy 1 cái"), decision: decision({ intent: "order", product: { kind: "none" } }) }))
+        .toEqual({ kind: "fallback", reason: "order" });
+    });
+
+    it("off-topic ('php2shell là gì', the owner's name): only the shop, and the staff offer", async () => {
+      const { run, runTool } = setup();
+      const out = await run({ history: said("php2shell là gì"), decision: decision({ intent: "off_topic", product: { kind: "none" } }) });
+      expect(out).toMatchObject({ kind: "fixed", offer: "not_covered_by_data", reply: { quickReplies: OFFER_QUICK_REPLIES } });
+      expect((out as { reply: { text: string } }).reply.text).toContain("chỉ hỗ trợ");
+      expect((out as { reply: { text: string } }).reply.text).toContain(OFFER_QUESTION);
+      expect(runTool).not.toHaveBeenCalled();
+      expect(await setup().run({ mode: "staff_draft", decision: decision({ intent: "off_topic" }) })).toEqual({
+        kind: "fixed",
+        reply: { text: STAFF_OFF_TOPIC_TEXT, products: [], quickReplies: [] },
+      });
+    });
+
+    it("'mặc không vừa thì đổi được không' is a returns question, answered from doi_tra", async () => {
+      const { run, runTool } = setup({ get_policy: { ok: true, output: { kind: "doi_tra", content: "Đổi size trong 7 ngày" } } });
+      const out = await run({ history: said("Mua về mặc không vừa thì đổi được không shop?"), decision: decision({ intent: "product_detail" }) });
+      expect(runTool).toHaveBeenCalledWith("get_policy", { kind: "doi_tra" });
+      expect(out).toMatchObject({ kind: "write", facts: { policy: { content: "Đổi size trong 7 ngày" } } });
+      expect(out).not.toHaveProperty("offer");
+    });
+
+    it("close products beat 'misunderstood twice': the shopper said something the shop nearly has", async () => {
+      const out = await setup().run({
+        viewing: null,
+        history: said("loại áo khoác da màu đen ấy"),
+        decision: decision({ product: { kind: "none" }, askedToClarify: 0.9 }),
+      });
+      expect(out).toMatchObject({ kind: "write", quickReplies: ["Áo khoác jean"] });
+    });
+
+    it("catalogOverview: each group with a few products, groups as buttons", () => {
+      const overview = catalogOverview(shop)!;
+      expect(overview.text).toContain("Áo: Áo blazer");
+      expect(overview.text).toContain("Áo khoác: Áo khoác jean");
+      expect(overview.text).toContain("Váy & đầm: Váy suông linen");
+      expect(overview.quickReplies).toEqual(["Áo", "Áo khoác", "Váy & đầm"]);
+      expect(overview.text).not.toMatch(/\d{3}\.\d{3}/); // no price
+      expect(catalogOverview([])).toBeNull();
+    });
   });
 });
