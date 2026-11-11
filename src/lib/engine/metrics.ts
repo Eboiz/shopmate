@@ -57,7 +57,8 @@ export type TurnMetrics = {
   // tools ran in a fixed order (route.ts); "llm_loop": the model chose the tools.
   route?: {
     // "offer_answer" (PB-31): the shopper answered a staff offer with yes/no.
-    path: "router" | "llm_loop" | "offer_answer";
+    // "catalog" (PB-31): "shop có gì", answered from the catalog by the server.
+    path: "router" | "llm_loop" | "offer_answer" | "catalog";
     fallbackReason?: string;
     jevModel?: string;
     jevMs?: number;

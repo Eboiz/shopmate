@@ -21,7 +21,7 @@ import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
-import { OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
+import { handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
@@ -29,7 +29,8 @@ import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
-import { routeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { isCatalogQuestion } from "./product-match";
+import { catalogOverview, routeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -259,6 +260,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
+  // PB-31: the model's handoff was sent back once (handoffCorrection).
+  let handoffCorrected = false;
   // PB-17: the reply still failed the discount or echo check after one retry and
   // the shopper was asking for a discount or a price: the server refuses instead.
   let refusalFallback = false;
@@ -299,6 +302,16 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   } else if (offered && answer === "no") {
     routed = { kind: "fixed", reply: { text: OFFER_DECLINED_TEXT, products: [], quickReplies: [] } };
     route = { path: "offer_answer" };
+  }
+
+  // PB-31: "shop có gì", "bên mình có những sản phẩm gì": the shop's groups with a
+  // few products each, from the catalog, on both paths (never a misunderstood turn).
+  if (!routed && !orderInProgress && deps.store.catalog && isCatalogQuestion(lastShopperText(input.history))) {
+    const overview = catalogOverview(await deps.store.catalog(ctx.shopId));
+    if (overview) {
+      routed = { kind: "fixed", reply: overview };
+      route = { path: "catalog" };
+    }
   }
 
   if (deps.jev && orderInProgress) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
@@ -539,13 +552,24 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
 
     const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    // PB-31: a handoff this turn doesn't support (an order read as asked_for_human,
+    // a returns question before get_policy, product_not_found with close products)
+    // is sent back to the model once with what to do instead.
+    const handoffUse = mode === "customer" && !handoffCorrected ? uses.find((u) => u.name === "handoff_to_staff") : undefined;
+    const correction = handoffUse
+      ? handoffCorrection((handoffUse.input as { reason?: unknown } | null)?.reason, lastShopperText(input.history), logs)
+      : null;
+    if (correction) handoffCorrected = true;
     // PB-31: a handoff for missing data, an unwritten policy or a size outside
     // the chart becomes an offer; nothing in this batch runs.
-    const softHandoff = mode === "customer"
+    const softHandoff = mode === "customer" && !correction
       ? uses.find((u) => u.name === "handoff_to_staff" && isOfferReason((u.input as { reason?: unknown } | null)?.reason))
       : undefined;
     if (softHandoff) {
-      offerMade = (softHandoff.input as { reason: OfferReason }).reason;
+      const reason = (softHandoff.input as { reason: OfferReason }).reason;
+      // The reason comes from this turn only: a size reason with no size result
+      // this turn (left over from an earlier turn) is missing data.
+      offerMade = reason === "size_out_of_range" && (sizeStatus as SizeStatus) === null ? "not_covered_by_data" : reason;
       break;
     }
     // None of the batch runs when it would go over the limit.
@@ -558,6 +582,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
     const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
       const s0 = now();
+      if (u === handoffUse && correction) {
+        const run: ToolRun = {
+          log: { name: "handoff_to_staff", input: u.input, error: "handoff_not_needed" },
+          content: JSON.stringify({ error: "handoff_not_needed", note: correction }),
+          isError: true,
+        };
+        return { run, ms: now() - s0, startMs: s0 - t0 };
+      }
       if (u.name === "create_draft_order" && mode === "customer") {
         const issue = orderWriteError(u.input, input.history, previousQuote);
         if (issue) {

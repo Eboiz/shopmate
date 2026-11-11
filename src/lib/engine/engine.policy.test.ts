@@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineInput } from "@/contract";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE } from "./discount-guard";
-import { HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
+import { runEngine, type EngineDeps } from "./engine";
 import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import { buildStablePrompt } from "./prompt";
 import { ECHO_RETRY_NOTE, REFUSAL_TEXT } from "./refusal-guard";
