@@ -24,7 +24,14 @@ export function createAnthropicModel(client: Anthropic): ModelClient {
 
 // The model used when nothing is injected. ANTHROPIC_API_URL points at a gateway
 // (the SDK itself only reads ANTHROPIC_BASE_URL); empty means api.anthropic.com.
-export function createDefaultModel(env: Record<string, string | undefined> = process.env): ModelClient {
+// opts.maxRetries: the SDK's own retries (default 2). The PB-17 eval passes 0 so a
+// 429 quota error stops the run at once instead of spending more quota.
+export function createDefaultModel(
+  env: Record<string, string | undefined> = process.env,
+  opts: { maxRetries?: number } = {},
+): ModelClient {
   const baseURL = env.ANTHROPIC_API_URL?.trim().replace(/\/+$/, "").replace(/\/v1\/messages$/, "");
-  return createAnthropicModel(new Anthropic(baseURL ? { baseURL } : {}));
+  return createAnthropicModel(
+    new Anthropic({ ...(baseURL ? { baseURL } : {}), ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}) }),
+  );
 }
