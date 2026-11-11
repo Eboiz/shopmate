@@ -41,5 +41,12 @@ function outOfRange(sorted: SizeChartRow[], heightCm: number, weightKg: number):
   const end = above
     ? sorted.reduce((a, r) => (r.height_max_cm + r.weight_max_kg > a.height_max_cm + a.weight_max_kg ? r : a))
     : sorted.reduce((a, r) => (r.height_min_cm + r.weight_min_kg < a.height_min_cm + a.weight_min_kg ? r : a));
-  return { status: "out_of_range", nearestSize: end.size, offCm: past(heightCm, minH, maxH), offKg: past(weightKg, minW, maxW) };
+  const below = heightCm < minH || weightKg < minW;
+  return {
+    status: "out_of_range",
+    nearestSize: end.size,
+    offCm: past(heightCm, minH, maxH),
+    offKg: past(weightKg, minW, maxW),
+    ...(below ? { belowChart: true as const } : {}),
+  };
 }

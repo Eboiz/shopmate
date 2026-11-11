@@ -210,7 +210,7 @@ describe("pb31Cases", () => {
     expect(out(174, 58)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 2, offKg: 0 });
     expect(out(170, 62)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 0, offKg: 2 });
     expect(out(175, 63)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 3, offKg: 3 });
-    expect(out(148, 42)).toEqual({ status: "out_of_range", nearestSize: "S", offCm: 2, offKg: 0 });
+    expect(out(148, 42)).toEqual({ status: "out_of_range", nearestSize: "S", offCm: 2, offKg: 0, belowChart: true });
     for (const [h, w] of [[174, 58], [170, 62], [175, 63], [148, 42]]) {
       expect(isNearChart(out(h, w) as { offCm: number; offKg: number }), `${h}/${w}`).toBe(true);
     }

@@ -113,18 +113,27 @@ export function productsNamedIn<T extends Matchable>(message: string, products: 
 }
 
 // PB-31: "shop có gì", "bên mình có những sản phẩm gì": the whole catalog, not one
-// product. "áo này có màu gì" names a product and a property, so it isn't.
+// product. "áo này có màu gì" names a product and a property, so it isn't. The
+// question must END there (only particles after "gì/nào"): "shop có gì khuyến
+// mãi", "có món gì phối với…", "có hàng nào size S" and "shop có gì đó sai rồi"
+// ask something else. It runs before Jev, so it errs toward "not a catalog question".
+const ENDS = "(gi|nao)( (vay|the|a|nhi|khong|ha|nha|nhe|shop|ban|ah|day))*$";
 const CATALOG_QUESTION = [
-  /\b(shop|ben minh|ben ban|ben em|ben shop|cua hang)\s+(co|ban)\s+(nhung\s+)?(gi|nhung gi)\b/,
-  /\b(co|ban)\s+(nhung\s+)?(san pham|mon|mat hang|loai do|do|hang)\s+(gi|nao)\b/,
+  new RegExp(`\\b(shop|ben minh|ben ban|ben em|ben shop|cua hang)\\s+(co|ban)\\s+(nhung\\s+)?${ENDS}`),
+  new RegExp(`\\b(co|ban)\\s+(nhung\\s+)?(san pham|mon|mat hang|loai do|do|hang)\\s+${ENDS}`),
 ];
 export function isCatalogQuestion(text: string): boolean {
   const t = fold(text).replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
   return CATALOG_QUESTION.some((re) => re.test(t));
 }
 
-// PB-31: exchanges and returns ("mặc không vừa thì đổi được không"): the doi_tra
-// policy answers them, not the product data. "đổi" without diacritics is also
-// "đợi"/"đôi", so it counts only next to an exchange word.
-const RETURNS = /\b(doi (duoc|size|sang|hang|tra|lai|mau|cai|mon|ao|vay|quan)|tra (hang|lai)|hoan tien|doi tra)\b/;
-export const isReturnsQuestion = (text: string) => RETURNS.test(fold(text).replace(/[^a-z0-9]+/g, " "));
+// PB-31: exchanges and returns after buying ("mua về mặc không vừa thì đổi được
+// không"): the doi_tra policy answers them. "đổi màu khác", "đổi sang áo khác" or
+// "đổi lại địa chỉ" happen before buying, and "đổi" without diacritics is also
+// "đợi"/"đôi", so "đổi"/"trả" counts only with a sign the item was bought.
+const RETURNS = /\b(doi tra|tra hang|tra lai hang|hoan tien|doi size)\b/;
+const AFTER_BUYING = /\b(mua ve|nhan hang|nhan duoc|khong vua|da mua|bi rong|bi chat|chat qua|rong qua)\b/;
+export function isReturnsQuestion(text: string): boolean {
+  const t = fold(text).replace(/[^a-z0-9]+/g, " ");
+  return RETURNS.test(t) || (/\b(doi|tra)\b/.test(t) && AFTER_BUYING.test(t));
+}

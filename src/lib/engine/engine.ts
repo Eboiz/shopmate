@@ -21,7 +21,7 @@ import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
-import { handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
+import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
@@ -30,7 +30,7 @@ import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orde
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
 import { isCatalogQuestion } from "./product-match";
-import { catalogOverview, routeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { catalogOverview, groupListing, isGroupName, routeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -48,6 +48,8 @@ export const NO_SIZE_CHART_HANDOFF_TEXT = `Dạ, sản phẩm này shop chưa c�
 export const PRODUCT_NOT_FOUND_HANDOFF_TEXT = `Dạ, mình vẫn chưa tìm thấy sản phẩm bạn hỏi trong shop. ${HANDOFF_SUFFIX}`;
 
 type SizeStatus = "out_of_range" | "no_chart" | null;
+// PB-31: an out_of_range result of recommend_size, for the server's size text.
+type SizeOut = { nearestSize: string; offCm: number; offKg: number; belowChart?: boolean };
 
 // The shopper is told why, not just that staff will answer. A size handoff says the
 // measurements are outside the chart, or that the product has no chart.
@@ -164,7 +166,7 @@ const lastShopperText = (history: EngineInput["history"]) =>
 const isOfferReason = (reason: unknown): reason is OfferReason => (OFFER_REASONS as readonly unknown[]).includes(reason);
 
 // PB-31: the model wanted to hand off for a reason that now gets an offer first.
-function offerTextFor(reason: OfferReason, sizeOut: { nearestSize: string; offCm: number; offKg: number } | null, noChart: boolean): string {
+function offerTextFor(reason: OfferReason, sizeOut: SizeOut | null, noChart: boolean): string {
   if (reason === "size_out_of_range" || noChart) return sizeOfferText(noChart ? null : sizeOut);
   if (reason === "policy_not_covered") return `Dạ, chính sách của shop chưa nói tới điều bạn hỏi nên mình chưa trả lời chắc chắn được. ${OFFER_QUESTION}`;
   return `Dạ, shop chưa có thông tin này nên mình chưa trả lời chắc chắn được. ${OFFER_QUESTION}`;
@@ -240,7 +242,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let truncated = false;
   let sizeStatus: SizeStatus = null;
   // PB-31: the last out_of_range result of this turn (nearest size, distance).
-  let sizeOut: { nearestSize: string; offCm: number; offKg: number } | null = null;
+  let sizeOut: SizeOut | null = null;
   // PB-31: this turn offered staff for this reason instead of handing off.
   let offerMade: OfferReason | null = null;
   // PB-06 post-check: the last ok recommend_size result of this turn, the product
@@ -306,12 +308,21 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // PB-31: "shop có gì", "bên mình có những sản phẩm gì": the shop's groups with a
   // few products each, from the catalog, on both paths (never a misunderstood turn).
-  if (!routed && !orderInProgress && deps.store.catalog && isCatalogQuestion(lastShopperText(input.history))) {
-    const overview = catalogOverview(await deps.store.catalog(ctx.shopId));
-    if (overview) {
+  // A tapped group button ("Áo") lists that group's products with their cards.
+  // A complaint or a request for a person is never answered this way (PB-14).
+  const lastText = lastShopperText(input.history);
+  const catalogTurn = isCatalogQuestion(lastText) || isGroupName(lastText);
+  if (!routed && !orderInProgress && deps.store.catalog && catalogTurn && !isComplaint(lastText) && !asksForHuman(lastText)) {
+    const catalog = await deps.store.catalog(ctx.shopId);
+    const listing = groupListing(catalog, lastText);
+    const overview = listing || !isCatalogQuestion(lastText) ? null : catalogOverview(catalog);
+    if (listing) {
+      const { productIds, ...rest } = listing;
+      routed = { kind: "fixed", reply: { ...rest, products: await deps.store.productCards(ctx.shopId, productIds) } };
+    } else if (overview) {
       routed = { kind: "fixed", reply: overview };
-      route = { path: "catalog" };
     }
+    if (routed) route = { path: "catalog" };
   }
 
   if (deps.jev && orderInProgress) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
@@ -645,9 +656,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       seen.push({ name: u.name, input: u.input });
       if (u.name === "recommend_size" && !run.isError) {
         sizeStatus = sizeStatusOf(run.content);
-        const out = run.log?.output as { status?: string; nearestSize?: string; offCm?: number; offKg?: number } | undefined;
+        const out = run.log?.output as { status?: string; nearestSize?: string; offCm?: number; offKg?: number; belowChart?: boolean } | undefined;
         if (out?.status === "out_of_range" && out.nearestSize !== undefined) {
-          sizeOut = { nearestSize: out.nearestSize, offCm: out.offCm ?? 0, offKg: out.offKg ?? 0 };
+          sizeOut = { nearestSize: out.nearestSize, offCm: out.offCm ?? 0, offKg: out.offKg ?? 0, belowChart: out.belowChart };
         }
         const productId = (run.log?.input as { productId?: string } | undefined)?.productId;
         if (out?.status === "ok" && productId) sizeAdvice = { advice: out as SizeAdvice, productId };
@@ -702,7 +713,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // no chart, always end in the server's size text offering staff, even when the
   // model answered with a size. (sizeStatus is set inside a callback; TS can't see it.)
   const finalSizeStatus = sizeStatus as SizeStatus;
-  const finalSizeOut = sizeOut as { nearestSize: string; offCm: number; offKg: number } | null;
+  const finalSizeOut = sizeOut as SizeOut | null;
   if (mode === "customer" && !handoff && !productMissedTwice && finalSizeStatus !== null) {
     offerMade = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { HistoryMessage, ToolName } from "@/contract";
+import { quickReplySchema, type HistoryMessage, type ToolName } from "@/contract";
 import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import type { CatalogItem, JevDecision } from "./jev";
 import { ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
@@ -7,6 +7,7 @@ import {
   ASK_PAIRING_PRODUCT_TEXT,
   catalogGroups,
   catalogOverview,
+  groupListing,
   STAFF_OFF_TOPIC_TEXT,
   STAFF_BUTTON,
   requestedColor,
@@ -340,6 +341,33 @@ describe("routeTurn", () => {
       expect(runTool).not.toHaveBeenCalled();
     });
 
+    it("review: asking for a person in other words next to a buying word still hands off at once", async () => {
+      for (const text of ["Mình không muốn đặt với bot, cho gặp ai đó đi", "Cho mình gặp chị chủ để mua áo blazer"]) {
+        const { run } = setup();
+        expect(await run({ catalog: shop, history: said(text), decision: decision({ intent: "human", product: blazer }) }), text)
+          .toMatchObject({ kind: "handoff", reason: "asked_for_human" });
+      }
+    });
+
+    it("review: 'đổi màu khác cho mình xem' is a stock question, not the returns policy", async () => {
+      const { run, runTool } = setup({ get_stock: { ok: true, output: { productId: VAY, name: "Váy", price: 1, variants: [] } } });
+      await run({ history: said("đổi màu khác cho mình xem"), decision: decision({ intent: "stock" }) });
+      expect(runTool).not.toHaveBeenCalledWith("get_policy", expect.anything());
+      expect(runTool).toHaveBeenCalledWith("get_stock", expect.anything());
+    });
+
+    it("review: 'Ý bạn là A hay B?' buttons fit the 20-character limit, names longer than that are shortened", async () => {
+      const long = [
+        { id: AO, name: "Áo thun cổ tròn basic", category: "Áo", colors: [], sizes: [] },
+        { id: BLAZER, name: "Áo thun cổ tim basic dáng rộng", category: "Áo", colors: [], sizes: [] },
+      ];
+      const out = await setup().run({ viewing: null, catalog: long, history: said("áo thun cổ tim basic"), decision: decision({ product: { kind: "none" } }) });
+      const buttons = (out as { quickReplies: string[] }).quickReplies;
+      expect(buttons.length).toBeGreaterThan(0);
+      for (const b of buttons) expect(quickReplySchema.safeParse(b).success, b).toBe(true);
+      expect(out).toMatchObject({ facts: { closeProducts: expect.arrayContaining(["Áo thun cổ tim basic dáng rộng"]) } });
+    });
+
     it("an order that also asks for a person still hands off (asked_for_human)", async () => {
       const out = await setup().run({ catalog: shop, history: said("cho gặp nhân viên để đặt hàng"), decision: decision({ intent: "human", product: blazer }) });
       expect(out).toMatchObject({ kind: "handoff", reason: "asked_for_human" });
@@ -393,6 +421,17 @@ describe("routeTurn", () => {
         decision: decision({ product: { kind: "none" }, askedToClarify: 0.9 }),
       });
       expect(out).toMatchObject({ kind: "write", quickReplies: ["Áo khoác jean"] });
+    });
+
+    it("review: a tapped group lists that group's products, names from the catalog as buttons", () => {
+      const listing = groupListing(shop, "Áo")!;
+      expect(listing.productIds).toEqual([BLAZER]);
+      expect(listing.text).toContain("Áo blazer");
+      expect(listing.text).not.toContain("Áo khoác jean");
+      expect(listing.quickReplies).toEqual(["Áo blazer"]);
+      expect(groupListing(shop, "váy & đầm")!.productIds).toEqual([VAY]);
+      expect(groupListing(shop, "áo blazer màu đen")).toBeNull();
+      expect(groupListing(shop, "Quần")).toBeNull(); // no such group in this shop
     });
 
     it("catalogOverview: each group with a few products, groups as buttons", () => {

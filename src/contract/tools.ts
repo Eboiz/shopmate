@@ -90,11 +90,14 @@ export const tools = {
       // chart, smallest when below) and how many whole cm / kg the measurements are
       // past the chart's overall range (0 when inside it). The reply may say the
       // nearest size and that it could be tight; it never picks a size.
+      // belowChart: true when a measurement is under the chart, where the end size
+      // would be loose, not tight (absent otherwise).
       z.object({
         status: z.literal("out_of_range"),
         nearestSize: z.string(),
         offCm: z.int().nonnegative(),
         offKg: z.int().nonnegative(),
+        belowChart: z.literal(true).optional(),
       }),
       z.object({ status: z.literal("no_chart") }),
     ]),

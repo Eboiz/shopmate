@@ -20,9 +20,11 @@ export type OfferReason = (typeof OFFER_REASONS)[number];
 
 // Server texts for size turns: the size function decides, the model never phrases
 // a size it could get wrong.
-export function sizeOfferText(out: { nearestSize: string; offCm: number; offKg: number } | null): string {
+// "Hơi vừa sát" only fits a shopper just ABOVE the chart; below it (belowChart)
+// the end size would be loose, so the plain out-of-chart text is used.
+export function sizeOfferText(out: { nearestSize: string; offCm: number; offKg: number; belowChart?: boolean } | null): string {
   if (out === null) return `Dạ, sản phẩm này shop chưa có bảng size nên mình chưa tư vấn được size. ${OFFER_QUESTION}`;
-  if (isNearChart(out)) {
+  if (isNearChart(out) && !out.belowChart) {
     return `Dạ, số đo của bạn hơi vượt bảng size của sản phẩm này. Size gần nhất shop có là ${out.nearestSize}, có thể sẽ hơi vừa sát người. ${OFFER_QUESTION}`;
   }
   return `Dạ, số đo của bạn nằm ngoài bảng size của sản phẩm này nên mình chưa tư vấn được size. ${OFFER_QUESTION}`;
@@ -57,9 +59,11 @@ export function offerAnswer(text: string): OfferAnswer {
 export const offersStaff = (reply: { text?: string; quickReplies: string[] }) =>
   reply.quickReplies.includes(OFFER_YES) || (reply.text ?? "").includes(OFFER_QUESTION);
 
-// The shopper names a person to talk to (staff, the owner, a real person). An
-// order like "cho mua 1 áo blazer" names none, so it is never asked_for_human.
-const HUMAN = /\b(nhan vien|nguoi that|nguoi ban hang|nguoi tu van|tu van vien|admin|quan ly|chu (shop|cua hang|tiem)|(gap|keu|goi) chu|chu ra)\b/;
+// The shopper asks for a person (staff, the owner, "ai đó", not the bot). An order
+// like "cho mua 1 áo blazer" asks for none, so it is never asked_for_human. Broad
+// on purpose: a request for a person always wins over an order (PB-14, AC7), so
+// when in doubt the message counts as one. "chủ nhật" (Sunday) is not the owner.
+const HUMAN = /\b(nhan vien|nguoi|admin|quan ly|bot|ai do|ban nao|gap|goi|keu|noi chuyen|chu(?! nhat))\b/;
 export const asksForHuman = (text: string) => HUMAN.test(fold(text).replace(/[^a-z0-9 ]+/g, " "));
 
 // LLM tool loop: a handoff the shopper's message and this turn's tools don't

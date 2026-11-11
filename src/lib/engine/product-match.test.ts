@@ -91,7 +91,10 @@ describe("PB-31 question kinds", () => {
     for (const t of ["hiện tại bên mình có những sản phẩm gì", "shop có gì", "Shop bán những gì vậy?", "có những mặt hàng nào", "shop co nhung mon gi"]) {
       expect(isCatalogQuestion(t), t).toBe(true);
     }
-    for (const t of ["áo này có màu gì", "váy có size gì", "đồ đi tiệc", "còn hàng size M không", "áo này có hàng size gì"]) {
+    for (const t of ["áo này có màu gì", "váy có size gì", "đồ đi tiệc", "còn hàng size M không", "áo này có hàng size gì",
+      // review: pairing, promotion, stock and a complaint are not catalog questions
+      "Có món gì phối với áo blazer này không?", "Shop có gì khuyến mãi không?", "bên mình có gì giảm giá không",
+      "Áo này có hàng nào size S không?", "Shop có gì đó sai rồi, áo mình nhận bị rách"]) {
       expect(isCatalogQuestion(t), t).toBe(false);
     }
   });
@@ -100,7 +103,9 @@ describe("PB-31 question kinds", () => {
     for (const t of ["Mua về mặc không vừa thì đổi được không shop?", "đổi size được không", "chính sách đổi trả thế nào", "tra hang duoc khong"]) {
       expect(isReturnsQuestion(t), t).toBe(true);
     }
-    for (const t of ["váy này có đôi bông tai đi kèm không", "doi lau khong shop", "áo co giãn không"]) {
+    for (const t of ["váy này có đôi bông tai đi kèm không", "doi lau khong shop", "áo co giãn không",
+      // review: changing color or item before buying is not a return
+      "đổi màu khác cho mình xem", "đổi sang áo khác cho mình", "Mình đợi lâu quá, đổi lại cho mình địa chỉ"]) {
       expect(isReturnsQuestion(t), t).toBe(false);
     }
   });

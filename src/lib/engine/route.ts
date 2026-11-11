@@ -6,7 +6,7 @@
 // Same tools, same gate (executeTool) and same ai_turns.tool_calls logs as the
 // LLM tool loop, so PB-07 and the PB-10 eval read both paths alike.
 import type { EngineMode, HandoffReason, HistoryMessage, ProductCard, Reply, ToolName, ToolOutput } from "@/contract";
-import { groupRank, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
+import { groupRank, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
 import { asksForHuman, OFFER_QUESTION, offerReply, sizeOfferText, type OfferReason } from "./handoff-offer";
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
@@ -139,6 +139,35 @@ export function catalogGroups(catalog: CatalogItem[]): ProductGroup[] {
   return [...groups].sort((a, b) => groupRank(a) - groupRank(b));
 }
 
+// Quick replies are at most 20 characters (quickReplySchema): a longer product
+// name is cut to 19 + "…" so the reply stays valid; the full name stays in the
+// text and the cards. Repeats dropped, at most `max`.
+const MAX_QUICK_REPLY = 20;
+export function buttons(labels: string[], max = 4): string[] {
+  const cut = labels.map((l) => (l.length <= MAX_QUICK_REPLY ? l : `${l.slice(0, MAX_QUICK_REPLY - 1).trimEnd()}…`));
+  return [...new Set(cut)].slice(0, max);
+}
+
+// The message is one of the shop page's group names ("Áo", "váy & đầm"): cheap
+// check before the catalog is read.
+const asGroup = (text: string) => fold(text).replace(/[.!?]+$/, "").trim();
+export const isGroupName = (text: string) => PRODUCT_GROUPS.some((g) => fold(g) === asGroup(text));
+
+// PB-31: the shopper tapped (or typed) a group button ("Áo", "Váy & đầm"): that
+// group's products from the catalog, names as buttons. null when the message
+// isn't exactly a group this shop has.
+export function groupListing(catalog: CatalogItem[], text: string, max = 10): (Reply & { productIds: string[] }) | null {
+  const group = catalogGroups(catalog).find((g) => fold(g) === asGroup(text));
+  if (!group) return null;
+  const items = catalog.filter((p) => productGroup(p.category, p.name) === group).slice(0, max);
+  return {
+    text: [`Dạ, nhóm ${group} shop đang có:`, ...items.map((p) => `- ${p.name}`), "Bạn muốn xem món nào ạ?"].join("\n"),
+    products: [],
+    quickReplies: buttons(items.map((p) => p.name)),
+    productIds: items.map((p) => p.id),
+  };
+}
+
 // PB-31: each group of the shop with a few of its products, groups as buttons.
 // Built from the catalog: no price, nothing the model wrote.
 export function catalogOverview(catalog: CatalogItem[], perGroup = 3): Reply | null {
@@ -156,11 +185,13 @@ const lastShopperText = (history: HistoryMessage[]) => history.findLast((m) => m
 const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_mai: "khuyến mãi" } as const;
 
 // PB-31: corrections to Jev's intent that the words of the message settle.
-//  - buying words and no person named: an order, never asked_for_human;
+//  - buying words and no person asked for: an order, never asked_for_human (any
+//    word for a person keeps "human": a request for a person always wins);
 //  - "mặc không vừa thì đổi được không": the doi_tra policy, not product data.
 function settledDecision(d: JevDecision, text: string): JevDecision {
   if (d.intent === "human" && isOrderMessage(text) && !asksForHuman(text)) return { ...d, intent: "order" };
-  if (["product_detail", "size", "stock", "unclear"].includes(d.intent) && isReturnsQuestion(text)) {
+  // Not "stock": "đổi màu khác cho mình xem" asks for other colors.
+  if (["product_detail", "size", "unclear"].includes(d.intent) && isReturnsQuestion(text)) {
     return { ...d, intent: "policy", policyKind: "doi_tra" };
   }
   return d;
@@ -287,7 +318,7 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         facts: { closeProducts: close.map((p) => p.name) },
         task: "Shop không có đúng món bạn tả. Nói ngắn điều đó, rồi hỏi bạn có phải đang tìm một trong các món closeProducts không (nêu tên). Không nêu giá, không đoán thêm món khác.",
         productIds: close.map((p) => p.id),
-        quickReplies: close.map((p) => p.name),
+        quickReplies: buttons(close.map((p) => p.name)),
       };
     }
     return {

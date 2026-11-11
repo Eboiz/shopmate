@@ -23,6 +23,10 @@ describe("size offers", () => {
     expect(sizeOfferText({ nearestSize: "XL", offCm: 2, offKg: 1 })).toContain("Size gần nhất shop có là XL");
     expect(sizeOfferText({ nearestSize: "XL", offCm: 8, offKg: 15 })).not.toContain("XL");
     expect(sizeOfferText(null)).toContain("chưa có bảng size");
+    // below the chart (148 cm / 38 kg) the smallest size would be loose, not tight
+    const below = sizeOfferText({ nearestSize: "S", offCm: 2, offKg: 2, belowChart: true });
+    expect(below).not.toContain("vừa sát");
+    expect(below).toContain("ngoài bảng size");
   });
   it("every size text ends by offering staff", () => {
     for (const t of [sizeOfferText(null), sizeOfferText({ nearestSize: "L", offCm: 1, offKg: 0 }), sizeOfferText({ nearestSize: "L", offCm: 9, offKg: 9 })]) {
@@ -40,7 +44,9 @@ it("offersStaff spots the yes button", () => {
 });
 
 it("asksForHuman: a person, staff or the owner is named; an order is not a request for a human", () => {
-  for (const t of ["cho gặp nhân viên", "kêu chủ ra", "cho gặp chủ shop", "mình muốn nói chuyện với người thật", "cho gap nhan vien de dat hang"]) {
+  for (const t of ["cho gặp nhân viên", "kêu chủ ra", "cho gặp chủ shop", "mình muốn nói chuyện với người thật", "cho gap nhan vien de dat hang",
+    // review: a person asked for in other words, next to a buying word
+    "Mình không muốn đặt với bot, cho gặp ai đó đi", "Cho mình gặp chị chủ để mua áo blazer"]) {
     expect(asksForHuman(t), t).toBe(true);
   }
   for (const t of ["cho mua 1 áo blazer màu đen size S", "lấy cái đen size S", "chủ nhật có giao không"]) expect(asksForHuman(t), t).toBe(false);

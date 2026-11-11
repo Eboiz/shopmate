@@ -861,6 +861,48 @@ describe("runEngine", () => {
       expect(onMetrics.mock.calls[0][0].route).toEqual({ path: "catalog" });
     });
 
+    const catalogStore = () => ({
+      ...fakeStore(),
+      catalog: vi.fn(async () => [
+        { id: PRODUCT, name: "Váy suông linen", category: "vay", colors: ["Be"], sizes: ["M"] },
+        { id: VARIANT, name: "Áo blazer", category: "ao", colors: ["Đen"], sizes: ["S"] },
+      ]),
+    });
+
+    it("review: a complaint that contains 'shop có gì' still hands off at once, no catalog", async () => {
+      const store = catalogStore();
+      const { handlers, run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "complaint" }))], { store });
+      const result = await run(say("Shop có gì đó sai rồi, áo mình nhận bị rách"));
+      expect(store.catalog).not.toHaveBeenCalled();
+      expect(handlers.handoff_to_staff).toHaveBeenCalledTimes(1);
+      expect(result.handoffReason).toBe("complaint");
+    });
+
+    it("review: a tapped group button lists that group's products with their cards, on every path", async () => {
+      const store = catalogStore();
+      const { model, onMetrics, run } = setup([], { store });
+      const result = await run(say("Áo"));
+      expect(model.calls).toHaveLength(0);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain("Áo blazer");
+      expect(result.output.reply.products.map((p) => p.productId)).toEqual([VARIANT]);
+      expect(result.output.reply.quickReplies).toEqual(["Áo blazer"]);
+      expect(onMetrics.mock.calls[0][0].route).toEqual({ path: "catalog" });
+    });
+
+    it("review: the viewed product's description reaches the tool-loop model (volatile block, no uuid)", async () => {
+      const store = fakeStore({
+        conversation: { shopId: SHOP_A, mode: "ai" },
+        product: { id: PRODUCT, name: "Váy suông linen", description: "Vải linen thoáng mát, co giãn nhẹ." },
+      });
+      const { model, run } = setup([reply("Dạ váy vải linen, co giãn nhẹ ạ.")], { store });
+      await run(customerInput({ productId: PRODUCT, history: [{ sender: "shopper", text: "váy này chất gì, có co giãn không" }] }));
+      const system = model.calls[0].system as { text: string; cache_control?: unknown }[];
+      expect(system[0].text).not.toContain("Vải linen thoáng mát");
+      expect(system[1].text).toContain("Vải linen thoáng mát, co giãn nhẹ.");
+      expect(system[1].text).not.toContain(PRODUCT);
+    });
+
     it("(d) a returns question is answered from doi_tra: a data handoff before get_policy is sent back once", async () => {
       const { handlers, model, run } = setup([
         toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" })),

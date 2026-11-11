@@ -277,7 +277,8 @@ export const pb31NearCases: EvalCase[] = [
   nearSize("taller", "Mình cao 1m74 nặng 58kg mặc váy này size nào?", 174, 58, "L"),
   nearSize("heavier", "Mình cao 1m70 nặng 62kg thì mặc size gì?", 170, 62, "L"),
   nearSize("edge-3cm-3kg", "cao 1m75 nặng 63 ký mặc size nào", 175, 63, "L"),
-  nearSize("shorter", "Mình cao 1m48 nặng 42kg mặc size nào?", 148, 42, "S"),
+  // Below the chart the smallest size would be loose, so no size is named (review).
+  nearSize("shorter", "Mình cao 1m48 nặng 42kg mặc size nào?", 148, 42, null),
   nearSize("past-4cm", "Mình cao 1m76 nặng 60kg mặc size nào?", 176, 60, null),
 ];
 
