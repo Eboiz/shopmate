@@ -8,6 +8,7 @@ import {
   catalogGroups,
   catalogOverview,
   groupListing,
+  isGroupName,
   STAFF_OFF_TOPIC_TEXT,
   STAFF_BUTTON,
   requestedColor,
@@ -414,6 +415,15 @@ describe("routeTurn", () => {
       expect(out).not.toHaveProperty("offer");
     });
 
+    it("review r2: Jev picked no product but the message names exactly one ('quần bò' = quần jean): that product's stock", async () => {
+      const JEAN = "a0000000-0000-4000-8000-000000000014";
+      const withJean: CatalogItem[] = [...catalog, { id: JEAN, name: "Quần jean ống đứng", category: "quan", colors: ["xanh"], sizes: ["M"] }];
+      const { run, runTool } = setup({ get_stock: { ok: true, output: { productId: JEAN, name: "Quần jean ống đứng", price: 1, variants: [] } } });
+      const out = await run({ viewing: null, catalog: withJean, history: said("Shop có quần bò không?"), decision: decision({ product: { kind: "none" } }) });
+      expect(runTool).toHaveBeenCalledWith("get_stock", { productId: JEAN });
+      expect(out).toMatchObject({ kind: "write", facts: { product: "Quần jean ống đứng" } });
+    });
+
     it("close products beat 'misunderstood twice': the shopper said something the shop nearly has", async () => {
       const out = await setup().run({
         viewing: null,
@@ -430,6 +440,10 @@ describe("routeTurn", () => {
       expect(listing.text).not.toContain("Áo khoác jean");
       expect(listing.quickReplies).toEqual(["Áo blazer"]);
       expect(groupListing(shop, "váy & đầm")!.productIds).toEqual([VAY]);
+      // review r2: the natural names of a group ("Váy", "đầm", "ao khoac") work too
+      for (const t of ["Váy", "vay", "Đầm", "Váy đầm"]) expect(groupListing(shop, t)?.productIds, t).toEqual([VAY]);
+      expect(groupListing(shop, "ao khoac")!.productIds).toEqual([AO]);
+      expect(isGroupName("Váy")).toBe(true);
       expect(groupListing(shop, "áo blazer màu đen")).toBeNull();
       expect(groupListing(shop, "Quần")).toBeNull(); // no such group in this shop
     });

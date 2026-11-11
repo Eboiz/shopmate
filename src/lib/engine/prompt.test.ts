@@ -192,7 +192,8 @@ describe("prompt", () => {
       // (e) vague questions
       "shop có gì",
       "đồ đi tiệc",
-      "Váy, Chân váy, Áo, Quần, Áo khoác",
+      // review r2: the server's exact group labels, so a tapped button is recognized
+      "Áo, Áo khoác, Váy & đầm, Chân váy, Quần",
       // (f) a possible order is confirmed and is never a request for a human
       "lấy cái đen size S",
       "Bạn muốn đặt",

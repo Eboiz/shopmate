@@ -11,7 +11,7 @@ import { asksForHuman, OFFER_QUESTION, offerReply, sizeOfferText, type OfferReas
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
 import { answersOrderConfirm, isOrderMessage, ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
-import { isReturnsQuestion, productsForOccasion, productsNamedIn } from "./product-match";
+import { isReturnsQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
 import { knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
 import { fold } from "./text";
@@ -113,7 +113,9 @@ export function requestedSize(history: HistoryMessage[], sizes: string[]): strin
 function resolveProduct(input: RouteInput): CatalogItem | null {
   const pick = input.decision.product;
   const id = pick.kind === "catalog" ? pick.id : pick.kind === "viewing" ? input.viewing?.id : undefined;
-  if (!id) return null;
+  // PB-31 r2: Jev picked none, but the message names exactly one product
+  // ("Shop có quần bò không?" -> Quần jean ống đứng).
+  if (!id) return productCoveringMessage(lastShopperText(input.history), input.catalog);
   return (
     input.catalog.find((p) => p.id === id) ??
     (input.viewing && input.viewing.id === id ? { id, name: input.viewing.name, category: null, colors: [], sizes: [] } : null)
@@ -148,16 +150,25 @@ export function buttons(labels: string[], max = 4): string[] {
   return [...new Set(cut)].slice(0, max);
 }
 
-// The message is one of the shop page's group names ("Áo", "váy & đầm"): cheap
-// check before the catalog is read.
-const asGroup = (text: string) => fold(text).replace(/[.!?]+$/, "").trim();
-export const isGroupName = (text: string) => PRODUCT_GROUPS.some((g) => fold(g) === asGroup(text));
+// The message is one of the shop page's groups ("Áo", "váy & đầm"), by its label
+// or a natural name for it (r2: "Váy", "Đầm", "áo khoac", a model's button):
+// the group, or null. Cheap check before the catalog is read.
+const GROUP_ALIASES: Record<string, ProductGroup> = {
+  vay: "Váy & đầm", dam: "Váy & đầm", "vay dam": "Váy & đầm", "dam vay": "Váy & đầm",
+  "chan vay": "Chân váy", ao: "Áo", "ao khoac": "Áo khoác", khoac: "Áo khoác", jacket: "Áo khoác", quan: "Quần",
+};
+function asGroup(text: string): ProductGroup | null {
+  const t = fold(text).replace(/[^a-z0-9]+/g, " ").trim();
+  return PRODUCT_GROUPS.find((g) => fold(g).replace(/[^a-z0-9]+/g, " ").trim() === t) ?? GROUP_ALIASES[t] ?? null;
+}
+export const isGroupName = (text: string) => asGroup(text) !== null;
 
 // PB-31: the shopper tapped (or typed) a group button ("Áo", "Váy & đầm"): that
 // group's products from the catalog, names as buttons. null when the message
 // isn't exactly a group this shop has.
 export function groupListing(catalog: CatalogItem[], text: string, max = 10): (Reply & { productIds: string[] }) | null {
-  const group = catalogGroups(catalog).find((g) => fold(g) === asGroup(text));
+  const asked = asGroup(text);
+  const group = catalogGroups(catalog).find((g) => g === asked);
   if (!group) return null;
   const items = catalog.filter((p) => productGroup(p.category, p.name) === group).slice(0, max);
   return {
