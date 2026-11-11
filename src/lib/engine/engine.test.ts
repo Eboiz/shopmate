@@ -20,6 +20,7 @@ import {
   type EngineResult,
 } from "./engine";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
+import { OFFER_DECLINED_TEXT, OFFER_NO, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_YES } from "./handoff-offer";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
@@ -78,7 +79,7 @@ const orderStore = () => fakeStore({
 
 function fakeHandlers() {
   return {
-    search_products: handler(async () => ({ products: [] })),
+    search_products: handler(async () => ({ match: "none" as const, products: [] })),
     get_stock: handler(async () => stockOut),
     recommend_size: handler(async () => ({ status: "no_chart" })),
     get_pairings: handler(async () => ({ pairings: [] })),
@@ -498,30 +499,37 @@ describe("runEngine", () => {
     expect(store.setNeedsHuman).not.toHaveBeenCalled();
   });
 
-  describe("size handoff tells the shopper why", () => {
+  describe("size outside the chart tells the shopper why and offers staff (PB-31)", () => {
     const sizeInput = { productId: PRODUCT, heightCm: 190, weightKg: 100 };
+    const far = { status: "out_of_range", nearestSize: "XL", offCm: 18, offKg: 35 };
 
-    it("measurements outside the chart", async () => {
-      const { handlers, run } = setup([
+    it("measurements outside the chart: the model's handoff becomes an offer", async () => {
+      const { handlers, store, run } = setup([
         toolCalls(toolUse("recommend_size", sizeInput)),
         toolCalls(toolUse("handoff_to_staff", { reason: "size_out_of_range" })),
       ]);
-      handlers.recommend_size.mockResolvedValue({ status: "out_of_range" });
+      handlers.recommend_size.mockResolvedValue(far);
       const result = await run(customerInput());
-      expect(result.handoffReason).toBe("size_out_of_range");
-      expect(result.output.reply.text).toBe(SIZE_OUT_OF_RANGE_HANDOFF_TEXT);
+      expect(result.handoffReason).toBeNull();
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
       expect(result.output.reply.text).toContain("ngoài bảng size");
+      expect(result.output.reply.text).toContain(OFFER_QUESTION);
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0]).toMatchObject({ handoff_reason: null, handoff_offer: "size_out_of_range" });
     });
 
-    it("product has no size chart", async () => {
-      const { run } = setup([
+    it("product has no size chart: offer with not_covered_by_data", async () => {
+      const { store, run } = setup([
         toolCalls(toolUse("recommend_size", sizeInput)),
         toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" })),
       ]);
       const result = await run(customerInput());
-      expect(result.handoffReason).toBe("not_covered_by_data");
-      expect(result.output.reply.text).toBe(NO_SIZE_CHART_HANDOFF_TEXT);
+      expect(result.handoffReason).toBeNull();
       expect(result.output.reply.text).toContain("chưa có bảng size");
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("not_covered_by_data");
     });
 
     it("other reasons keep the generic text", async () => {
@@ -539,19 +547,23 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toBe(HANDOFF_TEXT);
     });
 
-    it("question not covered by data (e.g. fabric stretch) -> hands off with generic text", async () => {
-      const { run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" }))]);
+    it("question not covered by data (e.g. fabric stretch) -> offers staff instead (PB-31)", async () => {
+      const { handlers, run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" }))]);
       const result = await run(customerInput({ history: [{ sender: "shopper", text: "vải có co giãn không" }] }));
-      expect(result.handoffReason).toBe("not_covered_by_data");
-      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+      expect(result.handoffReason).toBeNull();
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.output.reply.text).toContain(OFFER_QUESTION);
       expect(result.output.reply.text).not.toContain("bảng size");
     });
 
-    it("question not covered by data (washing instructions) -> hands off with generic text", async () => {
-      const { run } = setup([toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" }))]);
+    it("the model offers staff itself: the offer is recorded and the buttons are the server's", async () => {
+      const { store, run } = setup([reply("Dạ mô tả chưa nói áo có giặt máy được không ạ.", [], ["Có, gặp nhân viên"])]);
       const result = await run(customerInput({ history: [{ sender: "shopper", text: "áo này giặt máy được không?" }] }));
-      expect(result.handoffReason).toBe("not_covered_by_data");
-      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe(`Dạ mô tả chưa nói áo có giặt máy được không ạ. ${OFFER_QUESTION}`);
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("not_covered_by_data");
     });
 
     it("ununderstood twice: model calling handoff_to_staff with misunderstood_twice", async () => {
@@ -613,43 +625,42 @@ describe("runEngine", () => {
     });
   });
 
-  describe("out of chart or no chart always hands off (PB-06 AC4)", () => {
+  describe("out of chart or no chart always ends in the server's size text (PB-06 AC4, soft since PB-31)", () => {
     const sizeInput = { productId: PRODUCT, heightCm: 190, weightKg: 100 };
 
-    it("out of range: the engine hands off even when the model only answered", async () => {
+    it("out of range: the server's text replaces the model's size, and offers staff", async () => {
       const { handlers, model, store, run } = setup([
         toolCalls(toolUse("recommend_size", sizeInput)),
         reply("Dạ bạn mặc size XL nhé"),
       ]);
-      handlers.recommend_size.mockResolvedValue({ status: "out_of_range" });
+      handlers.recommend_size.mockResolvedValue({ status: "out_of_range", nearestSize: "XL", offCm: 18, offKg: 35 });
       const result = await run(customerInput({ history: [{ sender: "shopper", text: "cao 1m90 nặng 100kg mặc size gì" }] }));
       expect(model.calls).toHaveLength(2);
-      expect(result.handoffReason).toBe("size_out_of_range");
-      expect(result.output.reply).toEqual({ text: SIZE_OUT_OF_RANGE_HANDOFF_TEXT, products: [], quickReplies: [] });
-      expect(store.setNeedsHuman).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
-    });
-
-    it("no chart: the engine hands off with not_covered_by_data", async () => {
-      const { store, run } = setup([toolCalls(toolUse("recommend_size", sizeInput)), reply("Dạ bạn mặc size M nhé")]);
-      const result = await run(customerInput());
-      expect(result.handoffReason).toBe("not_covered_by_data");
-      expect(result.output.reply.text).toBe(NO_SIZE_CHART_HANDOFF_TEXT);
-      expect(store.setNeedsHuman).toHaveBeenCalledWith({ shopId: SHOP_A, conversationId: CONV });
-    });
-
-    it("the model's own handoff_to_staff moves the conversation; the engine doesn't do it twice", async () => {
-      const { handlers, store, run } = setup([
-        toolCalls(toolUse("recommend_size", sizeInput)),
-        toolCalls(toolUse("handoff_to_staff", { reason: "size_out_of_range" })),
-      ]);
-      handlers.recommend_size.mockResolvedValue({ status: "out_of_range" });
-      const result = await run(customerInput());
-      expect(handlers.handoff_to_staff).toHaveBeenCalledTimes(1);
-      expect(result.handoffReason).toBe("size_out_of_range");
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).not.toContain("XL");
+      expect(result.output.reply.text).toContain("ngoài bảng size");
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
       expect(store.setNeedsHuman).not.toHaveBeenCalled();
     });
 
-    it("an ok recommend_size after the out-of-range one (another product) does not hand off", async () => {
+    it("just outside the chart: the nearest size is named by the server", async () => {
+      const { handlers, run } = setup([toolCalls(toolUse("recommend_size", sizeInput)), reply("Dạ bạn mặc size M nhé")]);
+      handlers.recommend_size.mockResolvedValue({ status: "out_of_range", nearestSize: "XL", offCm: 2, offKg: 1 });
+      const result = await run(customerInput());
+      expect(result.output.reply.text).toContain("Size gần nhất shop có là XL");
+      expect(result.output.reply.text).not.toContain("size M");
+    });
+
+    it("no chart: offers staff with not_covered_by_data", async () => {
+      const { store, run } = setup([toolCalls(toolUse("recommend_size", sizeInput)), reply("Dạ bạn mặc size M nhé")]);
+      const result = await run(customerInput());
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain("chưa có bảng size");
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("not_covered_by_data");
+    });
+
+    it("an ok recommend_size after the out-of-range one (another product) makes no offer", async () => {
       const { handlers, run } = setup([
         toolCalls(toolUse("recommend_size", sizeInput)),
         toolCalls(toolUse("recommend_size", { ...sizeInput, heightCm: 160, weightKg: 50 })),
@@ -781,7 +792,8 @@ describe("runEngine", () => {
     it("the answer finds a product: no handoff", async () => {
       const { handlers, store, run } = setup([emptySearch("váy suông"), reply("Dạ váy suông linen còn ạ")], { store: missedBefore(true) });
       handlers.search_products.mockResolvedValue({
-        products: [{ productId: PRODUCT, name: "Váy suông linen", category: "váy", price: 350000, imageUrl: null, colors: ["be"], sizes: ["M"] }],
+        match: "exact",
+        products: [{ productId: PRODUCT, name: "Váy suông linen", category: "váy", price: 350000, imageUrl: null, description: null, colors: ["be"], sizes: ["M"] }],
       });
       const result = await run(followUp("à váy suông linen"));
       expect(result.handoffReason).toBeNull();

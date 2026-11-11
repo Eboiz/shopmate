@@ -1,4 +1,4 @@
-import { toolCallLogSchema, type ConversationMode, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
 import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
@@ -21,6 +21,9 @@ export type TurnContext = {
   // Last customer turn's quote, used only after its summary was shown to the
   // shopper. The engine checks the next shopper message before allowing a write.
   previousQuote?: PendingQuote | null;
+  // PB-31: the previous AI turn offered staff for this reason (soft handoff) and
+  // did not hand off. A "yes" now hands off with it. Missing means no offer.
+  previousHandoffOffer?: HandoffReason | null;
 };
 
 export type EngineStore = {
@@ -61,7 +64,7 @@ export function createSupabaseStore(db: Db): EngineStore {
   async function previousTurnState(shopId: string, conversationId: string) {
     const { data, error } = await db
       .from("ai_turns")
-      .select("tool_calls, handoff_reason")
+      .select("tool_calls, handoff_reason, handoff_offer")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
@@ -69,11 +72,12 @@ export function createSupabaseStore(db: Db): EngineStore {
       .limit(1)
       .maybeSingle();
     if (error) throw new Error(`ai_turns: ${error.message}`);
-    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null };
+    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
     return {
       previousTurnMissedProduct: logs.success && searchMissed(logs.data),
       previousQuote: logs.success ? latestQuote(logs.data) : null,
+      previousHandoffOffer: data.handoff_offer,
     };
   }
 
@@ -125,7 +129,7 @@ export function createSupabaseStore(db: Db): EngineStore {
 
     async catalog(shopId) {
       const [products, variants] = await Promise.all([
-        db.from("products").select("id, name, category").eq("shop_id", shopId).order("name"),
+        db.from("products").select("id, name, category, description").eq("shop_id", shopId).order("name"),
         db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
       ]);
       if (products.error) throw new Error(`products: ${products.error.message}`);
@@ -136,6 +140,7 @@ export function createSupabaseStore(db: Db): EngineStore {
           id: p.id,
           name: p.name,
           category: p.category,
+          description: p.description,
           colors: [...new Set(own.map((v) => v.color))],
           sizes: sortSizes(own.map((v) => v.size)),
         };

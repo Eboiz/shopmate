@@ -6,8 +6,11 @@
 // Same tools, same gate (executeTool) and same ai_turns.tool_calls logs as the
 // LLM tool loop, so PB-07 and the PB-10 eval read both paths alike.
 import type { EngineMode, HandoffReason, HistoryMessage, ProductCard, Reply, ToolName, ToolOutput } from "@/contract";
+import { groupRank, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
+import { OFFER_QUESTION, offerReply, sizeOfferText, type OfferReason } from "./handoff-offer";
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
+import { productsForOccasion, productsNamedIn } from "./product-match";
 import { knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
 import { fold } from "./text";
@@ -19,6 +22,10 @@ export const ASKED_TO_CLARIFY_THRESHOLD = 0.5;
 // Below this, the shop's policy text doesn't answer what was asked (v0.6 rule).
 // Between the two calibration groups in checkPolicyCovers (0.49 / 0.66).
 export const POLICY_COVERS_THRESHOLD = 0.57;
+// PB-31: same idea for a product question and the product's description; same
+// margin until it has its own calibration.
+export const DESCRIPTION_COVERS_THRESHOLD = 0.57;
+export const STAFF_BUTTON = "Gặp nhân viên";
 
 export const ASK_PAIRING_PRODUCT_TEXT = "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.";
 export const PAIRING_FAILED_TEXT = "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.";
@@ -40,10 +47,21 @@ export type RouteOutcome =
   | { kind: "handoff"; reason: HandoffReason; sizeStatus: SizeStatus; viaTool: boolean }
   // staff_draft complaint the server's word list missed (PB-20)
   | { kind: "personal" }
-  | { kind: "fixed"; reply: Reply }
+  // offer (PB-31): the reply offers staff for this reason; a "yes" next turn hands off.
+  | { kind: "fixed"; reply: Reply; offer?: OfferReason }
   // The reply model writes the text; productIds are chosen here, not by the model.
   // sizeAdvice: the reply must advise exactly this size (PB-06 post-check).
-  | { kind: "write"; facts: Record<string, unknown>; task: string; productIds: string[]; sizeAdvice?: SizeAdvice };
+  // quickReplies: the server's buttons, used instead of the model's.
+  // offer: the reply ends with OFFER_QUESTION and the yes/no buttons (PB-31).
+  | {
+      kind: "write";
+      facts: Record<string, unknown>;
+      task: string;
+      productIds: string[];
+      sizeAdvice?: SizeAdvice;
+      quickReplies?: string[];
+      offer?: OfferReason;
+    };
 
 export type RouteInput = {
   mode: EngineMode;
@@ -56,6 +74,9 @@ export type RouteInput = {
   // Probability that the policy text answers the shopper's question (Jev). Missing
   // or failing: the text is assumed to answer it.
   policyCovers?: (policy: string) => Promise<number>;
+  // PB-31: probability that the product's description answers the question.
+  // Missing or failing: assumed to answer it.
+  descriptionCovers?: (product: string, description: string) => Promise<number>;
 };
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -105,6 +126,18 @@ async function handoff(input: RouteInput, reason: HandoffReason, sizeStatus: Siz
 }
 
 const fixed = (text: string): RouteOutcome => ({ kind: "fixed", reply: { text, products: [], quickReplies: [] } });
+const offer = (text: string, reason: OfferReason): RouteOutcome => ({ kind: "fixed", reply: offerReply(text), offer: reason });
+
+// The shop's product groups (Áo, Váy & đầm …), in the shop page's order: the
+// buttons of a "which one?" question.
+export function catalogGroups(catalog: CatalogItem[]): ProductGroup[] {
+  const groups = new Set(catalog.map((p) => productGroup(p.category, p.name)).filter((g) => g !== "Khác"));
+  return [...groups].sort((a, b) => groupRank(a) - groupRank(b));
+}
+
+const lastShopperText = (history: HistoryMessage[]) => history.findLast((m) => m.sender === "shopper")?.text ?? "";
+
+const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_mai: "khuyến mãi" } as const;
 
 export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   const { decision: d, mode } = input;
@@ -135,25 +168,53 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       return customer
         ? handoff(input, "asked_for_human")
         : { kind: "write", facts: {}, task: "Soạn một câu ngắn cho biết nhân viên shop đang hỗ trợ trực tiếp.", productIds: [] };
-    case "product_detail":
-      return customer ? handoff(input, "not_covered_by_data") : fixed(STAFF_NO_DATA_TEXT);
     case "greeting":
       return { kind: "write", facts: {}, task: "Chào lại ngắn gọn và hỏi bạn đang tìm món gì.", productIds: [] };
+    case "browse": {
+      // PB-31: "shop có gì", "đồ đi tiệc": the groups as buttons, plus a few
+      // products whose description fits the occasion.
+      const groups = catalogGroups(input.catalog);
+      const fits = productsForOccasion(lastShopperText(input.history), input.catalog, 3);
+      return {
+        kind: "write",
+        facts: { groups, suggested: fits.map((p) => ({ name: p.name, description: p.description ?? null })) },
+        task: fits.length
+          ? "Giới thiệu ngắn các nhóm hàng shop có (groups), nói vài món trong suggested hợp với điều bạn hỏi (chỉ dựa trên description), rồi hỏi bạn muốn xem nhóm hay món nào. Không nêu giá."
+          : "Giới thiệu ngắn các nhóm hàng shop có (groups) rồi hỏi bạn muốn xem nhóm nào. Không nêu giá.",
+        productIds: fits.map((p) => p.id),
+        quickReplies: groups,
+      };
+    }
     case "unclear":
       if (customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
       return {
         kind: "write",
-        facts: {},
-        task: "Hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
+        facts: { groups: catalogGroups(input.catalog) },
+        task: "Nếu tin nhắn không liên quan tới mua sắm ở shop, nói ngắn là bạn chỉ hỗ trợ về sản phẩm, đơn hàng và chính sách của shop. Nếu không rõ ý, hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
         productIds: [],
+        quickReplies: customer ? [...catalogGroups(input.catalog).slice(0, 4), STAFF_BUTTON] : [],
       };
     case "policy": {
       const r = await input.runTool("get_policy", { kind: d.policyKind });
       if (!r.ok) return { kind: "fallback", reason: "tool_error" };
       const policy = r.output as ToolOutput<"get_policy">;
-      if (policy.content === null) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_NO_POLICY_TEXT);
+      if (policy.content === null) {
+        if (!customer) return fixed(STAFF_NO_POLICY_TEXT);
+        return offer(`Dạ, shop chưa có thông tin về ${POLICY_NAMES[policy.kind]} để mình trả lời chắc chắn. ${OFFER_QUESTION}`, "policy_not_covered");
+      }
       const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 1) : 1;
-      if (covers < POLICY_COVERS_THRESHOLD) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_POLICY_SILENT_TEXT);
+      if (covers < POLICY_COVERS_THRESHOLD) {
+        if (!customer) return fixed(STAFF_POLICY_SILENT_TEXT);
+        // PB-31: give what the policy says that is related, say plainly what it
+        // doesn't say, and offer staff.
+        return {
+          kind: "write",
+          facts: { policy },
+          task: "Chính sách của shop (policy) không nói tới đúng điều bạn hỏi. Nếu policy có ý liên quan thì nói ngắn ý đó, giữ nguyên số và điều kiện; rồi nói rõ shop chưa có thông tin về điều bạn hỏi. Không tự suy ra hay hứa điều policy không viết.",
+          productIds: [],
+          offer: "policy_not_covered",
+        };
+      }
       return {
         kind: "write",
         facts: { policy },
@@ -170,11 +231,49 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   if (!product) {
     if (customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
     if (d.intent === "pairing") return fixed(ASK_PAIRING_PRODUCT_TEXT);
+    // PB-31: the shop doesn't have exactly what was named, but has close
+    // products ("áo khoác da" -> its jackets): ask which one, with buttons.
+    const close = productsNamedIn(lastShopperText(input.history), input.catalog, 3);
+    if (close.length > 0) {
+      return {
+        kind: "write",
+        facts: { closeProducts: close.map((p) => p.name) },
+        task: "Shop không có đúng món bạn tả. Nói ngắn điều đó, rồi hỏi bạn có phải đang tìm một trong các món closeProducts không (nêu tên). Không nêu giá, không đoán thêm món khác.",
+        productIds: close.map((p) => p.id),
+        quickReplies: close.map((p) => p.name),
+      };
+    }
     return {
       kind: "write",
       facts: {},
       task: "Hỏi một câu ngắn: bạn đang hỏi sản phẩm nào (tên hoặc loại, màu). Không đoán sản phẩm.",
       productIds: [],
+      quickReplies: customer ? catalogGroups(input.catalog) : [],
+    };
+  }
+
+  if (d.intent === "product_detail") {
+    // PB-31: answered only from the shop's description of the product.
+    const description = product.description?.trim() || null;
+    const covers = description && input.descriptionCovers
+      ? await input.descriptionCovers(product.name, description).catch(() => 1)
+      : description ? 1 : 0;
+    if (description && covers >= DESCRIPTION_COVERS_THRESHOLD) {
+      return {
+        kind: "write",
+        facts: { product: product.name, description },
+        task: `Trả lời câu hỏi về ${product.name} chỉ dựa trên description của shop. Không thêm thông tin description không viết.`,
+        productIds: [product.id],
+      };
+    }
+    if (!customer) return fixed(STAFF_NO_DATA_TEXT);
+    if (!description) return offer(`Dạ, shop chưa có thông tin này về ${product.name}. ${OFFER_QUESTION}`, "not_covered_by_data");
+    return {
+      kind: "write",
+      facts: { product: product.name, description },
+      task: `Mô tả của shop (description) không nói tới đúng điều bạn hỏi về ${product.name}. Nói ngắn những gì description có liên quan (nếu có), rồi nói rõ shop chưa có thông tin về điều bạn hỏi. Không đoán.`,
+      productIds: [product.id],
+      offer: "not_covered_by_data",
     };
   }
 
@@ -202,9 +301,11 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
     if (!r.ok) return { kind: "fallback", reason: "tool_error" };
     const rec = r.output as ToolOutput<"recommend_size">;
     if (rec.status !== "ok") {
-      const sizeStatus = rec.status;
       if (!customer) return fixed(STAFF_NO_SIZE_TEXT);
-      return handoff(input, sizeStatus === "out_of_range" ? "size_out_of_range" : "not_covered_by_data", sizeStatus);
+      // PB-31: no size is picked; the server's text says why and offers staff.
+      return rec.status === "out_of_range"
+        ? offer(sizeOfferText(rec), "size_out_of_range")
+        : offer(sizeOfferText(null), "not_covered_by_data");
     }
     const differs = rec.sizeByHeight !== rec.sizeByWeight;
     return {

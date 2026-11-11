@@ -58,7 +58,7 @@ function setup(jev: JevClient | null, responses: Parameters<typeof scriptedModel
     get_policy: vi.fn(async () => ({ kind: "khuyen_mai", content: null })),
     recommend_size: vi.fn(async () => ({ status: "ok", size: "L", sizeByHeight: "M", sizeByWeight: "L" })),
     handoff_to_staff: vi.fn(async () => ({ mode: "needs_human" })),
-    search_products: vi.fn(async () => ({ products: [] })),
+    search_products: vi.fn(async () => ({ match: "none" as const, products: [] })),
   };
   const model = scriptedModel(responses);
   const metrics: TurnMetrics[] = [];

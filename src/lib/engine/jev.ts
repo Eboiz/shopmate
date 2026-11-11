@@ -28,6 +28,7 @@ export const INTENTS = [
   "complaint",
   "human",
   "greeting",
+  "browse",
   "unclear",
 ] as const;
 export type Intent = (typeof INTENTS)[number];
@@ -37,13 +38,17 @@ const INTENT_CRITERIA: Record<Intent, string> = {
   stock: "Asks whether an item, or a size/color of it, is available or in stock, or asks its price.",
   size: "Asks which size fits, or gives height/weight to get a size recommendation.",
   pairing: "Asks what to wear with an item, what goes well with it, or for an outfit to match it.",
-  policy: "Asks about returns or exchanges, shipping or delivery, or promotions and discounts the shop runs.",
+  policy:
+    "Asks about returns or exchanges (including whether an item that doesn't fit can be exchanged), shipping or delivery (days, fee, time, payment, checking goods on delivery), or promotions and discounts the shop runs.",
   product_detail:
-    "Asks about a product property the shop's stock/price/size data doesn't hold: fabric, stretch, thickness, see-through, care, origin, how it looks.",
-  order: "Wants to buy or place an order, confirms an order, or gives order details (quantity, name, phone, address).",
+    "Asks about a property of a product beyond stock, price and size: fabric, stretch, thickness, see-through, care or washing, origin, length, fit, how it looks, when to wear it.",
+  order:
+    "Wants to buy or place an order (e.g. 'cho mua 1 áo blazer đen size S', 'lấy cái này'), confirms an order, or gives order details (quantity, name, phone, address).",
   complaint: "Complains about something that went wrong: damaged, wrong or missing item, late delivery, bad service.",
-  human: "Asks to talk to a person, staff member, or the shop owner instead of the assistant.",
+  human: "Asks to talk to a person, staff member, or the shop owner instead of the assistant, or asks who the staff member is.",
   greeting: "Only greets, thanks, or says goodbye, with no question.",
+  browse:
+    "Asks what the shop sells, or for items by occasion, style or type without naming one product (e.g. 'shop có những gì', 'đồ đi tiệc', 'có đồ công sở không').",
   unclear: "The message can't be understood, is off-topic, or doesn't say what the shopper wants.",
 };
 
@@ -53,7 +58,16 @@ const POLICY_CRITERIA: Record<PolicyKind, string> = {
   khuyen_mai: "Promotions, sales, discount codes, vouchers, free gifts.",
 };
 
-export type CatalogItem = { id: string; name: string; category: string | null; colors: string[]; sizes: string[] };
+// description: the shop's own text (PB-31), the only source for material, fit
+// and care answers. Optional so fixtures without it still type-check.
+export type CatalogItem = {
+  id: string;
+  name: string;
+  category: string | null;
+  description?: string | null;
+  colors: string[];
+  sizes: string[];
+};
 
 export type ProductPick = { kind: "catalog"; id: string } | { kind: "viewing" } | { kind: "none" };
 
@@ -232,23 +246,24 @@ export async function decideTurn(
   return parseJevResponse(response, productKeys, { model: jev.model, ms: opts.now() - t0 });
 }
 
+const conversationOf = (history: HistoryMessage[]) =>
+  history
+    .filter((m) => m.sender !== "system" && m.text.trim() !== "")
+    .slice(-HISTORY_MESSAGES)
+    .map((m) => ({ from: speaker(m.sender), text: m.text }));
+
 // v0.6 rule (PB-09): a policy that exists but doesn't speak to what the shopper
-// asked (e.g. free shipping when the text never mentions it) goes to staff. Asked
-// only on policy turns, after get_policy returned the shop's text. Returns the
-// probability that the text answers the question.
+// asked (e.g. free shipping when the text never mentions it) is not answered from
+// it; since PB-31 the AI offers staff instead. Asked only on policy turns, after
+// get_policy returned the shop's text. Returns the probability that the text
+// answers the question.
 export async function checkPolicyCovers(
   jev: JevClient,
   opts: { history: HistoryMessage[]; policy: string },
 ): Promise<number> {
   const response = await jev.decide({
     model: jev.model,
-    state: {
-      conversation: opts.history
-        .filter((m) => m.sender !== "system" && m.text.trim() !== "")
-        .slice(-HISTORY_MESSAGES)
-        .map((m) => ({ from: speaker(m.sender), text: m.text })),
-      shopPolicy: opts.policy,
-    },
+    state: { conversation: conversationOf(opts.history), shopPolicy: opts.policy },
     questions: {
       policy_answers: {
         type: "noul",
@@ -262,4 +277,23 @@ export async function checkPolicyCovers(
     },
   });
   return noulOf(response, "policy_answers");
+}
+
+// PB-31: the same check for a product question and the product's description.
+export async function checkDescriptionCovers(
+  jev: JevClient,
+  opts: { history: HistoryMessage[]; product: string; description: string },
+): Promise<number> {
+  const response = await jev.decide({
+    model: jev.model,
+    state: { conversation: conversationOf(opts.history), product: opts.product, productDescription: opts.description },
+    questions: {
+      description_answers: {
+        type: "noul",
+        instructions:
+          "Can a shop assistant answer the shopper's last message using only the product's description (productDescription)? Yes when the description states the property asked about (material, stretch, care, length, fit…), even briefly; no when it doesn't mention it.",
+      },
+    },
+  });
+  return noulOf(response, "description_answers");
 }

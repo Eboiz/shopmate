@@ -33,8 +33,18 @@ describe("recommendSize", () => {
       [160, 61],
       [173, 70],
     ]) {
-      expect(recommendSize(chart, h, w)).toEqual({ status: "out_of_range" });
+      expect(recommendSize(chart, h, w)).toMatchObject({ status: "out_of_range" });
     }
+  });
+
+  it("says how far past the chart and the end size on that side (PB-31)", () => {
+    expect(recommendSize(chart, 180, 80)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 8, offKg: 20 });
+    expect(recommendSize(chart, 174, 58)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 2, offKg: 0 });
+    expect(recommendSize(chart, 148, 38)).toEqual({ status: "out_of_range", nearestSize: "S", offCm: 2, offKg: 2 });
+    // Taller than the chart but lighter: above on one measurement means the largest size.
+    expect(recommendSize(chart, 175, 38)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 3, offKg: 2 });
+    // Fractions round up, like the size itself.
+    expect(recommendSize(chart, 172.5, 55)).toEqual({ status: "out_of_range", nearestSize: "L", offCm: 1, offKg: 0 });
   });
 
   it("has no chart without rows", () => {

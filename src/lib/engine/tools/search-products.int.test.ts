@@ -30,7 +30,7 @@ describe("search_products", () => {
   });
 
   it("returns empty for no match", async () => {
-    expect(await searchProducts({ query: "giày cao gót", limit: 5 }, ctxA, db)).toEqual({ products: [] });
+    expect(await searchProducts({ query: "giày cao gót", limit: 5 }, ctxA, db)).toEqual({ match: "none", products: [] });
   });
 
   it("respects limit", async () => {

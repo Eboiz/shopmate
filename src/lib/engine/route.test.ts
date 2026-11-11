@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HistoryMessage, ToolName } from "@/contract";
+import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import type { CatalogItem, JevDecision } from "./jev";
 import {
   ASK_PAIRING_PRODUCT_TEXT,
+  catalogGroups,
+  STAFF_BUTTON,
   requestedColor,
   requestedSize,
   routeTurn,
@@ -16,7 +19,14 @@ import {
 const VAY = "a0000000-0000-4000-8000-000000000011";
 const AO = "a0000000-0000-4000-8000-000000000012";
 const catalog: CatalogItem[] = [
-  { id: VAY, name: "Váy suông linen", category: "Váy", colors: ["Be", "Trắng", "Xanh rêu"], sizes: ["S", "M", "L"] },
+  {
+    id: VAY,
+    name: "Váy suông linen",
+    category: "Váy",
+    description: "Vải linen thoáng mát, dáng suông dài qua gối. Giặt tay hoặc giặt máy chế độ nhẹ.",
+    colors: ["Be", "Trắng", "Xanh rêu"],
+    sizes: ["S", "M", "L"],
+  },
   { id: AO, name: "Áo khoác jean", category: "Áo khoác", colors: ["Xanh"], sizes: ["M"] },
 ];
 const viewing = { id: VAY, name: "Váy suông linen" };
@@ -135,19 +145,33 @@ describe("routeTurn", () => {
     expect((out as { task: string }).task).toContain("lớn hơn");
   });
 
-  it("size out of the chart: customer hands off, staff gets a note", async () => {
-    const out = { recommend_size: { ok: true, output: { status: "out_of_range" } } };
+  it("size out of the chart: customer is offered staff (PB-31), staff gets a note", async () => {
+    const out = { recommend_size: { ok: true, output: { status: "out_of_range", nearestSize: "L", offCm: 38, offKg: 90 } } };
     const customer = setup(out);
-    expect(await customer.run({ decision: decision({ intent: "size" }), history: said("cao 210cm nặng 150kg") })).toEqual({
-      kind: "handoff",
-      reason: "size_out_of_range",
-      sizeStatus: "out_of_range",
-      viaTool: true,
-    });
+    const offered = await customer.run({ decision: decision({ intent: "size" }), history: said("cao 210cm nặng 150kg") });
+    expect(offered).toMatchObject({ kind: "fixed", offer: "size_out_of_range", reply: { quickReplies: OFFER_QUICK_REPLIES } });
+    expect((offered as { reply: { text: string } }).reply.text).toContain("ngoài bảng size");
+    expect((offered as { reply: { text: string } }).reply.text).not.toContain("L,");
+    expect(customer.runTool).not.toHaveBeenCalledWith("handoff_to_staff", expect.anything());
     const staff = setup(out);
     const note = await staff.run({ mode: "staff_draft", decision: decision({ intent: "size" }), history: said("cao 210cm nặng 150kg") });
     expect(note.kind).toBe("fixed");
     expect(staff.runTool).not.toHaveBeenCalledWith("handoff_to_staff", expect.anything());
+  });
+
+  it("size just outside the chart names the nearest size, never picks one (PB-31)", async () => {
+    const near = setup({ recommend_size: { ok: true, output: { status: "out_of_range", nearestSize: "L", offCm: 2, offKg: 1 } } });
+    const out = await near.run({ decision: decision({ intent: "size" }), history: said("cao 1m74 nặng 63kg") });
+    expect(out).toMatchObject({ kind: "fixed", offer: "size_out_of_range" });
+    expect((out as { reply: { text: string } }).reply.text).toContain("Size gần nhất shop có là L");
+  });
+
+  it("no size chart: offer with not_covered_by_data (PB-31)", async () => {
+    const none = setup({ recommend_size: { ok: true, output: { status: "no_chart" } } });
+    expect(await none.run({ decision: decision({ intent: "size" }), history: said("1m60 50kg") })).toMatchObject({
+      kind: "fixed",
+      offer: "not_covered_by_data",
+    });
   });
 
   it("pairing: get_pairings with the shopper's size, reply written by the server", async () => {
@@ -172,21 +196,26 @@ describe("routeTurn", () => {
     expect(out).toMatchObject({ kind: "write", facts: { policy: { content: "Giao 2-3 ngày, phí 30.000đ" } } });
 
     const none = { get_policy: { ok: true, output: { kind: "doi_tra", content: null } } };
-    expect(await setup(none).run({ decision: decision({ intent: "policy" }) })).toMatchObject({ kind: "handoff", reason: "policy_not_covered" });
+    const offered = await setup(none).run({ decision: decision({ intent: "policy" }) });
+    expect(offered).toMatchObject({ kind: "fixed", offer: "policy_not_covered", reply: { quickReplies: OFFER_QUICK_REPLIES } });
+    expect((offered as { reply: { text: string } }).reply.text).toContain("đổi trả");
+    expect((offered as { reply: { text: string } }).reply.text).toContain(OFFER_QUESTION);
     expect(await setup(none).run({ mode: "staff_draft", decision: decision({ intent: "policy" }) })).toEqual({
       kind: "fixed",
       reply: { text: STAFF_NO_POLICY_TEXT, products: [], quickReplies: [] },
     });
   });
 
-  it("policy text that doesn't answer the question: customer hands off, staff gets a note (v0.6 rule)", async () => {
+  it("policy text that doesn't answer the question: customer gets the related part and an offer (PB-31), staff a note", async () => {
     const shipping = { get_policy: { ok: true, output: { kind: "giao_hang", content: "Giao 2-3 ngày" } } };
     const silent = async () => 0.1;
     const customer = setup(shipping);
     expect(await customer.run({ decision: decision({ intent: "policy", policyKind: "giao_hang" }), policyCovers: silent })).toMatchObject({
-      kind: "handoff",
-      reason: "policy_not_covered",
+      kind: "write",
+      facts: { policy: { content: "Giao 2-3 ngày" } },
+      offer: "policy_not_covered",
     });
+    expect(customer.runTool).not.toHaveBeenCalledWith("handoff_to_staff", expect.anything());
     expect(await setup(shipping).run({ mode: "staff_draft", decision: decision({ intent: "policy" }), policyCovers: silent })).toEqual({
       kind: "fixed",
       reply: { text: STAFF_POLICY_SILENT_TEXT, products: [], quickReplies: [] },
@@ -204,15 +233,66 @@ describe("routeTurn", () => {
     expect((out as { task: string }).task).toContain("Từ chối");
   });
 
-  it("complaint, asking for a person, data not covered: customer hands off; staff gets personal/notes", async () => {
+  it("complaint and asking for a person still hand off at once; staff gets personal", async () => {
     expect(await setup().run({ decision: decision({ intent: "complaint" }) })).toMatchObject({ kind: "handoff", reason: "complaint" });
     expect(await setup().run({ decision: decision({ intent: "human" }) })).toMatchObject({ kind: "handoff", reason: "asked_for_human" });
-    expect(await setup().run({ decision: decision({ intent: "product_detail" }) })).toMatchObject({ kind: "handoff", reason: "not_covered_by_data" });
     expect(await setup().run({ mode: "staff_draft", decision: decision({ intent: "complaint" }) })).toEqual({ kind: "personal" });
-    expect(await setup().run({ mode: "staff_draft", decision: decision({ intent: "product_detail" }) })).toEqual({
-      kind: "fixed",
-      reply: { text: STAFF_NO_DATA_TEXT, products: [], quickReplies: [] },
+  });
+
+  describe("product detail (PB-31): answered from the description", () => {
+    const detail = decision({ intent: "product_detail" });
+    it("the description answers it: written from the description, no tool", async () => {
+      const { run, runTool } = setup();
+      const out = await run({ decision: detail, catalog, descriptionCovers: async () => 0.9 });
+      expect(out).toMatchObject({ kind: "write", facts: { description: catalog[0].description }, productIds: [VAY] });
+      expect(out).not.toHaveProperty("offer");
+      expect(runTool).not.toHaveBeenCalled();
     });
+    it("the description doesn't say: the related part and an offer", async () => {
+      const out = await setup().run({ decision: detail, catalog, descriptionCovers: async () => 0.1 });
+      expect(out).toMatchObject({ kind: "write", offer: "not_covered_by_data", productIds: [VAY] });
+    });
+    it("no description: a fixed offer naming the product", async () => {
+      const out = await setup().run({ decision: decision({ intent: "product_detail", product: { kind: "catalog", id: AO } }) });
+      expect(out).toMatchObject({ kind: "fixed", offer: "not_covered_by_data" });
+      expect((out as { reply: { text: string } }).reply.text).toContain("Áo khoác jean");
+    });
+    it("a failing check is read as answered", async () => {
+      const out = await setup().run({ decision: detail, descriptionCovers: () => Promise.reject(new Error("jev down")) });
+      expect(out).toMatchObject({ kind: "write" });
+      expect(out).not.toHaveProperty("offer");
+    });
+    it("staff_draft: answered from the description, or the note", async () => {
+      expect(await setup().run({ mode: "staff_draft", decision: detail })).toMatchObject({ kind: "write" });
+      expect(await setup().run({ mode: "staff_draft", decision: detail, descriptionCovers: async () => 0.1 })).toEqual({
+        kind: "fixed",
+        reply: { text: STAFF_NO_DATA_TEXT, products: [], quickReplies: [] },
+      });
+    });
+  });
+
+  it("no product but close ones named: asks which, with their names as buttons (PB-31)", async () => {
+    const { run, runTool } = setup();
+    const out = await run({ viewing: null, decision: decision({ product: { kind: "none" } }), history: said("loại áo khoác da màu đen ấy") });
+    expect(out).toMatchObject({ kind: "write", productIds: [AO], quickReplies: ["Áo khoác jean"] });
+    expect(runTool).not.toHaveBeenCalled();
+  });
+
+  it("no product and nothing close: asks which, with the shop's groups as buttons", async () => {
+    const out = await setup().run({ viewing: null, decision: decision({ product: { kind: "none" } }), history: said("cái đó còn không") });
+    expect(out).toMatchObject({ kind: "write", productIds: [], quickReplies: ["Áo khoác", "Váy & đầm"] });
+  });
+
+  it("browse: the shop's groups as buttons, and products whose description fits (PB-31)", async () => {
+    const browse = decision({ intent: "browse", product: { kind: "none" } });
+    const out = await setup().run({ decision: browse, history: said("shop có những gì") });
+    expect(out).toMatchObject({ kind: "write", productIds: [], quickReplies: ["Áo khoác", "Váy & đầm"] });
+    const fits = await setup().run({ decision: browse, history: said("có đồ linen thoáng mát không") });
+    expect(fits).toMatchObject({ kind: "write", productIds: [VAY] });
+  });
+
+  it("catalogGroups: the shop page's order, no 'Khác'", () => {
+    expect(catalogGroups([...catalog, { id: "x", name: "Túi", category: "phu_kien", colors: [], sizes: [] }])).toEqual(["Áo khoác", "Váy & đầm"]);
   });
 
   it("a failed handoff tool is reported, so the engine moves the conversation itself", async () => {
@@ -221,7 +301,10 @@ describe("routeTurn", () => {
   });
 
   it("unclear: asks once, hands off when the last AI message already asked", async () => {
-    expect(await setup().run({ decision: decision({ intent: "unclear" }) })).toMatchObject({ kind: "write" });
+    expect(await setup().run({ decision: decision({ intent: "unclear" }) })).toMatchObject({
+      kind: "write",
+      quickReplies: ["Áo khoác", "Váy & đầm", STAFF_BUTTON],
+    });
     expect(await setup().run({ decision: decision({ intent: "unclear", askedToClarify: 0.8 }) })).toMatchObject({
       kind: "handoff",
       reason: "misunderstood_twice",

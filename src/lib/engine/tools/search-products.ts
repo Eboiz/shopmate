@@ -1,14 +1,19 @@
+import { rankProducts } from "../product-match";
 import { sortSizes } from "../text";
 import type { ToolHandler } from "../types";
 
+// PB-31: ranked in code over the shop's products (a small shop has a few dozen),
+// so a near match ("áo khoác da") still returns the closest products, marked
+// match "close", and the AI asks "Ý bạn là A hay B?" instead of handing off.
 export const searchProducts: ToolHandler<"search_products"> = async (input, ctx, db) => {
-  const { data: products, error } = await db.rpc("engine_search_products", {
-    p_shop_id: ctx.shopId,
-    p_query: input.query,
-    p_limit: input.limit,
-  });
-  if (error) throw new Error(`engine_search_products: ${error.message}`);
-  if (products.length === 0) return { products: [] };
+  const { data: all, error } = await db
+    .from("products")
+    .select("id, name, category, price, image_url, description")
+    .eq("shop_id", ctx.shopId)
+    .order("name");
+  if (error) throw new Error(`products: ${error.message}`);
+  const { match, products } = rankProducts(input.query, all, input.limit);
+  if (products.length === 0) return { match, products: [] };
 
   // Colors and sizes of every variant, in stock or not: stock is get_stock's job.
   const { data: variants, error: variantError } = await db
@@ -22,6 +27,7 @@ export const searchProducts: ToolHandler<"search_products"> = async (input, ctx,
   if (variantError) throw new Error(`variants: ${variantError.message}`);
 
   return {
+    match,
     products: products.map((p) => {
       const own = variants.filter((v) => v.product_id === p.id);
       return {
@@ -30,6 +36,7 @@ export const searchProducts: ToolHandler<"search_products"> = async (input, ctx,
         category: p.category,
         price: p.price,
         imageUrl: p.image_url,
+        description: p.description,
         colors: [...new Set(own.map((v) => v.color))],
         sizes: sortSizes(own.map((v) => v.size)),
       };

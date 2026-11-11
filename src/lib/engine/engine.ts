@@ -20,7 +20,8 @@ import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
-import { checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
+import { OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
+import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
@@ -158,6 +159,21 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
 const lastShopperText = (history: EngineInput["history"]) =>
   history.findLast((message) => message.sender === "shopper")?.text ?? "";
 
+const isOfferReason = (reason: unknown): reason is OfferReason => (OFFER_REASONS as readonly unknown[]).includes(reason);
+
+// PB-31: the model wanted to hand off for a reason that now gets an offer first.
+function offerTextFor(reason: OfferReason, sizeOut: { nearestSize: string; offCm: number; offKg: number } | null, noChart: boolean): string {
+  if (reason === "size_out_of_range" || noChart) return sizeOfferText(noChart ? null : sizeOut);
+  if (reason === "policy_not_covered") return `Dạ, chính sách của shop chưa nói tới điều bạn hỏi nên mình chưa trả lời chắc chắn được. ${OFFER_QUESTION}`;
+  return `Dạ, shop chưa có thông tin này nên mình chưa trả lời chắc chắn được. ${OFFER_QUESTION}`;
+}
+
+// The reply ends with the offer question and carries the yes/no buttons.
+function withOffer(text: string): Pick<Reply, "text" | "quickReplies"> {
+  const t = text.trim();
+  return { text: t.includes(OFFER_QUESTION) ? t : `${t} ${OFFER_QUESTION}`, quickReplies: OFFER_QUICK_REPLIES };
+}
+
 const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
 
 function blockedOrderRun(input: unknown, code: string, extra: object = {}): ToolRun {
@@ -221,6 +237,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let handoff: HandoffReason | null = null;
   let truncated = false;
   let sizeStatus: SizeStatus = null;
+  // PB-31: the last out_of_range result of this turn (nearest size, distance).
+  let sizeOut: { nearestSize: string; offCm: number; offKg: number } | null = null;
+  // PB-31: this turn offered staff for this reason instead of handing off.
+  let offerMade: OfferReason | null = null;
   // PB-06 post-check: the last ok recommend_size result of this turn, the product
   // it was for, and whether the model already got its one retry.
   let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
@@ -251,17 +271,34 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // PB-11: an order in progress (the last turn read back a quote) stays in the
   // tool loop, so "ok" / "đồng ý" is never routed as a greeting or unclear turn.
   const orderInProgress = mode === "customer" && (tc.previousQuote ?? null) !== null;
+  const runTool: ToolRunner = async (name, toolInput) => {
+    calls += 1;
+    const s0 = now();
+    const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
+    if (run.log) logs.push(run.log);
+    toolMetrics.push({ name, startMs: s0 - t0, ms: now() - s0, outcome: toolOutcome(run) });
+    seen.push({ name, input: toolInput });
+    return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
+  };
+
+  // PB-31: the last turn offered staff. A short "yes" hands off with the reason the
+  // offer was made for; a short "no" is acknowledged. Anything else is a new
+  // question and runs as usual.
+  let offerAccepted = false;
+  const offered = mode === "customer" && !orderInProgress ? tc.previousHandoffOffer ?? null : null;
+  const answer = offered ? offerAnswer(lastShopperText(input.history)) : null;
+  if (offered && answer === "yes") {
+    const r = await runTool("handoff_to_staff", { reason: offered });
+    routed = { kind: "handoff", reason: offered, sizeStatus: null, viaTool: r.ok };
+    offerAccepted = true;
+    route = { path: "offer_answer" };
+  } else if (offered && answer === "no") {
+    routed = { kind: "fixed", reply: { text: OFFER_DECLINED_TEXT, products: [], quickReplies: [] } };
+    route = { path: "offer_answer" };
+  }
+
   if (deps.jev && orderInProgress) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
-  if (deps.jev && !orderInProgress) {
-    const runTool: ToolRunner = async (name, toolInput) => {
-      calls += 1;
-      const s0 = now();
-      const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
-      if (run.log) logs.push(run.log);
-      toolMetrics.push({ name, startMs: s0 - t0, ms: now() - s0, outcome: toolOutcome(run) });
-      seen.push({ name, input: toolInput });
-      return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
-    };
+  if (deps.jev && !orderInProgress && !routed) {
     try {
       const catalog: CatalogItem[] = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
       const decision = await decideTurn(deps.jev, { history: input.history, viewing: tc.product, catalog, now });
@@ -284,6 +321,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         runTool,
         cards: (ids) => deps.store.productCards(ctx.shopId, ids),
         policyCovers: (policy) => checkPolicyCovers(deps.jev!, { history: input.history, policy }),
+        descriptionCovers: (product, description) =>
+          checkDescriptionCovers(deps.jev!, { history: input.history, product, description }),
       });
       if (routed.kind === "fallback") {
         route = { ...route, path: "llm_loop", fallbackReason: routed.reason };
@@ -303,7 +342,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         sizeStatus = routed.sizeStatus;
         // handoff_to_staff moved the conversation already, unless it failed.
         if (!routed.viaTool) await deps.store.setNeedsHuman(ctx);
-        reply = { text: handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
+        reply = { text: offerAccepted ? HANDOFF_TEXT : handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
         break;
       case "personal":
         personalReplyNeeded = true;
@@ -311,6 +350,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         break;
       case "fixed":
         reply = routed.reply;
+        offerMade = routed.offer ?? null;
         break;
       case "write": {
         // Same post-checks as the tool loop: an unreadable reply, a size other
@@ -388,12 +428,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             break;
           }
           finalFirstTokenAt = firstTokenAt;
-          // Cards are the server's choice (graded by PB-10), never the model's ids.
+          // Cards are the server's choice (graded by PB-10), never the model's ids;
+          // so are the buttons when the route chose them (PB-31).
           reply = {
             text: parsed.reply.text,
             products: await deps.store.productCards(ctx.shopId, write.productIds),
-            quickReplies: parsed.reply.quickReplies,
+            quickReplies: write.quickReplies ?? parsed.reply.quickReplies,
           };
+          if (write.offer && mode === "customer") {
+            reply = { ...reply, ...withOffer(reply.text) };
+            offerMade = write.offer;
+          }
           break;
         }
         break;
@@ -476,6 +521,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
 
     const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    // PB-31: a handoff for missing data, an unwritten policy or a size outside
+    // the chart becomes an offer; nothing in this batch runs.
+    const softHandoff = mode === "customer"
+      ? uses.find((u) => u.name === "handoff_to_staff" && isOfferReason((u.input as { reason?: unknown } | null)?.reason))
+      : undefined;
+    if (softHandoff) {
+      offerMade = (softHandoff.input as { reason: OfferReason }).reason;
+      break;
+    }
     // None of the batch runs when it would go over the limit.
     if (calls + uses.length > MAX_TOOL_CALLS) {
       handoff = "too_many_tool_calls";
@@ -539,7 +593,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       seen.push({ name: u.name, input: u.input });
       if (u.name === "recommend_size" && !run.isError) {
         sizeStatus = sizeStatusOf(run.content);
-        const out = run.log?.output as { status?: string } | undefined;
+        const out = run.log?.output as { status?: string; nearestSize?: string; offCm?: number; offKg?: number } | undefined;
+        if (out?.status === "out_of_range" && out.nearestSize !== undefined) {
+          sizeOut = { nearestSize: out.nearestSize, offCm: out.offCm ?? 0, offKg: out.offKg ?? 0 };
+        }
         const productId = (run.log?.input as { productId?: string } | undefined)?.productId;
         if (out?.status === "ok" && productId) sizeAdvice = { advice: out as SizeAdvice, productId };
       }
@@ -589,12 +646,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (productMissedTwice) handoff = "misunderstood_twice";
   else if (discountBlocked) handoff = "postcheck_failed";
 
-  // PB-06 AC4: measurements outside the chart, or a product with no chart, always
-  // end in a handoff, even when the model answered instead of calling
-  // handoff_to_staff. (sizeStatus is set inside a callback; TS can't see it.)
+  // PB-06 AC4, soft since PB-31: measurements outside the chart, or a product with
+  // no chart, always end in the server's size text offering staff, even when the
+  // model answered with a size. (sizeStatus is set inside a callback; TS can't see it.)
   const finalSizeStatus = sizeStatus as SizeStatus;
-  const sizeHandoff = mode === "customer" && !handoff && finalSizeStatus !== null;
-  if (sizeHandoff) handoff = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
+  const finalSizeOut = sizeOut as { nearestSize: string; offCm: number; offKg: number } | null;
+  if (mode === "customer" && !handoff && !productMissedTwice && finalSizeStatus !== null) {
+    offerMade = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
+  }
 
   // A matching question must not depend on the model remembering the tool. If
   // it forgot, query the product the shopper is viewing on the server. Without
@@ -619,10 +678,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const finalOrderResult = orderResult as ToolOutput<"create_draft_order"> | null;
   const finalQuote = currentQuote as PendingQuote | null;
   const finalOrderIssue = orderIssue as { code: string; missing?: string[] } | null;
-  if (handoff && mode === "customer") {
+  const finalOffer = offerMade as OfferReason | null;
+  if (!handoff && finalOffer && mode === "customer" && (finalSizeStatus !== null || !modelReply || !offersStaff(modelReply))) {
+    // A size outside the chart, or a handoff the model asked for: the server's text.
+    reply = offerReply(offerTextFor(finalOffer, finalSizeOut, finalSizeStatus === "no_chart"));
+  } else if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
-    if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice || sizeHandoff) await deps.store.setNeedsHuman(ctx);
+    if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
     const text = productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
       : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
@@ -698,6 +761,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       products: await deps.store.productCards(ctx.shopId, modelReply.productIds),
       quickReplies: modelReply.quickReplies,
     };
+    // PB-31: the model offered staff itself (prompt rule). Recorded so a "yes"
+    // next turn hands off; the reason follows what the turn looked up.
+    if (mode === "customer" && offersStaff(modelReply)) {
+      reply = { ...reply, ...withOffer(reply.text) };
+      offerMade = logs.some((l) => l.name === "get_policy") ? "policy_not_covered" : "not_covered_by_data";
+    }
   }
   } // end of the LLM tool loop path
   // Auto-resume: if the conversation was in needs_human and the AI produced an
@@ -726,6 +795,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     inputTokens,
     outputTokens,
     handoffReason: handoff,
+    handoffOffer: handoff ? null : (offerMade as OfferReason | null),
     truncated,
     route,
   };
@@ -745,6 +815,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         latency_ms: latencyMs,
         tool_calls: logs as NonNullable<Json>,
         handoff_reason: handoff,
+        handoff_offer: handoff ? null : (offerMade as OfferReason | null),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         ttft_ms: metrics.ttftMs,
