@@ -228,9 +228,10 @@ export const liveCases: LiveCase[] = [
     id: "pb09-notcovered",
     issue: "PB-09",
     group: 1,
-    title: "Hỏi giao Chủ nhật (chính sách không nói): hỏi khách có muốn gặp nhân viên, khách chọn Có thì chuyển policy_not_covered (PB-31)",
-    turns: ["Shop có giao hàng vào Chủ nhật không?", OFFER_YES],
-    precondition: (d) => (says(d.snapshot.policies.giao_hang, "chu nhat") ? "Chính sách giao hàng có nói Chủ nhật" : null),
+    title: "Hỏi đổi địa chỉ nhận hàng sau khi đặt (chính sách không nói): hỏi khách có muốn gặp nhân viên, khách chọn Có thì chuyển policy_not_covered (PB-31)",
+    turns: ["Đặt hàng rồi mình muốn đổi địa chỉ nhận hàng thì có được không shop?", OFFER_YES],
+    // Not "giao Chủ nhật": the PB-31 policy text says Sunday is not a delivery day.
+    precondition: (d) => (saysAny(Object.values(d.snapshot.policies).join(" "), ["doi dia chi", "dia chi nhan"]) ? "Chính sách có nói đổi địa chỉ nhận hàng" : null),
     check: (_d, run) => offerThenAccept(run, "policy_not_covered"),
   },
 
