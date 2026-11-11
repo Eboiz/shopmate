@@ -16,6 +16,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
+import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffer } from "./refusal-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
@@ -238,6 +239,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
+  // PB-17: the reply still failed the discount or echo check after one retry and
+  // the shopper was asking for a discount or a price: the server refuses instead.
+  let refusalFallback = false;
   const previousQuote = tc.previousQuote ?? null;
   let currentQuote: PendingQuote | null = null;
   let orderResult: ToolOutput<"create_draft_order"> | null = null;
@@ -377,14 +381,21 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             };
             break;
           }
-          if (mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null) {
+          const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
+          const echoed = mode === "customer"
+            && echoedShopperAmounts(parsed.reply.text, input.history, logs.map((l) => l.output)).length > 0;
+          if (discount || echoed) {
             if (canRetry) {
-              task = `${write.task}\n${DISCOUNT_RETRY_NOTE}`;
+              task = `${write.task}\n${discount ? DISCOUNT_RETRY_NOTE : ECHO_RETRY_NOTE}`;
               continue;
             }
-            handoff = "postcheck_failed";
-            await deps.store.setNeedsHuman(ctx);
-            reply = { text: DISCOUNT_HANDOFF_TEXT, products: [], quickReplies: [] };
+            if (discount && !shopperAsksForOffer(input.history)) {
+              handoff = "postcheck_failed";
+              await deps.store.setNeedsHuman(ctx);
+              reply = { text: DISCOUNT_HANDOFF_TEXT, products: [], quickReplies: [] };
+              break;
+            }
+            reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
             break;
           }
           finalFirstTokenAt = firstTokenAt;
@@ -459,18 +470,25 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
       // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
-      // offer gets one regeneration; a second one hands off (below the loop).
-      if (mode === "customer" && modelReply && !pairingState.called
-        && findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null) {
-        if (!discountRetried) {
-          discountRetried = true;
-          messages.push(
-            { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
-            { role: "user", content: DISCOUNT_RETRY_NOTE },
-          );
-          continue;
+      // offer gets one regeneration. PB-17: so does a reply repeating the
+      // shopper's own amount ("không giảm 50% được"). Still failing: the server
+      // refuses when the shopper asked for a discount or a price; a discount the
+      // AI offered unasked hands off (below the loop).
+      if (mode === "customer" && modelReply && !pairingState.called) {
+        const discount = findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null;
+        const echoed = echoedShopperAmounts(modelReply.text, input.history, logs.map((l) => l.output)).length > 0;
+        if (discount || echoed) {
+          if (!discountRetried) {
+            discountRetried = true;
+            messages.push(
+              { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+              { role: "user", content: discount ? DISCOUNT_RETRY_NOTE : ECHO_RETRY_NOTE },
+            );
+            continue;
+          }
+          if (discount && !shopperAsksForOffer(input.history)) discountBlocked = true;
+          else refusalFallback = true;
         }
-        discountBlocked = true;
       }
       break;
     }
@@ -634,6 +652,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
+  } else if (refusalFallback) {
+    reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "created") {
     reply = { text: orderCreatedText(), products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "out_of_stock") {
