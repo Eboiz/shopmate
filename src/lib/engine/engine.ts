@@ -16,6 +16,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
+import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffer } from "./refusal-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { refusedHandoff, type RefusedHandoff } from "./handoff-guard";
 import { toModelMessages } from "./messages";
@@ -33,7 +34,7 @@ import { turnToolCache } from "./turn-cache";
 import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
-import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
 import { filterQuickReplies, type QuickReply } from "./quick-replies";
 import { routeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
@@ -235,6 +236,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     ctx = { shopId: deps.staffShopId!, conversationId: null };
   }
 
+  // Cards for the model's productIds. VIEWING_PRODUCT_REF (v1.3) is the product
+  // on screen; with none on screen it is dropped, never sent to the database.
+  const cardIdsOf = (ids: readonly string[]) =>
+    ids.flatMap((id) => (id !== VIEWING_PRODUCT_REF ? [id] : tc.product ? [tc.product.id] : []));
+
   // The shop's catalogue: read at most once per turn, shared by the Jev router
   // and the quick-reply check.
   let turnCatalog: CatalogItem[] | null = null;
@@ -295,6 +301,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
+  // PB-17: the reply still failed the discount or echo check after one retry and
+  // the shopper was asking for a discount or a price: the server refuses instead.
+  let refusalFallback = false;
   // PB-07: prices and stock in a model-written reply must be the tools'. One
   // rewrite; a second mismatch hands off with the product card (numberBlocked).
   let numberCheck: PostcheckLog["numberCheck"];
@@ -457,14 +466,21 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             };
             break;
           }
-          if (mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null) {
+          const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
+          const echoed = mode === "customer"
+            && echoedShopperAmounts(parsed.reply.text, input.history, logs.map((l) => l.output)).length > 0;
+          if (discount || echoed) {
             if (canRetry) {
-              task = `${write.task}\n${DISCOUNT_RETRY_NOTE}`;
+              task = `${write.task}\n${discount ? DISCOUNT_RETRY_NOTE : ECHO_RETRY_NOTE}`;
               continue;
             }
-            handoff = "postcheck_failed";
-            await deps.store.setNeedsHuman(ctx);
-            reply = { text: DISCOUNT_HANDOFF_TEXT, products: [], quickReplies: [] };
+            if (discount && !shopperAsksForOffer(input.history)) {
+              handoff = "postcheck_failed";
+              await deps.store.setNeedsHuman(ctx);
+              reply = { text: DISCOUNT_HANDOFF_TEXT, products: [], quickReplies: [] };
+              break;
+            }
+            reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
             break;
           }
           const unchecked = uncheckedNumbers(parsed.reply.text);
@@ -558,23 +574,30 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
       // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
-      // offer gets one regeneration; a second one hands off (below the loop).
-      if (mode === "customer" && modelReply && !pairingState.called
-        && findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null) {
-        if (!discountRetried) {
-          discountRetried = true;
-          messages.push(
-            { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
-            { role: "user", content: DISCOUNT_RETRY_NOTE },
-          );
-          continue;
+      // offer gets one regeneration. PB-17: so does a reply repeating the
+      // shopper's own amount ("không giảm 50% được"). Still failing: the server
+      // refuses when the shopper asked for a discount or a price; a discount the
+      // AI offered unasked hands off (below the loop).
+      if (mode === "customer" && modelReply && !pairingState.called) {
+        const discount = findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null;
+        const echoed = echoedShopperAmounts(modelReply.text, input.history, logs.map((l) => l.output)).length > 0;
+        if (discount || echoed) {
+          if (!discountRetried) {
+            discountRetried = true;
+            messages.push(
+              { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+              { role: "user", content: discount ? DISCOUNT_RETRY_NOTE : ECHO_RETRY_NOTE },
+            );
+            continue;
+          }
+          if (discount && !shopperAsksForOffer(input.history)) discountBlocked = true;
+          else refusalFallback = true;
         }
-        discountBlocked = true;
       }
       // PB-07: only a reply the model wrote is checked; an order summary, a size
-      // fallback or a pairing reply is written by the server from tool data.
+      // fallback, a pairing reply or the PB-17 refusal is written by the server.
       const serverWrites = orderResult !== null || currentQuote !== null || orderIssue !== null
-        || sizeFallback || pairingState.called || isMatchingQuestion(input.history);
+        || sizeFallback || pairingState.called || isMatchingQuestion(input.history) || refusalFallback;
       if (!discountBlocked && modelReply && !serverWrites) {
         const unchecked = uncheckedNumbers(modelReply.text);
         const retried = numberCheck !== undefined;
@@ -652,11 +675,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       }
       // recommend_size gets the height and weight the shopper actually wrote
       // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.
-      const effectiveInput = u.name === "get_pairings" && u.input && typeof u.input === "object"
-        ? { ...u.input, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
+      // v1.3: the model names the product on screen by VIEWING_PRODUCT_REF.
+      const toolInput = resolveViewingProduct(u.input, tc.product);
+      const effectiveInput = u.name === "get_pairings" && toolInput && typeof toolInput === "object"
+        ? { ...toolInput, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
         : u.name === "recommend_size"
-          ? normalizeSizeInput(u.input, input.history)
-          : u.input;
+          ? normalizeSizeInput(toolInput, input.history)
+          : toolInput;
       if (u.name === "search_products") {
         const refused = shortQueryRun(effectiveInput);
         if (refused) return { run: refused, ms: now() - s0, startMs: s0 - t0 };
@@ -776,11 +801,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     // model's text: the viewed product, else the products the reply was about.
     const cardIds = handoff !== "postcheck_failed" ? []
       : tc.product ? [tc.product.id]
-      : numberBlocked ? (modelReply?.productIds ?? []) : [];
+      : numberBlocked ? cardIdsOf(modelReply?.productIds ?? []) : [];
     const products = cardIds.length > 0 ? await deps.store.productCards(ctx.shopId, cardIds) : [];
     reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
+  } else if (refusalFallback) {
+    reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "created") {
     reply = { text: orderCreatedText(), products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "out_of_stock") {
@@ -844,7 +871,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     reply = {
       text: modelReply.text,
       // Cards come from the database for this shop only; foreign ids drop out.
-      products: await deps.store.productCards(ctx.shopId, modelReply.productIds),
+      products: await deps.store.productCards(ctx.shopId, cardIdsOf(modelReply.productIds)),
       quickReplies: await customerQuickReplies(modelReply.quickReplies),
     };
   }

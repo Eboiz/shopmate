@@ -16,6 +16,7 @@ import { cartCount, cartMessage, useCart } from "./cart";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
+import { AskRow, GroupTiles, ShopFooter, ShopHeader, ShopHero, ShopMarquee, SizeBand, type GroupLink } from "./storefront-sections";
 
 type Props = { slug: string; previewCatalog?: ShopCatalog; detailProductId?: string };
 
@@ -56,6 +57,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const refreshSequence = useRef(0);
   const pendingSend = useRef<{ text: string; productId: string | null; clientMessageId: string } | null>(null);
   const previousReplies = useRef<Set<string>>(new Set());
+  // A question asked from the page (header, hero, chips, size form) while the
+  // chat was closed or still loading; sent once its history is in.
+  const queuedAsk = useRef<string | null>(null);
   const catalogEndpoint = `/api/shops/${encodeURIComponent(slug)}/catalog`;
   const endpoint = `/api/shops/${encodeURIComponent(slug)}/chat`;
 
@@ -166,6 +170,16 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     };
   }, [open]);
 
+  // The hero has its own chat card; the floating launcher waits until it scrolls away.
+  const [heroChatVisible, setHeroChatVisible] = useState(false);
+  useEffect(() => {
+    const card = document.getElementById("hero-chat");
+    if (!card) return;
+    const observer = new IntersectionObserver(([entry]) => setHeroChatVisible(entry.isIntersecting), { threshold: 0.25 });
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [catalog, catalogLoading, detailProductId]);
+
   // The cart panel gives focus back to the button that opened it.
   const cartOpenerRef = useRef<HTMLElement | null>(null);
   const openCart = useCallback(() => {
@@ -196,7 +210,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     setOpen(true);
   }
 
-  async function send(text: string) {
+  async function send(text: string, productId: string | null = selected?.id ?? null) {
     const message = text.trim();
     if (!message || sending) return;
     if (previewCatalog) {
@@ -206,7 +220,6 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     setSending(true);
     setSendError("");
     refreshSequence.current += 1;
-    const productId = selected?.id ?? null;
     const retry = pendingSend.current;
     const clientMessageId = retry?.text === message && retry.productId === productId
       ? retry.clientMessageId
@@ -251,6 +264,27 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     event.preventDefault();
     void send(draft);
   }
+
+  // Page-level questions are general, so they drop any product context.
+  function askText(text: string) {
+    setSelected(null);
+    if (open && !loading && !sending) {
+      void send(text, null);
+      return;
+    }
+    queuedAsk.current = text;
+    setOpen(true);
+  }
+
+  // Waiting for the history keeps the "new reply" check in send() accurate.
+  useEffect(() => {
+    const text = queuedAsk.current;
+    if (!open || loading || sending || text === null) return;
+    queuedAsk.current = null;
+    void send(text, null);
+    // send() is recreated every render; open/loading/sending gate the queue.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, loading, sending]);
 
   const lastReply = messages.at(-1)?.reply;
   if (catalogLoading) {
@@ -315,6 +349,26 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     setSearch("");
     setShown(PAGE_SIZE);
   }
+  const groupLinks: GroupLink[] = groupChips.map((name) => ({
+    name,
+    count: groupCounts.get(name) ?? 0,
+    imageUrl: grouped.find((item) => item.group === name && item.product.imageUrl)?.product.imageUrl ?? null,
+  }));
+  // Menus, tiles and the footer pick a group and bring the grid into view.
+  function showGroup(name: string) {
+    chooseGroup(name as ProductGroup);
+    setSearch("");
+    document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
+  }
+  const inStock = products.filter((product) => product.sizesInStock.length > 0);
+  const featured = (inStock.length >= 3 ? inStock : products).slice(0, 3);
+  const sizeChart = products.find((product) => product.sizeChart && product.sizeChart.length > 0)?.sizeChart ?? null;
+  const marqueeItems = [
+    "Trợ lý AI trả lời ngay trên trang",
+    ...policyItems.map((item) => `${item.title}: ${firstSentence(item.text)}`),
+    "Nhân viên shop hỗ trợ khi cần",
+  ];
+  const groupTabs = [{ name: "" as const, label: "Tất cả", count: products.length }, ...groupLinks.map((item) => ({ name: item.name as ProductGroup, label: item.name, count: item.count }))];
   const cartPanel = cartOpen && (
     <CartPanel
       items={cart.items}
@@ -347,52 +401,28 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
             <Link href={shopHref} className="mt-6 inline-flex min-h-11 items-center justify-center rounded-lg bg-[#171717] px-5 text-sm font-semibold text-white">Về cửa hàng</Link>
           </section>
         ) : <>
-        <div className="bg-[#171717] px-4 py-2 text-center text-[11px] font-bold uppercase tracking-[.08em] text-white sm:text-xs sm:tracking-[.16em]">Trợ lý AI trả lời ngay trên trang</div>
-        <header className="sticky top-0 z-20 border-b border-[#e3dfd8] bg-white/95 backdrop-blur-xl">
-          <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-10">
-            <a href="#dau-trang" className="flex min-w-0 items-center gap-3"><Image src="/images/shop-avatar.jpg" alt="" width={36} height={36} className="size-9 shrink-0 object-cover" /><span className="flex min-w-0 items-baseline text-lg font-black uppercase tracking-[-.04em] sm:text-xl"><h1 className="truncate">{shopName}</h1><span aria-hidden="true" className="text-[#e9573f]">.</span></span></a>
-            <nav aria-label="Điều hướng cửa hàng" className="hidden items-center gap-8 text-xs font-bold uppercase tracking-[.12em] md:flex"><a href="#san-pham" className="hover:text-[#c2412b]">Sản phẩm</a><a href="#tro-ly" className="hover:text-[#c2412b]">Tư vấn</a></nav>
-            <div className="hidden shrink-0 items-center gap-2 sm:flex">
-              <button type="button" onClick={openCart} className="inline-flex min-h-11 items-center border border-[#8f8a82] px-4 text-xs font-bold uppercase tracking-[.08em] transition-colors hover:border-[#171717]">Giỏ ({itemCount})</button>
-              <button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-11 items-center border border-[#171717] px-4 text-xs font-bold uppercase tracking-[.08em] transition-colors hover:bg-[#171717] hover:text-white">Chat với shop</button>
-            </div>
-          </div>
-        </header>
+        <ShopMarquee items={marqueeItems} />
+        <ShopHeader shopName={shopName} groups={groupLinks} itemCount={itemCount} onOpenCart={openCart} onAsk={askText} onChooseGroup={showGroup} />
+        <AskRow onAsk={askText} />
+        <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
 
-        <section id="dau-trang" className="relative overflow-hidden bg-[#171717] text-white">
-          <div className="mx-auto grid min-h-[560px] max-w-[1400px] lg:grid-cols-[1.05fr_.95fr]">
-            <div className="ui-enter relative z-10 flex flex-col justify-center px-5 py-16 sm:px-10 lg:px-16 lg:py-24">
-              <p className="max-w-2xl text-balance text-[clamp(2.25rem,6vw,5.5rem)] font-black leading-[1.02] tracking-[-.04em]">{shopName}<span className="text-[#e9573f]">.</span><br />Chọn đúng size, mặc đúng gu<span className="text-[#e9573f]">.</span></p>
-              <p className="mt-7 max-w-md text-sm leading-7 text-[#d4d1ca] sm:text-base">Khám phá sản phẩm của {shopName}. Chưa chắc size hay màu, hỏi trợ lý AI ngay trên trang.</p>
-              <div className="mt-8 flex flex-wrap gap-3"><a href="#san-pham" className="inline-flex min-h-12 items-center bg-[#c2412b] px-5 text-xs font-bold uppercase tracking-[.1em] text-white transition-colors hover:bg-[#a83826]">Xem sản phẩm</a><button type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center border border-[#8a877f] px-5 text-xs font-bold uppercase tracking-[.1em] hover:border-white">Hỏi trợ lý AI</button></div>
-            </div>
-            <div className="ui-enter ui-enter-delay relative min-h-[320px] overflow-hidden bg-[#33312d] lg:min-h-full">
-              <Image src="/images/hero-boutique.jpg" alt="" fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover" />
-            </div>
+        <section id="san-pham" aria-labelledby="san-pham-title" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
+          <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+            <h2 id="san-pham-title" className="text-[clamp(1.9rem,3.6vw,3rem)] font-black uppercase leading-none tracking-[-.04em]">Khám phá sản phẩm<span className="text-[#e9573f]">.</span></h2>
+            <p className="text-sm font-semibold tabular-nums text-[#706d67]">{filtered.length} / {products.length} sản phẩm</p>
           </div>
-        </section>
-        {policyItems.length > 0 && (
-          <div className="border-y border-[#171717] bg-[#e9573f] text-[#171717]">
-            <ul aria-label="Chính sách cửa hàng" className="mx-auto grid max-w-[1400px] gap-x-10 gap-y-2 px-4 py-4 text-sm sm:px-6 md:grid-cols-2 lg:px-10">
-              {policyItems.map((item) => <li key={item.title}><strong>{item.title}:</strong> {firstSentence(item.text)}</li>)}
-            </ul>
-          </div>
-        )}
-
-        <section id="san-pham" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
-          <div className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><h2 className="ui-page-title">Khám phá sản phẩm<span className="text-[#e9573f]">.</span></h2><p className="mt-3 text-sm text-[#706d67]">Những lựa chọn dành cho phong cách của bạn.</p></div><p className="text-sm font-semibold tabular-nums text-[#706d67]">{filtered.length} / {products.length} sản phẩm</p></div>
           {products.length > 0 && (
-            <div className="mb-7 border-y border-[#e3dfd8] py-4">
-              {groupChips.length > 1 && (
-                <div role="group" aria-label="Nhóm sản phẩm" className="-mx-4 mb-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
-                  {[{ name: "" as const, label: "Tất cả", count: products.length }, ...groupChips.map((name) => ({ name, label: name, count: groupCounts.get(name) ?? 0 }))].map((chip) => (
-                    <button key={chip.label} type="button" aria-pressed={group === chip.name} onClick={() => chooseGroup(chip.name)} className={`inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm font-semibold transition-colors ${group === chip.name ? "border-[#171717] bg-[#171717] text-white" : "border-[#8f8a82] bg-white hover:border-[#171717]"}`}>
-                      {chip.label} <span className={`tabular-nums ${group === chip.name ? "text-[#d4d1ca]" : "text-[#706d67]"}`}>{chip.count}</span>
+            <div className="mb-7">
+              {groupTabs.length > 2 && (
+                <div role="group" aria-label="Nhóm sản phẩm" className="-mx-4 flex gap-6 overflow-x-auto border-b border-[#e3dfd8] px-4 [scrollbar-width:none] sm:mx-0 sm:px-0">
+                  {groupTabs.map((tab) => (
+                    <button key={tab.label} type="button" aria-pressed={group === tab.name} onClick={() => chooseGroup(tab.name)} className={`-mb-px inline-flex min-h-12 shrink-0 items-center gap-1.5 border-b-2 text-xs font-extrabold uppercase tracking-[.12em] transition-colors ${group === tab.name ? "border-[#171717] text-[#171717]" : "border-transparent text-[#706d67] hover:text-[#171717]"}`}>
+                      {tab.label} <span className="font-semibold tabular-nums tracking-normal">{tab.count}</span>
                     </button>
                   ))}
                 </div>
               )}
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+              <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                 <label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-80"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => chooseSearch(event.target.value)} placeholder="Tìm theo tên, nhóm, màu..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label>
                 <div className="flex flex-wrap gap-3">
                   {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => chooseSize(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
@@ -405,16 +435,33 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
             <div className="py-6 text-center">
               <EmptyState title="Không tìm thấy sản phẩm" description="Thử bỏ bớt bộ lọc, hoặc hỏi trợ lý AI tìm giúp." />
               <div className="mt-5 flex flex-wrap justify-center gap-3">
-                {filtering && <button type="button" onClick={clearFilters} className="inline-flex min-h-11 items-center rounded-lg border border-[#171717] px-5 text-sm font-semibold hover:bg-white">Xóa bộ lọc</button>}
-                <button type="button" onClick={() => { if (search.trim()) setDraft(`Shop có ${search.trim()} không?`); setOpen(true); }} className="inline-flex min-h-11 items-center rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white hover:bg-[#a83826]">Hỏi trợ lý AI</button>
+                {filtering && <button type="button" onClick={clearFilters} className="inline-flex min-h-11 items-center border-[1.5px] border-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] hover:bg-white">Xóa bộ lọc</button>}
+                <button type="button" onClick={() => { if (search.trim()) askText(`Shop có ${search.trim()} không?`); else setOpen(true); }} className="inline-flex min-h-11 items-center bg-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] text-white hover:bg-[#c2412b]">Hỏi trợ lý AI</button>
               </div>
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">{visibleProducts.map((product) => <ProductCard key={product.id} href={`${shopHref}/p/${encodeURIComponent(product.id)}`} name={product.name} price={product.price} imageUrl={product.imageUrl} colors={product.colors} sizesInStock={product.sizesInStock} />)}</div>
+              <div className="grid grid-cols-2 gap-3 sm:gap-5 lg:grid-cols-4">
+                {visibleProducts.map((product) => (
+                  <ProductCard
+                    key={product.id}
+                    href={`${shopHref}/p/${encodeURIComponent(product.id)}`}
+                    name={product.name}
+                    price={product.price}
+                    imageUrl={product.imageUrl}
+                    colors={product.colors}
+                    sizesInStock={product.sizesInStock}
+                    action={(
+                      <button type="button" onClick={() => askAbout(product)} aria-label={`Hỏi về mẫu này: ${product.name}`} className="inline-flex min-h-10 w-full items-center justify-center whitespace-nowrap border border-[#171717] px-2 text-[11px] font-extrabold uppercase tracking-[.04em] sm:tracking-[.1em] transition-colors hover:bg-[#171717] hover:text-white">
+                        Hỏi về mẫu này
+                      </button>
+                    )}
+                  />
+                ))}
+              </div>
               {filtered.length > visibleProducts.length && (
                 <div className="mt-10 flex flex-col items-center gap-2">
-                  <button type="button" onClick={() => setShown((value) => value + PAGE_SIZE)} className="inline-flex min-h-12 items-center rounded-lg border border-[#171717] px-6 text-sm font-semibold transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
+                  <button type="button" onClick={() => setShown((value) => value + PAGE_SIZE)} className="inline-flex min-h-12 items-center border-[1.5px] border-[#171717] px-6 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
                   <p className="text-xs tabular-nums text-[#706d67]">Đang xem {visibleProducts.length} / {filtered.length}</p>
                 </div>
               )}
@@ -422,44 +469,39 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           )}
         </section>
 
-        <section id="tro-ly" className="scroll-mt-24 bg-[#e9e5dc]"><div className="mx-auto flex max-w-[1400px] flex-col items-start justify-between gap-6 px-4 py-12 sm:px-6 lg:flex-row lg:items-center lg:px-10"><div><h2 className="text-3xl font-black uppercase tracking-[-.04em] sm:text-5xl">Chưa chắc về size?<br /><span className="text-[#c2412b]">Cứ hỏi ShopMate.</span></h2><p className="mt-4 max-w-xl text-sm leading-6 text-[#5f5c56]">Hỏi về giá, tồn kho, màu sắc hoặc gợi ý phối đồ ngay trên trang này.</p></div><Button onClick={() => setOpen(true)} className="min-h-12 px-6 text-xs uppercase tracking-[.1em]">Chat với shop</Button></div></section>
-        {/* pb-28 leaves room for the floating chat button and the phone bottom bar. */}
-        <footer className="bg-[#171717] px-4 pb-28 pt-9 text-white sm:px-6 lg:px-10">
-          <div className="mx-auto max-w-[1400px]">
-            <div className="flex flex-wrap items-end justify-between gap-5"><div><p className="text-2xl font-black uppercase tracking-[-.04em]">{shopName}<span className="text-[#e9573f]">.</span></p><p className="mt-2 text-xs text-[#aaa69f]">Được hỗ trợ bởi ShopMate</p></div><a href="#dau-trang" className="inline-flex min-h-11 items-center text-xs font-bold uppercase tracking-[.12em] hover:text-[#e9573f]">Lên đầu trang</a></div>
-            {policyItems.length > 0 && (
-              <div className="mt-8 grid gap-6 border-t border-[#ffffff26] pt-8 md:grid-cols-2">
-                {policyItems.map((item) => <div key={item.title}><h2 className="text-sm font-bold">Chính sách {item.title.toLocaleLowerCase("vi")}</h2><p className="mt-2 whitespace-pre-line text-sm leading-6 text-[#d4d1ca]">{item.text}</p></div>)}
-              </div>
-            )}
-          </div>
-        </footer>
+        {groupLinks.length > 1 && <GroupTiles groups={groupLinks} onChoose={showGroup} onAsk={askText} />}
+        <SizeBand chart={sizeChart} onAsk={askText} />
+        <ShopFooter shopName={shopName} groups={groupLinks} policyItems={policyItems} onChoose={showGroup} onAsk={askText} />
         </>}
       </main>
 
       {!detailProductId && (
         <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
-          <button ref={mobileChatRef} type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#171717] px-3 text-sm font-semibold text-white">Chat với shop</button>
-          <button type="button" onClick={openCart} className="inline-flex min-h-12 items-center justify-center rounded-lg border border-[#171717] px-3 text-sm font-semibold">Giỏ đặt ({itemCount})</button>
+          <button ref={mobileChatRef} type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap bg-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em] text-white"><span aria-hidden="true" className="size-[7px] rounded-full bg-[#4cc47a]" />Chat với shop</button>
+          <button type="button" onClick={openCart} className="inline-flex min-h-12 items-center justify-center whitespace-nowrap border-[1.5px] border-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em]">Giỏ đặt ({itemCount})</button>
         </div>
       )}
 
-      {!open && !detailProductId && (
-        <div className="fixed bottom-6 right-6 z-40 hidden sm:block">
-          <Button ref={floatingRef} className="min-h-14 rounded-full border border-[#ffffff33] bg-[#171717] px-5 text-white shadow-[0_16px_35px_-12px_#171717aa] hover:bg-[#c2412b]" onClick={() => setOpen(true)}>
+      {!open && !detailProductId && !heroChatVisible && (
+        <div className="ui-chat-enter fixed bottom-6 right-6 z-40 hidden sm:block">
+          <button ref={floatingRef} type="button" onClick={() => setOpen(true)} className="group flex min-h-14 items-center gap-3 rounded-full bg-[#171717] py-1.5 pl-1.5 pr-5 text-sm font-bold text-white shadow-[0_16px_35px_-12px_#171717aa] transition-colors hover:bg-[#c2412b]">
+            <span className="relative shrink-0">
+              <Image src="/images/shop-avatar.jpg" alt="" width={44} height={44} className="size-11 rounded-full object-cover" />
+              <span aria-hidden="true" className="absolute bottom-0 right-0 size-3 rounded-full border-2 border-[#171717] bg-[#4cc47a] group-hover:border-[#c2412b]" />
+            </span>
             Chat với shop
-          </Button>
+          </button>
         </div>
       )}
 
       {cartPanel}
 
       {open && (
-        <section role="dialog" aria-label="Trò chuyện với shop" className="ui-chat-enter fixed inset-0 z-50 flex h-dvh w-full flex-col overflow-hidden bg-white shadow-2xl sm:inset-auto sm:bottom-5 sm:right-5 sm:h-[min(700px,calc(100dvh-2.5rem))] sm:w-[420px] sm:rounded-xl sm:border sm:border-[#e3dfd8]">
+        <section role="dialog" aria-label="Trò chuyện với shop" className="ui-drawer fixed inset-0 z-50 flex h-dvh w-full flex-col overflow-hidden bg-white shadow-[-24px_0_60px_-30px_#17171780] sm:left-auto sm:w-[440px] sm:border-l sm:border-[#171717]">
           <header className="flex items-center gap-3 bg-[#171717] px-4 py-4 text-white">
-            <Image src="/images/shop-avatar.jpg" alt="" width={40} height={40} className="size-10 shrink-0 rounded-lg object-cover" />
+            <Image src="/images/shop-avatar.jpg" alt="" width={40} height={40} className="size-10 shrink-0 object-cover" />
             <div className="min-w-0 flex-1"><h2 className="truncate font-bold">{shopName}</h2><p className="text-xs text-[#bbb8b2]">Trợ lý AI trả lời ngay · nhân viên hỗ trợ khi cần</p></div>
-            <button type="button" className="flex min-h-11 shrink-0 items-center justify-center rounded-lg border border-[#ffffff44] px-3 text-sm font-semibold transition-colors hover:bg-white hover:text-[#171717]" onClick={() => setOpen(false)} aria-label="Đóng trò chuyện">Đóng</button>
+            <button type="button" className="flex min-h-11 shrink-0 items-center justify-center border border-[#ffffff66] px-3 text-xs font-extrabold uppercase tracking-[.1em] transition-colors hover:bg-white hover:text-[#171717]" onClick={() => setOpen(false)} aria-label="Đóng trò chuyện">Đóng</button>
           </header>
 
           {selected && (
