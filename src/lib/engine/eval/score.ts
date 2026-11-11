@@ -85,6 +85,13 @@ function searchFound(calls: ActualCall[], productId: string): boolean {
   });
 }
 
+// The Jev router resolves the product itself and calls a product tool directly,
+// never search_products: a product tool run on the expected product finds it too.
+const PRODUCT_TOOLS = new Set(["get_stock", "recommend_size", "get_pairings"]);
+function productToolRan(calls: ActualCall[], productId: string): boolean {
+  return calls.some((call) => PRODUCT_TOOLS.has(call.name) && (call.input as { productId?: unknown } | null)?.productId === productId);
+}
+
 export function scoreRun(c: EvalCase, calls: ActualCall[], outcome?: RunOutcome): RunScore {
   const seen = new Set<string>();
   let paramMatched = 0;
@@ -103,13 +110,17 @@ export function scoreRun(c: EvalCase, calls: ActualCall[], outcome?: RunOutcome)
     else paramMismatched++;
   }
   const required = c.expected.filter((e) => e.required);
-  const requiredHit = required.filter((e) => calls.some((call) => matches(e, call))).length;
+  const directFind = c.finds !== undefined && productToolRan(calls, c.finds);
+  // A required search is met when the router found the `finds` product directly.
+  const requiredHit = required.filter((e) =>
+    calls.some((call) => matches(e, call)) || (e.tool === "search_products" && directFind),
+  ).length;
   // A label with no outcome to check against fails rather than passing silently.
   const handoffOk = c.handoff === undefined ? null : outcome?.handoffReason === c.handoff;
   const replyOk = c.reply === undefined ? null : outcome !== undefined && c.reply.ok(outcome.replyText);
   const labels = outcomeLabels(c);
   const outcomeOk = labels.length === 0 ? null : outcome !== undefined && labels.some((l) => outcomeMatches(l, outcome));
-  const findsOk = c.finds === undefined ? null : searchFound(calls, c.finds);
+  const findsOk = c.finds === undefined ? null : searchFound(calls, c.finds) || directFind;
   const quickRepliesOk = c.quickReplies === undefined ? null : outcome !== undefined && c.quickReplies.ok(outcome.quickReplies ?? []);
   const decision = outcome === undefined ? null : decisionOf(outcome);
   const decisionOk =

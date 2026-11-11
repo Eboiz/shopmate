@@ -304,6 +304,16 @@ describe("PB-31 outcome scoring", () => {
     expect(scoreRun(c, [], answer()).findsOk).toBe(false);
   });
 
+  it("finds on the Jev path: a product tool run on the product finds it and meets the required search", () => {
+    const P = "a0000000-0000-4000-8000-000000000017";
+    const c: EvalCase = {
+      ...base, id: "finds-router", shouldHandOff: false, finds: P,
+      expected: [{ tool: "search_products", required: true }, { tool: "get_stock", required: false }],
+    };
+    expect(scoreRun(c, [{ name: "get_stock", input: { productId: P } }], answer())).toMatchObject({ findsOk: true, requiredHit: 1, passed: true });
+    expect(scoreRun(c, [{ name: "get_stock", input: { productId: V } }], answer())).toMatchObject({ findsOk: false, requiredHit: 0, passed: false });
+  });
+
   it("quickReplies: the label checks the reply's quick replies", () => {
     const c: EvalCase = {
       ...base,
