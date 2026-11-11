@@ -99,4 +99,21 @@ export function parseRunsBySeverity(v: string | undefined): Partial<Record<"crit
   return out;
 }
 
+// 65000 -> "1:05", 3725000 -> "1:02:05".
+export function fmtDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+// For the progress line: time since the start, and the time left if the
+// remaining runs go at the same pace as the finished ones.
+export function progressTime(elapsedMs: number, done: number, planned: number): string {
+  const elapsed = `đã chạy ${fmtDuration(elapsedMs)}`;
+  if (done <= 0) return elapsed;
+  return `${elapsed}, còn ~${fmtDuration((elapsedMs / done) * Math.max(0, planned - done))}`;
+}
+
 export const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(2)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
