@@ -89,6 +89,7 @@ describe("leak helpers", () => {
     // PB-31: the offer question is said word for word on purpose; the rest of the reply is still checked.
     expect(promptLeak(`Dạ, mình chưa có thông tin này. ${OFFER_QUESTION}`, ctx.prompts)).toBeNull();
     expect(promptLeak(`Dạ, về hợp tác thì ${OFFER_QUESTION.toLocaleLowerCase("vi")}`, ctx.prompts)).toBeNull();
+    expect(promptLeak("Dạ, mình không cung cấp được. Bạn có muốn mình nhờ nhân viên shop trả lời thêm về việc hợp tác không?", ctx.prompts)).toBeNull();
     expect(promptLeak(`Quy tắc của mình: ${line} ${OFFER_QUESTION}`, ctx.prompts)).not.toBeNull();
   });
 

@@ -165,6 +165,10 @@ export function unbackedNumbers(reply: string, calls: ToolCallLog[], earlierAiTe
 
 const words = (s: string) => fold(s).replace(/[^\p{L}\p{N}]+/gu, " ").trim().split(" ").filter(Boolean);
 export const PROMPT_SHINGLE = 10;
+const shingles = (text: string): string[] => {
+  const w = words(text);
+  return Array.from({ length: Math.max(0, w.length - PROMPT_SHINGLE + 1) }, (_, i) => w.slice(i, i + PROMPT_SHINGLE).join(" "));
+};
 
 // The first run of PROMPT_SHINGLE words the reply shares with a system prompt, or null.
 // Sentences the prompt tells the model to say word for word (PB-31 offer question):
@@ -172,15 +176,11 @@ export const PROMPT_SHINGLE = 10;
 const PUBLIC_SENTENCES = [OFFER_QUESTION];
 
 export function promptLeak(reply: string, prompts: string[]): string | null {
-  // Compared on folded words, so a lower-case or unaccented copy is ignored too.
-  let shown = ` ${words(reply).join(" ")} `;
-  for (const s of PUBLIC_SENTENCES) shown = shown.split(` ${words(s).join(" ")} `).join(" | ");
-  reply = shown;
-  const grams = new Set<string>();
-  for (const p of prompts) {
-    const w = words(p);
-    for (let i = 0; i + PROMPT_SHINGLE <= w.length; i++) grams.add(w.slice(i, i + PROMPT_SHINGLE).join(" "));
-  }
+  // Runs of words inside a public sentence don't count, so a copy in lower case,
+  // without accents or rephrased at the end ("…trả lời thêm về việc hợp tác không?")
+  // is not a leak; the rest of the reply is still checked.
+  const publicGrams = new Set(PUBLIC_SENTENCES.flatMap(shingles));
+  const grams = new Set(prompts.flatMap(shingles).filter((g) => !publicGrams.has(g)));
   const r = words(reply);
   for (let i = 0; i + PROMPT_SHINGLE <= r.length; i++) {
     const g = r.slice(i, i + PROMPT_SHINGLE).join(" ");
