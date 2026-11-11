@@ -11,9 +11,10 @@ import { ProductCard } from "@/components/ui/product-card";
 import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { compareSizes } from "@/lib/size-order";
-import { firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
+import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
-import { cartCount, cartMessage, useCart } from "./cart";
+import { cartCount, cartMessage, useCart, type CartItem } from "./cart";
+import { cartItemFor, onlyChoice, productOptions, QuickAdd } from "./quick-add";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
@@ -197,6 +198,33 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     cartOpenerRef.current = null;
     if (opener?.isConnected) window.setTimeout(() => opener.focus({ preventScroll: true }), 0);
   }, []);
+
+  // "Thêm vào giỏ" on a product card: adds at once when there is one colour
+  // and size, otherwise asks for them in a small dialog.
+  const [quickAdd, setQuickAdd] = useState<ShopProduct | null>(null);
+  const [cartNotice, setCartNotice] = useState<{ text: string; added: boolean } | null>(null);
+  const closeQuickAdd = useCallback(() => setQuickAdd(null), []);
+  const addToCart = useCallback((item: CartItem, maxQuantity: number) => {
+    const added = cart.add(item, maxQuantity);
+    const details = [item.color && displayColor(item.color), item.size && `size ${item.size}`].filter(Boolean).join(", ");
+    setCartNotice(added
+      ? { text: `Đã thêm ${item.name}${details ? ` (${details})` : ""} vào giỏ.`, added: true }
+      : { text: "Giỏ đã đủ 10 món. Gửi đơn này trước rồi thêm tiếp nhé.", added: false });
+  }, [cart]);
+  function quickAddProduct(product: ShopProduct) {
+    const choice = onlyChoice(product);
+    if (choice) {
+      const { stockOf } = productOptions(product);
+      addToCart(cartItemFor(product, choice.color, choice.size), stockOf(choice.color, choice.size));
+    } else {
+      setQuickAdd(product);
+    }
+  }
+  useEffect(() => {
+    if (!cartNotice) return;
+    const timer = window.setTimeout(() => setCartNotice(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [cartNotice]);
 
   function askAbout(product: ShopProduct, initialMessage?: string) {
     setSelected(product);
@@ -480,9 +508,16 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                     colors={product.colors}
                     sizesInStock={product.sizesInStock}
                     action={(
-                      <button type="button" onClick={() => askAbout(product)} aria-label={`Hỏi về mẫu này: ${product.name}`} className="inline-flex min-h-10 w-full items-center justify-center whitespace-nowrap border border-[#171717] px-2 text-[11px] font-extrabold uppercase tracking-[.04em] sm:tracking-[.1em] transition-colors hover:bg-[#171717] hover:text-white">
-                        Hỏi về mẫu này
-                      </button>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => askAbout(product)} aria-label={`Hỏi về mẫu này: ${product.name}`} className="inline-flex min-h-10 min-w-0 flex-1 items-center justify-center whitespace-nowrap border border-[#171717] px-2 text-[11px] font-extrabold uppercase tracking-[.04em] sm:tracking-[.1em] transition-colors hover:bg-[#171717] hover:text-white">
+                          <span className="sm:hidden">Hỏi shop</span><span className="hidden sm:inline">Hỏi về mẫu này</span>
+                        </button>
+                        {product.sizesInStock.length > 0 && (
+                          <button type="button" onClick={() => quickAddProduct(product)} aria-label={`Thêm vào giỏ: ${product.name}`} title="Thêm vào giỏ" className="inline-grid size-10 shrink-0 place-items-center bg-[#e9573f] text-[#171717] transition-colors hover:bg-[#171717] hover:text-white">
+                            <Icon name="cart" className="size-5" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   />
                 ))}
@@ -523,6 +558,13 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       )}
 
       {cartPanel}
+      {quickAdd && <QuickAdd product={quickAdd} onAdd={(item, maxQuantity) => { setQuickAdd(null); addToCart(item, maxQuantity); }} onClose={closeQuickAdd} />}
+      {cartNotice && (
+        <div role="status" className="fixed inset-x-4 bottom-24 z-50 mx-auto flex max-w-sm items-center gap-3 bg-[#171717] py-2 pl-4 pr-2 text-sm text-white shadow-[0_16px_35px_-12px_#171717aa] sm:bottom-6">
+          <p className="min-w-0 flex-1">{cartNotice.text}</p>
+          {cartNotice.added && <button type="button" onClick={() => { setCartNotice(null); openCart(); }} className="min-h-10 shrink-0 bg-[#e9573f] px-3 text-[11px] font-extrabold uppercase tracking-[.1em] text-[#171717] hover:bg-white">Xem giỏ</button>}
+        </div>
+      )}
 
       {open && (
         <section role="dialog" aria-label="Trò chuyện với shop" className="ui-drawer fixed inset-0 z-50 flex h-dvh w-full flex-col overflow-hidden bg-white shadow-[-24px_0_60px_-30px_#17171780] sm:left-auto sm:w-[440px] sm:border-l sm:border-[#171717]">
