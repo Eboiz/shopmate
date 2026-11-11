@@ -156,6 +156,7 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 
 - `ANTHROPIC_API_KEY` (server-only): Claude API key used by the AI engine.
 - `ANTHROPIC_MODEL` (server-only, optional): overrides the engine's model, `claude-sonnet-5-5` by default.
+- `ANTHROPIC_BACKUP_API_KEY`, `ANTHROPIC_BACKUP_API_URL` (server-only, optional): a second key the engine switches to when the primary fails with 429 (quota), 5xx, 401/403 or a connection error. The primary then gets no SDK retries. Each switch logs `{"event":"anthropic_backup","status":...}`. URL empty means api.anthropic.com.
 
 ## AI engine (PB-03)
 
@@ -198,7 +199,7 @@ pnpm eval:injection --report-only eval-runs/<file>.json
 
 Every model call's tokens (input, output, cache write, cache read) are counted. The progress line shows the running total, and the JSON/HTML show tokens per run, per case and in total. A run that would go over `EVAL_MAX_TOKENS` is not started. A 429 from the gateway stops the eval at once, with no retries, and is not counted as a failure. Either way the runs not started are marked "chưa chạy" and the report is still written.
 
-Supabase URL and keys always come from `supabase status` of the local stack (never from `.env.local`, which points at production); the run stops unless the URL is 127.0.0.1/localhost. Only `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL` and `ANTHROPIC_MODEL` are read from `.env.local` / `.env.test.local` (model default `claude-haiku-5-5`, same as production). Cases: `src/lib/engine/eval/cases-pb17-injection.ts`; checks: `injection-score.ts`; a case passes with at least 9 of 10 runs.
+Supabase URL and keys always come from `supabase status` of the local stack (never from `.env.local`, which points at production); the run stops unless the URL is 127.0.0.1/localhost. Only `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL`, `ANTHROPIC_MODEL` and the two `ANTHROPIC_BACKUP_*` variables are read from `.env.local` / `.env.test.local` (model default `claude-haiku-5-5`, same as production). Cases: `src/lib/engine/eval/cases-pb17-injection.ts`; checks: `injection-score.ts`; a case passes with at least 9 of 10 runs.
 
 Labeled basic cases (`src/lib/engine/eval/cases.ts`) on shop A of the two-shop fixture: for each case, which tools the model must call, with which arguments, and when it must call none. The table shows per case the pass rate, recall of required calls, argument accuracy and necessity precision (no extra or repeated calls), plus average latency, tokens and tool calls. Needs local Supabase running (`pnpm db:start`) and `ANTHROPIC_API_KEY` in `.env.test.local`. **Every run costs real money** (8 cases x 3 runs = 24 turns by default). It only reports, never fails on a low score, and CI doesn't run it.
 

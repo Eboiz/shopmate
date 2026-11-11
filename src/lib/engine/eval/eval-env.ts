@@ -8,7 +8,13 @@
 // and the result is refused unless the URL is 127.0.0.1 / localhost. From the env
 // files only the Anthropic variables are copied.
 
-export const ANTHROPIC_VARS = ["ANTHROPIC_API_KEY", "ANTHROPIC_API_URL", "ANTHROPIC_MODEL"] as const;
+export const ANTHROPIC_VARS = [
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_API_URL",
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_BACKUP_API_KEY",
+  "ANTHROPIC_BACKUP_API_URL",
+] as const;
 // Same model as production (ANTHROPIC_MODEL on Vercel), used when no file or shell sets one.
 export const EVAL_DEFAULT_MODEL = "claude-haiku-5-5";
 // Removed from the inherited shell env before the local values are set.
