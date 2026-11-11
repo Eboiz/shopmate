@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { tools } from "@/contract";
 import { HANDOFF_TEXT } from "../engine";
+import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "../handoff-offer";
 import { toModelMessages } from "../messages";
 import { evalCases } from "./cases";
 import { pb05EvalCases } from "./cases-pb05";
@@ -20,13 +21,25 @@ const correct: Record<string, { calls: ActualCall[]; outcome: RunOutcome }> = {
     calls: [{ name: "handoff_to_staff", input: { reason: "asked_for_human" } }],
     outcome: { handoffReason: "asked_for_human", replyText: HANDOFF_TEXT },
   },
+  // PB-31 soft handoff: offered, not handed off; the offer's call is not logged.
   "pb14-fabric-stretch-not-covered": {
-    calls: [{ name: "handoff_to_staff", input: { reason: "not_covered_by_data" } }],
-    outcome: { handoffReason: "not_covered_by_data", replyText: HANDOFF_TEXT },
+    calls: [],
+    outcome: {
+      handoffReason: null,
+      handoffOffer: "not_covered_by_data",
+      replyText: `Dạ thông tin này shop chưa ghi trong mô tả sản phẩm. ${OFFER_QUESTION}`,
+      quickReplies: OFFER_QUICK_REPLIES,
+    },
   },
+  // PB-31 soft handoff: offered, not handed off; the offer's call is not logged.
   "pb14-washing-not-covered": {
-    calls: [{ name: "handoff_to_staff", input: { reason: "not_covered_by_data" } }],
-    outcome: { handoffReason: "not_covered_by_data", replyText: HANDOFF_TEXT },
+    calls: [],
+    outcome: {
+      handoffReason: null,
+      handoffOffer: "not_covered_by_data",
+      replyText: `Dạ thông tin này shop chưa ghi trong mô tả sản phẩm. ${OFFER_QUESTION}`,
+      quickReplies: OFFER_QUICK_REPLIES,
+    },
   },
   "pb14-ununderstood-twice": {
     calls: [{ name: "handoff_to_staff", input: { reason: "misunderstood_twice" } }],
@@ -56,6 +69,12 @@ describe("pb14Cases", () => {
     const c = byId("pb14-complaint");
     const wrong = scoreRun(c, [], { handoffReason: null, replyText: "Dạ shop xin lỗi bạn nhiều ạ." });
     expect(wrong.passed).toBe(false);
+  });
+
+  it("reject a hard handoff where an offer is expected", () => {
+    const c = byId("pb14-washing-not-covered");
+    const handedOff = [{ name: "handoff_to_staff", input: { reason: "not_covered_by_data" } }];
+    expect(scoreRun(c, handedOff, { handoffReason: "not_covered_by_data", replyText: HANDOFF_TEXT }).passed).toBe(false);
   });
 
   it("reject a run that invents fabric stretch info instead of handing off", () => {
