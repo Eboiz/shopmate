@@ -3,7 +3,7 @@ begin;
 -- Ids differ from the integration fixture (src/lib/engine/test/two-shops.ts), so
 -- this file runs while that fixture is in the local database.
 create extension if not exists pgtap with schema extensions;
-select plan(16);
+select plan(21);
 -- Check deferrable foreign keys at each statement, as an autocommit write would.
 set constraints all immediate;
 
@@ -23,8 +23,26 @@ insert into public.shoppers (id, shop_id, channel, external_id) values
 insert into public.conversations (id, shop_id, shopper_id) values
   ('aa000000-0000-4000-8000-000000000031', 'aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000041');
 
--- engine_search_products was dropped by PB-31: search_products ranks in code.
-select hasnt_function('public', 'engine_search_products', array['uuid', 'text', 'integer'], 'engine_search_products is gone (PB-31)');
+select has_function('public', 'engine_search_products', array['uuid', 'text', 'integer'], 'engine_search_products exists');
+select function_privs_are('public', 'engine_search_products', array['uuid', 'text', 'integer'], 'anon', array[]::text[],
+  'anon cannot run engine_search_products');
+select function_privs_are('public', 'engine_search_products', array['uuid', 'text', 'integer'], 'authenticated', array[]::text[],
+  'authenticated cannot run engine_search_products');
+select results_eq(
+  $$select id from public.engine_search_products('aa000000-0000-4000-8000-000000000001', 'vay suong linen', 5)$$,
+  $$values ('aa000000-0000-4000-8000-000000000011'::uuid)$$,
+  'a name typed without diacritics finds shop A''s product only'
+);
+select results_eq(
+  $$select id from public.engine_search_products('aa000000-0000-4000-8000-000000000001', 'VÁY', 5)$$,
+  $$values ('aa000000-0000-4000-8000-000000000011'::uuid)$$,
+  'upper case with diacritics matches'
+);
+select is_empty(
+  $$select id from public.engine_search_products('aa000000-0000-4000-8000-000000000001', 'a', 10)
+    where shop_id <> 'aa000000-0000-4000-8000-000000000001'$$,
+  'a search for shop A never returns another shop''s rows'
+);
 
 -- engine_create_draft_order
 select function_privs_are('public', 'engine_create_draft_order',

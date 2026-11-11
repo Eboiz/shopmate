@@ -5,9 +5,10 @@
 -- so when the shopper accepts on the next turn the handoff carries that reason
 -- (policy_not_covered, not_covered_by_data, size_out_of_range), not
 -- asked_for_human. Null: the turn made no offer.
+--
+-- Only adds a nullable column, so it can run on the shared project before the
+-- PB-31 code deploys. engine_search_products is no longer called (search_products
+-- ranks in code) but stays until that code is live: the running deployment still
+-- calls it. A later migration drops it.
 alter table public.ai_turns
-  add column handoff_offer public.handoff_reason;
-
--- search_products now ranks the shop's products in code (exact / close matches,
--- synonyms), so the SQL search is no longer called.
-drop function if exists public.engine_search_products(uuid, text, int);
+  add column if not exists handoff_offer public.handoff_reason;
