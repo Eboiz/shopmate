@@ -176,11 +176,10 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("COD");
     });
 
-    // PB-19 main flow on the preview, 11/11: the model first sent "san-pham-dang-xem"
-    // as the variant id; that call wrote nothing, yet the correct call after it was
-    // blocked as duplicate_order_call and no order was created.
+    // PB-19 main flow on the preview, 11/11: a call the contract rejected wrote
+    // nothing, yet the correct call after it was blocked as duplicate_order_call.
     it("still creates the draft when an earlier call in the turn was invalid and wrote nothing", async () => {
-      const invalid = { ...draftOrder, items: [{ variantId: "san-pham-dang-xem", quantity: 1 }] };
+      const invalid = { ...draftOrder, customerName: "" };
       const { handlers, run } = setup(
         [toolCalls(toolUse("create_draft_order", invalid)), toolCalls(toolUse("create_draft_order", draftOrder))],
         { store: orderStore() },
@@ -191,15 +190,27 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
     });
 
-    it("blocks a write before confirmation or when the customer changes the items", async () => {
+    it("writes at most one draft per turn when the model sends two valid calls", async () => {
+      const { handlers, run } = setup(
+        [toolCalls(toolUse("create_draft_order", draftOrder), toolUse("create_draft_order", draftOrder))],
+        { store: orderStore() },
+      );
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      await run(customerInput({ history: orderHistory }));
+      expect(handlers.create_draft_order).toHaveBeenCalledTimes(1);
+    });
+
+    it("blocks a write before confirmation", async () => {
       const before = setup([toolCalls(toolUse("create_draft_order", draftOrder)), reply()], { store: orderStore() });
       const first = await before.run(customerInput({ history: [orderHistory[0]] }));
       expect(before.handlers.create_draft_order).not.toHaveBeenCalled();
       expect(first.output.reply.text).toContain("xin bạn xác nhận");
+    });
 
-      // The shopper confirmed the summary, so the order is written with the quoted
-      // items whatever ids or quantities the model typed (preview 11/11: the model
-      // invented a variant id and no order was created).
+    // The shopper confirmed the summary, so the order is written with the quoted
+    // items whatever ids or quantities the model typed (preview 11/11: the model
+    // invented a variant id and no order was created).
+    it("writes the quoted items, not the ids the model typed", async () => {
       const typo = setup([toolCalls(toolUse("create_draft_order", { ...draftOrder, items: [{ variantId: "b2f3a1c0-4e6d-4f8a-9c7b-1d2e3f4a5b6c", quantity: 2 }] }))], { store: orderStore() });
       typo.handlers.quote_order.mockResolvedValue(orderQuote);
       const second = await typo.run(customerInput({ history: orderHistory }));
