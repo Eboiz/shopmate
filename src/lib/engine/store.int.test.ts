@@ -21,6 +21,7 @@ describe("createSupabaseStore", () => {
         product: { id: FX.a.vay01, name: "Váy suông linen" },
         previousTurnMissedProduct: false,
         previousQuote: null,
+        previousHandoffOffer: null,
       });
     });
 

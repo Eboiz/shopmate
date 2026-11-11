@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { runEngine } from "./engine";
+import { OFFER_QUESTION } from "./handoff-offer";
 import type { TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT } from "./model-reply";
 import { createSupabaseStore } from "./store";
@@ -179,12 +180,13 @@ describe("runEngine on the real database", () => {
     }
   });
 
-  // PB-06 AC4 with the real recommend_size and size charts: the model answers
-  // instead of calling handoff_to_staff, and the engine still hands off.
+  // PB-06 AC4 + PB-31 with the real recommend_size and size charts: the model
+  // answers instead of calling handoff_to_staff; the engine writes the size text
+  // itself and offers staff (no handoff until the shopper says yes).
   it.each([
     ["outside the chart", FX.a.vay01, "cao 1m80 nặng 75kg mặc size nào?", "size_out_of_range", "ngoài bảng size"],
     ["product without a chart", FX.a.ao03, "cao 1m60 nặng 50kg mặc size nào?", "not_covered_by_data", "chưa có bảng size"],
-  ] as const)("size %s: says it can't advise and sets needs_human", async (_label, productId, text, reason, says) => {
+  ] as const)("size %s: says it can't advise and offers staff, mode stays ai", async (_label, productId, text, reason, says) => {
     const model = scriptedModel([
       toolCalls(toolUse("recommend_size", { productId, heightCm: 160, weightKg: 50 })),
       finalJson({ text: "Dạ bạn mặc size M nhé", productIds: [], quickReplies: [] }),
@@ -194,12 +196,15 @@ describe("runEngine on the real database", () => {
         { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text }], productId },
         { model, db, store, onMetrics: () => {} },
       );
-      expect(result.handoffReason).toBe(reason);
+      expect(result.handoffReason).toBeNull();
       expect(result.output.reply.text).toContain(says);
+      expect(result.output.reply.text).toContain(OFFER_QUESTION);
+      expect(result.output.reply.text).not.toContain("size M");
       const { data: conversation } = await db.from("conversations").select("mode").eq("id", FX.a.conversation).single();
-      expect(conversation?.mode).toBe("needs_human");
+      expect(conversation?.mode).toBe("ai");
       const row = await turnRow(await result.turnLogged);
-      expect(row.handoff_reason).toBe(reason);
+      expect(row.handoff_reason).toBeNull();
+      expect(row.handoff_offer).toBe(reason);
       // The shopper's own numbers reached the size function, not the model's 160 / 50.
       const call = (row.tool_calls as { name: string; input: { heightCm: number; weightKg: number } }[])[0];
       expect(call.input).toMatchObject({ heightCm: Number(text.match(/1m(\d+)/)![1]) + 100, weightKg: Number(text.match(/(\d+)kg/)![1]) });
