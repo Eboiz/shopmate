@@ -57,8 +57,38 @@ describe("cases on the recorded fixture", () => {
 
   it("fails a wrong handoff reason (PB-09)", () => {
     const rec = recorded("pb09-notcovered");
-    rec.turns[0].aiTurn!.handoffReason = "not_covered_by_data";
-    expect(score("pb09-notcovered", rec).reason).toMatch(/handoff_reason = policy_not_covered \(nhận not_covered_by_data\)/);
+    rec.turns[1].aiTurn!.handoffReason = "not_covered_by_data";
+    expect(score("pb09-notcovered", rec).reason).toMatch(/Lượt 2.*handoff_reason = policy_not_covered \(nhận not_covered_by_data\)/);
+  });
+
+  it("fails a handoff without asking first, a wrong offer reason, or a database before PB-31 (PB-31)", () => {
+    const handedOff = recorded("pb09-notcovered");
+    handedOff.turns[0].aiTurn!.handoffReason = "policy_not_covered";
+    handedOff.turns[0].modeAfter = "needs_human";
+    expect(score("pb09-notcovered", handedOff).reason).toMatch(/Lượt 1: Không chuyển nhân viên/);
+
+    const wrongOffer = recorded("pb06-size-out");
+    wrongOffer.turns[0].aiTurn!.handoffOffer = "not_covered_by_data";
+    expect(score("pb06-size-out", wrongOffer).reason).toMatch(/handoff_offer = size_out_of_range \(nhận not_covered_by_data\)/);
+
+    const oldDb = recorded("pb14-fabric");
+    delete oldDb.turns[0].aiTurn!.handoffOffer;
+    expect(score("pb14-fabric", oldDb).reason).toMatch(/chưa chạy migration PB-31/);
+  });
+
+  it("answers from the product description when it covers the question (PB-31)", () => {
+    const linen = snapshot.products.find((p) => p.name === "Váy suông linen")!;
+    const saved = linen.description;
+    linen.description = "Váy linen, vải không co giãn.";
+    try {
+      const rec = recorded("pb14-fabric");
+      expect(score("pb14-fabric", rec).reason).toMatch(/Nói vải không co giãn/);
+      rec.turns[0] = { ...rec.turns[0], replies: [{ sender: "ai", text: "Dạ, vải váy này không co giãn ạ.", products: [], quickReplies: [] }] };
+      rec.turns[0].aiTurn = { ...rec.turns[0].aiTurn!, handoffOffer: null };
+      expect(score("pb14-fabric", rec).outcome).toBe("pass");
+    } finally {
+      linen.description = saved;
+    }
   });
 
   it("fails a suggestion the owner never declared (PB-08)", () => {

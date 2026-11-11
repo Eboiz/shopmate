@@ -1069,15 +1069,18 @@
         "shopper": "",
         "productId": null,
         "httpStatus": 200,
-        "status": "handed_off",
+        "status": "answered",
         "error": null,
         "wallMs": 7100,
         "replies": [
          {
-          "sender": "system",
-          "text": "Dạ, mình đã chuyển câu hỏi của bạn cho nhân viên shop. Nhân viên sẽ trả lời bạn sớm nhé!",
+          "sender": "ai",
+          "text": "Dạ, chính sách giao hàng của shop chưa nói về giao hàng vào Chủ nhật nên mình chưa trả lời chắc được ạ. Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?",
           "products": [],
-          "quickReplies": []
+          "quickReplies": [
+           "Có, gặp nhân viên",
+           "Không cần"
+          ]
          }
         ],
         "aiTurn": {
@@ -1093,7 +1096,37 @@
             "kind": "giao_hang",
             "content": "Giao toàn quốc. Nội thành TP.HCM 1–2 ngày, phí 20.000đ. Tỉnh khác 3–5 ngày, phí 30.000đ. Miễn phí giao hàng cho đơn từ 500.000đ. Thanh toán khi nhận hàng (COD), được xem hàng trước khi trả tiền."
            }
-          },
+          }
+         ],
+         "handoffReason": null,
+         "model": "claude-haiku-5-5",
+         "promptVersion": "v1.5",
+         "latencyMs": 6400,
+         "inputTokens": 7200,
+         "outputTokens": 90,
+         "handoffOffer": "policy_not_covered"
+        },
+        "modeAfter": "ai"
+       },
+       {
+        "shopper": "",
+        "productId": null,
+        "httpStatus": 200,
+        "status": "handed_off",
+        "error": null,
+        "wallMs": 900,
+        "replies": [
+         {
+          "sender": "system",
+          "text": "Dạ, mình đã chuyển câu hỏi của bạn cho nhân viên shop. Nhân viên sẽ trả lời bạn sớm nhé!",
+          "products": [],
+          "quickReplies": []
+         }
+        ],
+        "aiTurn": {
+         "id": "00000000-0000-4000-8000-00640000000f",
+         "createdAt": "2026-11-11T09:02:03.000Z",
+         "toolCalls": [
           {
            "name": "handoff_to_staff",
            "input": {
@@ -1106,10 +1139,11 @@
          ],
          "handoffReason": "policy_not_covered",
          "model": "claude-haiku-5-5",
-         "promptVersion": "v1.1",
-         "latencyMs": 6400,
-         "inputTokens": 7200,
-         "outputTokens": 90
+         "promptVersion": "v1.5",
+         "latencyMs": 300,
+         "inputTokens": 0,
+         "outputTokens": 0,
+         "handoffOffer": null
         },
         "modeAfter": "needs_human"
        }
@@ -1118,7 +1152,7 @@
       "stockAfter": {}
      },
      "model": "claude-haiku-5-5",
-     "promptVersion": "v1.1",
+     "promptVersion": "v1.5",
      "wallMs": 0,
      "tokens": {
       "input": 0,
@@ -1174,15 +1208,18 @@
         "shopper": "",
         "productId": null,
         "httpStatus": 200,
-        "status": "handed_off",
+        "status": "answered",
         "error": null,
         "wallMs": 8300,
         "replies": [
          {
-          "sender": "system",
-          "text": "Dạ, mình đã chuyển câu hỏi của bạn cho nhân viên shop. Nhân viên sẽ trả lời bạn sớm nhé!",
+          "sender": "ai",
+          "text": "Dạ, chính sách giao hàng của shop chưa nói về giao hàng vào Chủ nhật nên mình chưa trả lời chắc được ạ. Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?",
           "products": [],
-          "quickReplies": []
+          "quickReplies": [
+           "Có, gặp nhân viên",
+           "Không cần"
+          ]
          }
         ],
         "aiTurn": {
@@ -1198,7 +1235,37 @@
             "kind": "giao_hang",
             "content": "Giao toàn quốc. Nội thành TP.HCM 1–2 ngày, phí 20.000đ. Tỉnh khác 3–5 ngày, phí 30.000đ. Miễn phí giao hàng cho đơn từ 500.000đ. Thanh toán khi nhận hàng (COD), được xem hàng trước khi trả tiền."
            }
-          },
+          }
+         ],
+         "handoffReason": null,
+         "model": "claude-haiku-5-5",
+         "promptVersion": "v1.5",
+         "latencyMs": 7600,
+         "inputTokens": 7200,
+         "outputTokens": 90,
+         "handoffOffer": "policy_not_covered"
+        },
+        "modeAfter": "ai"
+       },
+       {
+        "shopper": "",
+        "productId": null,
+        "httpStatus": 200,
+        "status": "handed_off",
+        "error": null,
+        "wallMs": 900,
+        "replies": [
+         {
+          "sender": "system",
+          "text": "Dạ, mình đã chuyển câu hỏi của bạn cho nhân viên shop. Nhân viên sẽ trả lời bạn sớm nhé!",
+          "products": [],
+          "quickReplies": []
+         }
+        ],
+        "aiTurn": {
+         "id": "00000000-0000-4000-8000-00670000000f",
+         "createdAt": "2026-11-11T09:02:12.000Z",
+         "toolCalls": [
           {
            "name": "handoff_to_staff",
            "input": {
@@ -1211,10 +1278,11 @@
          ],
          "handoffReason": "policy_not_covered",
          "model": "claude-haiku-5-5",
-         "promptVersion": "v1.1",
-         "latencyMs": 7600,
-         "inputTokens": 7200,
-         "outputTokens": 90
+         "promptVersion": "v1.5",
+         "latencyMs": 300,
+         "inputTokens": 0,
+         "outputTokens": 0,
+         "handoffOffer": null
         },
         "modeAfter": "needs_human"
        }
@@ -1223,7 +1291,7 @@
       "stockAfter": {}
      },
      "model": "claude-haiku-5-5",
-     "promptVersion": "v1.1",
+     "promptVersion": "v1.5",
      "wallMs": 0,
      "tokens": {
       "input": 0,
@@ -1562,15 +1630,18 @@
         "shopper": "",
         "productId": null,
         "httpStatus": 200,
-        "status": "handed_off",
+        "status": "answered",
         "error": null,
         "wallMs": 6700,
         "replies": [
          {
-          "sender": "system",
-          "text": "Dạ, số đo của bạn nằm ngoài bảng size của shop nên mình chưa tư vấn được size. Mình đã chuyển câu hỏi của bạn cho nhân viên shop, nhân viên sẽ trả lời bạn sớm nhé!",
+          "sender": "ai",
+          "text": "Dạ, số đo của bạn nằm ngoài bảng size của sản phẩm này nên mình chưa tư vấn được size. Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?",
           "products": [],
-          "quickReplies": []
+          "quickReplies": [
+           "Có, gặp nhân viên",
+           "Không cần"
+          ]
          }
         ],
         "aiTurn": {
@@ -1587,7 +1658,37 @@
            "output": {
             "status": "out_of_range"
            }
-          },
+          }
+         ],
+         "handoffReason": null,
+         "model": "claude-haiku-5-5",
+         "promptVersion": "v1.5",
+         "latencyMs": 6000,
+         "inputTokens": 9800,
+         "outputTokens": 260,
+         "handoffOffer": "size_out_of_range"
+        },
+        "modeAfter": "ai"
+       },
+       {
+        "shopper": "",
+        "productId": null,
+        "httpStatus": 200,
+        "status": "handed_off",
+        "error": null,
+        "wallMs": 900,
+        "replies": [
+         {
+          "sender": "system",
+          "text": "Dạ, số đo của bạn nằm ngoài bảng size của shop nên mình chưa tư vấn được size. Mình đã chuyển câu hỏi của bạn cho nhân viên shop, nhân viên sẽ trả lời bạn sớm nhé!",
+          "products": [],
+          "quickReplies": []
+         }
+        ],
+        "aiTurn": {
+         "id": "00000000-0000-4000-8000-00770000000f",
+         "createdAt": "2026-11-11T09:02:57.000Z",
+         "toolCalls": [
           {
            "name": "handoff_to_staff",
            "input": {
@@ -1600,10 +1701,11 @@
          ],
          "handoffReason": "size_out_of_range",
          "model": "claude-haiku-5-5",
-         "promptVersion": "v1.1",
-         "latencyMs": 6000,
-         "inputTokens": 9800,
-         "outputTokens": 260
+         "promptVersion": "v1.5",
+         "latencyMs": 300,
+         "inputTokens": 0,
+         "outputTokens": 0,
+         "handoffOffer": null
         },
         "modeAfter": "needs_human"
        }
@@ -1612,7 +1714,7 @@
       "stockAfter": {}
      },
      "model": "claude-haiku-5-5",
-     "promptVersion": "v1.1",
+     "promptVersion": "v1.5",
      "wallMs": 0,
      "tokens": {
       "input": 0,
@@ -2387,46 +2489,40 @@
         "shopper": "",
         "productId": null,
         "httpStatus": 200,
-        "status": "handed_off",
+        "status": "answered",
         "error": null,
         "wallMs": 6700,
         "replies": [
          {
-          "sender": "system",
-          "text": "Dạ, mình đã chuyển câu hỏi của bạn cho nhân viên shop. Nhân viên sẽ trả lời bạn sớm nhé!",
+          "sender": "ai",
+          "text": "Dạ, mô tả của váy chưa nói vải có co giãn hay không nên mình chưa trả lời chắc được ạ. Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?",
           "products": [],
-          "quickReplies": []
+          "quickReplies": [
+           "Có, gặp nhân viên",
+           "Không cần"
+          ]
          }
         ],
         "aiTurn": {
          "id": "00000000-0000-4000-8000-009800000007",
          "createdAt": "2026-11-11T09:03:36.000Z",
-         "toolCalls": [
-          {
-           "name": "handoff_to_staff",
-           "input": {
-            "reason": "not_covered_by_data"
-           },
-           "output": {
-            "mode": "needs_human"
-           }
-          }
-         ],
-         "handoffReason": "not_covered_by_data",
+         "toolCalls": [],
+         "handoffReason": null,
          "model": "claude-haiku-5-5",
-         "promptVersion": "v1.1",
+         "promptVersion": "v1.5",
          "latencyMs": 6000,
          "inputTokens": 7200,
-         "outputTokens": 90
+         "outputTokens": 90,
+         "handoffOffer": "not_covered_by_data"
         },
-        "modeAfter": "needs_human"
+        "modeAfter": "ai"
        }
       ],
       "orders": [],
       "stockAfter": {}
      },
      "model": "claude-haiku-5-5",
-     "promptVersion": "v1.1",
+     "promptVersion": "v1.5",
      "wallMs": 0,
      "tokens": {
       "input": 0,

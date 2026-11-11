@@ -211,6 +211,30 @@ export function modeCheck(turn: TurnRecord | undefined, expected: "ai" | "needs_
   return check(`Cuộc trò chuyện ở chế độ ${expected}`, turn?.modeAfter === expected, `đang ở ${turn?.modeAfter ?? "?"}`);
 }
 
+// PB-31 soft handoff (handoff-offer.ts; server-only, so copied here).
+export const OFFER_QUESTION = "Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?";
+export const OFFER_YES = "Có, gặp nhân viên";
+export const OFFER_NO = "Không cần";
+
+// The turn offered staff for `reason` instead of handing off: it asks the offer
+// question with the Có / Không quick replies, keeps the reason in
+// ai_turns.handoff_offer, and the conversation stays with the AI.
+export function offerChecks(turn: TurnRecord | undefined, reason: NonNullable<AiTurn["handoffReason"]>): CheckResult[] {
+  const offer = turn?.aiTurn?.handoffOffer;
+  const quick = turn?.replies.flatMap((r) => r.quickReplies) ?? [];
+  return [
+    check("Hỏi khách có muốn gặp nhân viên không", !!turn && says(replyText(turn), OFFER_QUESTION), "không có câu hỏi offer"),
+    check(`Có nút “${OFFER_YES}” / “${OFFER_NO}”`, quick.includes(OFFER_YES) && quick.includes(OFFER_NO), `nút: ${quick.join(", ") || "không có"}`),
+    check(
+      `handoff_offer = ${reason}`,
+      offer === reason,
+      offer === undefined ? "ai_turns chưa có cột handoff_offer (chưa chạy migration PB-31)" : `nhận ${offer ?? "null"}`,
+    ),
+    handoffCheck(turn, null),
+    modeCheck(turn, "ai"),
+  ];
+}
+
 // ---------- infra errors ----------
 
 // Why this turn says nothing about the AI (the deployment failed), or null.

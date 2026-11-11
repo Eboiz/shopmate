@@ -41,6 +41,9 @@ export type AiTurn = {
   createdAt: string;
   toolCalls: ToolCall[];
   handoffReason: HandoffReason | null;
+  // PB-31: the reason the turn offered staff (soft handoff), null when it made no offer.
+  // Undefined: the database has no ai_turns.handoff_offer column yet (before PB-31).
+  handoffOffer?: HandoffReason | null;
   model: string | null;
   promptVersion: string | null;
   latencyMs: number;

@@ -214,7 +214,7 @@ async function liveSetup(): Promise<{ snapshot: ShopSnapshot; transport: Transpo
     for (let i = 0; i < (wait ? 15 : 1); i++) {
       const rows = must(
         await db.from("ai_turns")
-          .select("id, created_at, tool_calls, handoff_reason, model, prompt_version, latency_ms, input_tokens, output_tokens")
+          .select("*") // "*": ai_turns.handoff_offer exists only once PB-31 is migrated
           .eq("shop_id", shop!.id).eq("conversation_id", session.conversationId!).order("created_at"),
         "ai_turns",
       );
@@ -224,6 +224,7 @@ async function liveSetup(): Promise<{ snapshot: ShopSnapshot; transport: Transpo
         const r = fresh.at(-1)!;
         return {
           id: r.id, createdAt: r.created_at, toolCalls: (r.tool_calls ?? []) as AiTurn["toolCalls"], handoffReason: r.handoff_reason,
+          handoffOffer: (r as { handoff_offer?: AiTurn["handoffReason"] }).handoff_offer,
           model: r.model, promptVersion: r.prompt_version, latencyMs: r.latency_ms, inputTokens: r.input_tokens, outputTokens: r.output_tokens,
         };
       }

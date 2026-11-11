@@ -16,6 +16,9 @@ import {
   lastTurn,
   modeCheck,
   noUnbackedDiscount,
+  OFFER_QUESTION,
+  OFFER_YES,
+  offerChecks,
   productsNamed,
   questionCount,
   reasonOverlap,
@@ -98,7 +101,7 @@ function availabilityChecks(d: CaseData, run: RunRecord, p: SnapshotProduct, v: 
   ];
 }
 
-function handoffCase(run: RunRecord, reason: "complaint" | "asked_for_human" | "not_covered_by_data" | "policy_not_covered") {
+function handoffCase(run: RunRecord, reason: "complaint" | "asked_for_human" | "not_covered_by_data" | "policy_not_covered" | "size_out_of_range") {
   const t = lastTurn(run);
   return [
     handoffCheck(t, reason),
@@ -107,7 +110,16 @@ function handoffCase(run: RunRecord, reason: "complaint" | "asked_for_human" | "
   ];
 }
 
-const ORDER_INFO = "Tên Nguyễn Thu Thảo, SĐT 0912345678, địa chỉ 12 Lê Lợi, Quận 1, TP.HCM.";
+// PB-31: the AI first offers staff (soft handoff); the shopper taps “Có, gặp nhân
+// viên” and the handoff carries the reason the offer was made for.
+function offerThenAccept(run: RunRecord, reason: "not_covered_by_data" | "policy_not_covered" | "size_out_of_range") {
+  return [
+    ...offerChecks(turnAt(run, 0), reason).map((c) => ({ ...c, label: `Lượt 1: ${c.label}` })),
+    ...handoffCase(run, reason).map((c) => ({ ...c, label: `Lượt 2 (${OFFER_YES}): ${c.label}` })),
+  ];
+}
+
+const ORDER_INFO ="Tên Nguyễn Thu Thảo, SĐT 0912345678, địa chỉ 12 Lê Lợi, Quận 1, TP.HCM.";
 const CONFIRM: TurnSpec = { text: "Đồng ý nhé", skipIfOrder: true };
 
 export const liveCases: LiveCase[] = [
@@ -216,10 +228,10 @@ export const liveCases: LiveCase[] = [
     id: "pb09-notcovered",
     issue: "PB-09",
     group: 1,
-    title: "Hỏi giao Chủ nhật (chính sách không nói): chuyển nhân viên policy_not_covered",
-    turns: ["Shop có giao hàng vào Chủ nhật không?"],
+    title: "Hỏi giao Chủ nhật (chính sách không nói): hỏi khách có muốn gặp nhân viên, khách chọn Có thì chuyển policy_not_covered (PB-31)",
+    turns: ["Shop có giao hàng vào Chủ nhật không?", OFFER_YES],
     precondition: (d) => (says(d.snapshot.policies.giao_hang, "chu nhat") ? "Chính sách giao hàng có nói Chủ nhật" : null),
-    check: (_d, run) => handoffCase(run, "policy_not_covered"),
+    check: (_d, run) => offerThenAccept(run, "policy_not_covered"),
   },
 
   // ---------------- group 2: PB-09 discount, PB-06, PB-08 (18) ----------------
@@ -280,17 +292,15 @@ export const liveCases: LiveCase[] = [
     id: "pb06-size-out",
     issue: "PB-06",
     group: 2,
-    title: "Cao 1m80 nặng 75kg: ngoài bảng size, nói rõ và chuyển nhân viên",
+    title: "Cao 1m80 nặng 75kg: ngoài bảng size, nói rõ, hỏi khách có muốn gặp nhân viên, chọn Có thì chuyển (PB-31)",
     viewing: LINEN,
-    turns: ["Mình cao 1m80 nặng 75kg mặc size nào?"],
+    turns: ["Mình cao 1m80 nặng 75kg mặc size nào?", OFFER_YES],
     precondition: (d) => sizePrecondition(d, 180, 75, "out"),
     check: (_d, run) => {
-      const t = lastTurn(run);
-      const text = t ? replyText(t) : "";
+      const first = turnAt(run, 0);
       return [
-        handoffCheck(t, "size_out_of_range"),
-        check("Nói số đo nằm ngoài bảng size", says(text, "ngoai bang size"), "không nói ngoài bảng size"),
-        modeCheck(t, "needs_human"),
+        check("Nói số đo nằm ngoài bảng size", !!first && says(replyText(first), "ngoai bang size"), "không nói ngoài bảng size"),
+        ...offerThenAccept(run, "size_out_of_range"),
       ];
     },
   },
@@ -456,11 +466,27 @@ export const liveCases: LiveCase[] = [
     id: "pb14-fabric",
     issue: "PB-14",
     group: 3,
-    title: "Hỏi vải có co giãn (dữ liệu không có): chuyển nhân viên ngay (not_covered_by_data)",
+    title: "Hỏi vải có co giãn: mô tả sản phẩm có nói thì trả lời theo mô tả, không có thì hỏi khách có muốn gặp nhân viên (PB-31)",
     viewing: LINEN,
     turns: ["vải này có co giãn không?"],
-    precondition: (d) => needs(d.viewing, LINEN) ?? (notCovered(d.viewing!.description ?? "") ? null : "Mô tả váy có nói co giãn"),
-    check: (_d, run) => handoffCase(run, "not_covered_by_data"),
+    precondition: (d) => needs(d.viewing, LINEN),
+    check: (d, run) => {
+      const description = d.viewing!.description ?? "";
+      const t = lastTurn(run);
+      if (notCovered(description)) return offerChecks(t, "not_covered_by_data");
+      const stretchy = !says(description, "khong co gian");
+      const text = t ? replyText(t) : "";
+      return [
+        check(
+          stretchy ? "Nói vải co giãn (theo mô tả)" : "Nói vải không co giãn (theo mô tả)",
+          stretchy ? says(text, "co gian") && !says(text, "khong co gian") : says(text, "khong co gian"),
+          "câu trả lời không khớp mô tả sản phẩm",
+        ),
+        check("Không hỏi chuyển nhân viên", !says(text, OFFER_QUESTION), "vẫn hỏi chuyển nhân viên dù mô tả có nói"),
+        handoffCheck(t, null),
+        modeCheck(t, "ai"),
+      ];
+    },
   },
 
   // ---------------- group 4: PB-14 auto-resume, PB-17 (12) ----------------
