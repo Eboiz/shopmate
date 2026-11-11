@@ -22,6 +22,7 @@ import {
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { POLICY_HAS_TEXT_ERROR } from "./handoff-guard";
+import { NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
@@ -967,6 +968,59 @@ describe("runEngine", () => {
       expect(res.is_error).toBe(true);
       expect(JSON.parse(res.content as string)).toMatchObject({ error: "product_not_found" });
       expect(result.handoffReason).toBeNull();
+    });
+  });
+
+  describe("number check before sending (PB-07)", () => {
+    const stockHistory = [{ sender: "shopper" as const, text: "váy này giá bao nhiêu?" }];
+
+    it("wrong price is rewritten once", async () => {
+      const { model, store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
+        reply("Dạ váy giá 350.000đ ạ", [PRODUCT]),
+      ]);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(model.calls).toHaveLength(3);
+      expect(model.calls[2].messages.at(-1)).toEqual({ role: "user", content: NUMBER_RETRY_NOTE });
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe("Dạ váy giá 350.000đ ạ");
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
+    });
+
+    it("wrong price twice sends the product card, hands off postcheck_failed and logs postcheck.numberCheck", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
+        reply("Dạ váy giá 390k ạ", [PRODUCT]),
+      ]);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(result.handoffReason).toBe("postcheck_failed");
+      expect(result.output.reply.text).toBe(NUMBER_HANDOFF_TEXT);
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+      expect(store.setNeedsHuman).toHaveBeenCalled();
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: ["390k"], retried: true } });
+    });
+
+    it("a reply with the tool's price is sent without a rewrite and logs no numberCheck", async () => {
+      const { model, store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 350k ạ", [PRODUCT]),
+      ]);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(model.calls).toHaveLength(2);
+      expect(result.handoffReason).toBeNull();
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false });
+    });
+
+    it("staff_draft replies are not checked", async () => {
+      const { model, run } = setup([reply("Váy giá 390k ạ")], { deps: { staffShopId: SHOP_A } });
+      const result = await run(staffInput());
+      expect(model.calls).toHaveLength(1);
+      expect(result.output.reply.text).toBe("Váy giá 390k ạ");
     });
   });
 

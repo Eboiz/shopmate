@@ -24,6 +24,8 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model
 import { checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
+import { findUncheckedNumbers, NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import type { PostcheckLog } from "./postcheck-log";
 import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
@@ -273,6 +275,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
+  // PB-07: prices and stock in a model-written reply must be the tools'. One
+  // rewrite; a second mismatch hands off with the product card (numberBlocked).
+  let numberCheck: PostcheckLog["numberCheck"];
+  let numberBlocked = false;
+  const shopperText = shopperTurnText(input.history);
+  const uncheckedNumbers = (text: string) =>
+    mode === "customer" ? findUncheckedNumbers(text, logs, shopperText).map((issue) => issue.raw) : [];
   const previousQuote = tc.previousQuote ?? null;
   let currentQuote: PendingQuote | null = null;
   let orderResult: ToolOutput<"create_draft_order"> | null = null;
@@ -433,6 +442,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             reply = { text: DISCOUNT_HANDOFF_TEXT, products: [], quickReplies: [] };
             break;
           }
+          const unchecked = uncheckedNumbers(parsed.reply.text);
+          if (unchecked.length > 0 || numberCheck) numberCheck = { failed: unchecked, retried: numberCheck !== undefined };
+          if (unchecked.length > 0) {
+            if (canRetry) {
+              task = `${write.task}\n${NUMBER_RETRY_NOTE}`;
+              continue;
+            }
+            numberBlocked = true;
+            handoff = "postcheck_failed";
+            await deps.store.setNeedsHuman(ctx);
+            const ids = tc.product ? [tc.product.id] : write.productIds;
+            reply = { text: NUMBER_HANDOFF_TEXT, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+            break;
+          }
           finalFirstTokenAt = firstTokenAt;
           // Cards are the server's choice (graded by PB-10), never the model's ids.
           reply = {
@@ -517,6 +540,23 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
           continue;
         }
         discountBlocked = true;
+      }
+      // PB-07: only a reply the model wrote is checked; an order summary, a size
+      // fallback or a pairing reply is written by the server from tool data.
+      const serverWrites = orderResult !== null || currentQuote !== null || orderIssue !== null
+        || sizeFallback || pairingState.called || isMatchingQuestion(input.history);
+      if (!discountBlocked && modelReply && !serverWrites) {
+        const unchecked = uncheckedNumbers(modelReply.text);
+        const retried = numberCheck !== undefined;
+        if (unchecked.length > 0 || retried) numberCheck = { failed: unchecked, retried };
+        if (unchecked.length > 0 && !retried) {
+          messages.push(
+            { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+            { role: "user", content: NUMBER_RETRY_NOTE },
+          );
+          continue;
+        }
+        numberBlocked = unchecked.length > 0;
       }
       break;
     }
@@ -645,7 +685,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
     && answersAiMessage(input.history) && productMiss;
   if (productMissedTwice) handoff = "misunderstood_twice";
-  else if (discountBlocked) handoff = "postcheck_failed";
+  else if (discountBlocked || numberBlocked) handoff = "postcheck_failed";
 
   // PB-06 AC4: measurements outside the chart, or a product with no chart, always
   // end in a handoff, even when the model answered instead of calling
@@ -683,10 +723,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice || sizeHandoff) await deps.store.setNeedsHuman(ctx);
     const text = productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
-      : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
-    const products = (handoff === "postcheck_failed" && tc.product)
-      ? await deps.store.productCards(ctx.shopId, [tc.product.id])
-      : [];
+      : discountBlocked ? DISCOUNT_HANDOFF_TEXT
+      : numberBlocked ? NUMBER_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
+    // PB-07: the numbers the shopper gets come from the database card, not the
+    // model's text: the viewed product, else the products the reply was about.
+    const cardIds = handoff !== "postcheck_failed" ? []
+      : tc.product ? [tc.product.id]
+      : numberBlocked ? (modelReply?.productIds ?? []) : [];
+    const products = cardIds.length > 0 ? await deps.store.productCards(ctx.shopId, cardIds) : [];
     reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
@@ -803,7 +847,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         latency_ms: latencyMs,
         tool_calls: logs as NonNullable<Json>,
         handoff_reason: handoff,
-        postcheck: { productMiss },
+        postcheck: { productMiss, ...(numberCheck ? { numberCheck } : {}) } satisfies PostcheckLog,
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         ttft_ms: metrics.ttftMs,

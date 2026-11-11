@@ -5,6 +5,7 @@ import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { HANDOFF_TEXT, PRODUCT_NOT_FOUND_HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
 import { FALLBACK_TEXT } from "./model-reply";
 import type { JevClient, JevResponse } from "./jev";
+import { NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import type { TurnMetrics } from "./metrics";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
@@ -173,6 +174,29 @@ describe("runEngine with Jev routing", () => {
     expect(model.calls).toHaveLength(2);
     expect(result.handoffReason).toBe("postcheck_failed");
     expect(result.output.reply.text).toBe(DISCOUNT_HANDOFF_TEXT);
+    expect(store.setNeedsHuman).toHaveBeenCalled();
+  });
+
+  it("router write with a wrong stock number is rewritten (PB-07)", async () => {
+    const { model, store, run } = setup(jevSaying({}), [
+      reply("Dạ size M màu be còn 3 cái, giá 389.000đ ạ"),
+      reply("Dạ size M màu be còn 7 cái, giá 389.000đ ạ"),
+    ]);
+    const result = await run(input("size M màu be còn không?"));
+    expect(model.calls).toHaveLength(2);
+    expect(JSON.stringify(model.calls[1].system)).toContain(NUMBER_RETRY_NOTE);
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toContain("còn 7 cái");
+    await result.turnLogged;
+    expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
+  });
+
+  it("router write with a wrong price twice sends the card and hands off (PB-07)", async () => {
+    const { store, run } = setup(jevSaying({}), [reply("Dạ váy giá 350k ạ"), reply("Dạ váy giá 350k ạ")]);
+    const result = await run(input("váy này giá bao nhiêu?"));
+    expect(result.handoffReason).toBe("postcheck_failed");
+    expect(result.output.reply.text).toBe(NUMBER_HANDOFF_TEXT);
+    expect(result.output.reply.products.map((p) => p.productId)).toEqual([VAY]);
     expect(store.setNeedsHuman).toHaveBeenCalled();
   });
 
