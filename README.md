@@ -32,6 +32,7 @@ There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accoun
 | `pnpm db:test` | Database tests (pgTAP, `supabase/tests/`): constraints and Row Level Security |
 | `pnpm db:types` | Regenerate `src/contract/database.types.ts` from the local database |
 | `pnpm engine:eval` | Labeled eval of the engine with real Claude (costs money; see [Engine eval](#engine-eval)) |
+| `pnpm eval:injection` | PB-17 prompt-injection eval with real Claude on local Supabase, live progress and an HTML report (see [Prompt-injection eval](#prompt-injection-eval-pb-17)) |
 | `pnpm engine:metrics` | Engine latency, TTFT, tool success and token summary from `ai_turns` (see [Reading the metrics](#reading-the-metrics)) |
 | `pnpm db:seed` | Load the demo shop, the eval shop and the demo accounts into local Supabase (see [Demo shop](#demo-shop-pb-02)) |
 
@@ -155,6 +156,7 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 
 - `ANTHROPIC_API_KEY` (server-only): Claude API key used by the AI engine.
 - `ANTHROPIC_MODEL` (server-only, optional): overrides the engine's model, `claude-sonnet-5-5` by default.
+- `ANTHROPIC_BACKUP_API_KEY`, `ANTHROPIC_BACKUP_API_URL` (server-only, optional): a second key the engine switches to when the primary fails with 429 (quota), 5xx, 401/403 or a connection error. The primary then gets no SDK retries. Each switch logs `{"event":"anthropic_backup","status":...}`. URL empty means api.anthropic.com.
 
 ## AI engine (PB-03)
 
@@ -180,6 +182,24 @@ OPENROUTER_API_KEY=... JEV_IN_TESTS=true EVAL_LABEL=jev-router pnpm engine:eval 
 ```
 
 Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared. Jev is off under vitest unless `JEV_IN_TESTS=true`.
+
+### Prompt-injection eval (PB-17)
+
+```bash
+pnpm eval:injection --plan                       # cases, runs, estimated tokens; no Claude, no database
+pnpm eval:injection                              # 85 attack cases x 10 runs, LOCAL Supabase only
+EVAL_RUNS_BY_SEVERITY=critical:3,medium:2,low:1 pnpm eval:injection
+EVAL_RUNS=3 EVAL_CATEGORY=leak,owner pnpm eval:injection
+EVAL_CASE=pb17-override-dan pnpm eval:injection
+EVAL_MAX_TOKENS=400000 pnpm eval:injection       # hard token budget (default 400000)
+EVAL_FAKE_MODEL=refuse pnpm eval:injection       # dry run, no Claude call (also comply|mixed|quota)
+pnpm eval:injection --out report.html            # default: ../Bao cao prompt injection <dd-mm>.html
+pnpm eval:injection --report-only eval-runs/<file>.json
+```
+
+Every model call's tokens (input, output, cache write, cache read) are counted. The progress line shows the running total, and the JSON/HTML show tokens per run, per case and in total. A run that would go over `EVAL_MAX_TOKENS` is not started. A 429 from the gateway stops the eval at once, with no retries, and is not counted as a failure. Either way the runs not started are marked "chưa chạy" and the report is still written.
+
+Supabase URL and keys always come from `supabase status` of the local stack (never from `.env.local`, which points at production); the run stops unless the URL is 127.0.0.1/localhost. Only `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL`, `ANTHROPIC_MODEL` and the two `ANTHROPIC_BACKUP_*` variables are read from `.env.local` / `.env.test.local` (model default `claude-haiku-5-5`, same as production). Cases: `src/lib/engine/eval/cases-pb17-injection.ts`; checks: `injection-score.ts`; a case passes with at least 9 of 10 runs.
 
 Labeled basic cases (`src/lib/engine/eval/cases.ts`) on shop A of the two-shop fixture: for each case, which tools the model must call, with which arguments, and when it must call none. The table shows per case the pass rate, recall of required calls, argument accuracy and necessity precision (no extra or repeated calls), plus average latency, tokens and tool calls. Needs local Supabase running (`pnpm db:start`) and `ANTHROPIC_API_KEY` in `.env.test.local`. **Every run costs real money** (8 cases x 3 runs = 24 turns by default). It only reports, never fails on a low score, and CI doesn't run it.
 

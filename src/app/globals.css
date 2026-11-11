@@ -28,7 +28,8 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { background: var(--background); color: var(--foreground); font-family: var(--font-ui), Arial, Helvetica, sans-serif; font-synthesis: none; letter-spacing: -.01em; }
-button, input, textarea, select { font: inherit; }
+/* Layered so Tailwind text-* / font-* utilities on controls still win. */
+@layer base { button, input, textarea, select { font: inherit; } }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 ::selection { background: #f6b7a8; color: #171717; }
@@ -47,6 +48,10 @@ button:disabled { cursor: not-allowed; }
 .ui-marquee { display: flex; width: max-content; animation: ui-marquee 28s linear infinite; }
 .ui-marquee:hover { animation-play-state: paused; }
 .ui-chat-enter { animation: ui-chat .28s cubic-bezier(.2,.8,.2,1) both; }
+/* Chat: rises in on phones (full screen), slides in from the right edge above. */
+.ui-drawer { animation: ui-chat .28s cubic-bezier(.2,.8,.2,1) both; }
+@media (min-width: 640px) { .ui-drawer { animation-name: ui-drawer; } }
+@keyframes ui-drawer { from { transform: translateX(100%); } to { transform: translateX(0); } }
 @keyframes ui-rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes ui-marquee { to { transform: translateX(-50%); } }
 @keyframes ui-chat { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }

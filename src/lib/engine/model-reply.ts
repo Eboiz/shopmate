@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { idSchema, modelReplySchema, quickReplySchema, type ModelReply } from "@/contract";
+import { VIEWING_PRODUCT_REF } from "./prompt";
 
 export const FALLBACK_TEXT = "Dạ, bạn nói rõ hơn giúp mình được không ạ?";
 
@@ -73,7 +74,7 @@ export function parseModelReply(raw: string): { reply: ModelReply; ok: boolean }
   }
   const list = (v: unknown) => (Array.isArray(v) ? v : []);
   const productIds = [
-    ...new Set(list(value?.productIds).filter((id): id is string => idSchema.safeParse(id).success)),
+    ...new Set(list(value?.productIds).filter((id): id is string => id === VIEWING_PRODUCT_REF || idSchema.safeParse(id).success)),
   ].slice(0, MAX_ITEMS);
   const quickReplies = list(value?.quickReplies)
     .flatMap((q) => {
