@@ -57,6 +57,7 @@ function fakeStore(context: TurnContext = { conversation: { shopId: SHOP_A, mode
     setNeedsHuman: vi.fn<EngineStore["setNeedsHuman"]>(async () => {}),
     setAiMode: vi.fn<NonNullable<EngineStore["setAiMode"]>>(async () => {}),
     insertTurn: vi.fn<EngineStore["insertTurn"]>(async () => "turn-1"),
+    catalog: vi.fn<NonNullable<EngineStore["catalog"]>>(async () => []),
   };
 }
 
@@ -142,6 +143,39 @@ describe("runEngine", () => {
     expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
     expect(result.handoffReason).toBeNull();
     expect(result.output.personalReplyNeeded).toBe(false);
+  });
+
+  it("quick replies naming products the shop lacks are dropped", async () => {
+    const store = fakeStore();
+    store.catalog.mockResolvedValue([
+      { id: PRODUCT, name: "Áo khoác bomber", category: "Áo khoác", colors: ["đen"], sizes: ["M"] },
+    ]);
+    const { run } = setup([
+      finalJson({
+        text: "Dạ shop có áo khoác bomber ạ",
+        productIds: [PRODUCT],
+        quickReplies: ["Áo khoác da nam", "Xem bomber"],
+      }),
+    ], { store });
+    const result = await run(customerInput());
+    expect(result.output.reply.quickReplies).toEqual(["Xem bomber"]);
+  });
+
+  it("a failing catalog read does not lose the reply: only quick replies without a garment word stay", async () => {
+    const store = fakeStore();
+    store.catalog.mockRejectedValue(new Error("catalog down"));
+    const { run } = setup([
+      finalJson({
+        text: "Dạ còn hàng ạ",
+        productIds: [],
+        quickReplies: ["Áo khoác da nam", "Hỏi nhân viên"],
+      }),
+    ], { store });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await run(customerInput());
+    expect(result.output.reply.text).toBe("Dạ còn hàng ạ");
+    expect(result.output.reply.quickReplies).toEqual(["Hỏi nhân viên"]);
+    error.mockRestore();
   });
 
   describe("PB-11 ordering in chat", () => {
@@ -1024,7 +1058,7 @@ describe("runEngine", () => {
     await run(customerInput({ productId: PRODUCT }));
     expect(store.loadTurnContext).toHaveBeenCalledTimes(1);
     expect(store.loadTurnContext).toHaveBeenCalledWith({ conversationId: CONV, shopId: null, productId: PRODUCT });
-    expect(Object.keys(store).sort()).toEqual(["insertTurn", "loadTurnContext", "productCards", "setAiMode", "setNeedsHuman"]);
+    expect(Object.keys(store).sort()).toEqual(["catalog", "insertTurn", "loadTurnContext", "productCards", "setAiMode", "setNeedsHuman"]);
     expect(order).toEqual(["model", "model", "productCards"]);
   });
 

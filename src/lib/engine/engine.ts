@@ -27,6 +27,7 @@ import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstoo
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION } from "./prompt";
+import { filterQuickReplies, type QuickReply } from "./quick-replies";
 import { routeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
@@ -203,6 +204,28 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     ctx = { shopId: deps.staffShopId!, conversationId: null };
   }
 
+  // The shop's catalogue: read at most once per turn, shared by the Jev router
+  // and the quick-reply check.
+  let turnCatalog: CatalogItem[] | null = null;
+  const loadCatalog = async (): Promise<CatalogItem[]> => {
+    if (turnCatalog === null) turnCatalog = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
+    return turnCatalog;
+  };
+  // PB-05: customer quick replies only name what the shop sells (staff_draft is
+  // unchanged). No quick replies, no catalogue read. A failed read must not
+  // lose the reply: filter against an empty catalogue, which keeps only the
+  // replies that name no garment.
+  const customerQuickReplies = async (replies: QuickReply[]): Promise<QuickReply[]> => {
+    if (mode !== "customer" || replies.length === 0) return replies;
+    try {
+      return filterQuickReplies(replies, await loadCatalog());
+    } catch (e) {
+      console.error("engine: catalog read failed, filtering quick replies against an empty catalog", e);
+      turnCatalog ??= [];
+      return filterQuickReplies(replies, []);
+    }
+  };
+
   // Computed once per turn, never per loop: a stable prefix keeps the prompt cache.
   // toolDefinitions(mode) only ADVERTISES tools to the model; the gate is
   // toolsForMode(mode) inside executeTool. The two must match (see tools/index.ts).
@@ -264,7 +287,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
     };
     try {
-      const catalog: CatalogItem[] = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
+      const catalog = await loadCatalog();
       const decision = await decideTurn(deps.jev, { history: input.history, viewing: tc.product, catalog, now });
       route = {
         path: "router",
@@ -404,7 +427,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
           reply = {
             text: parsed.reply.text,
             products: await deps.store.productCards(ctx.shopId, write.productIds),
-            quickReplies: parsed.reply.quickReplies,
+            quickReplies: await customerQuickReplies(parsed.reply.quickReplies),
           };
           break;
         }
@@ -714,7 +737,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       text: modelReply.text,
       // Cards come from the database for this shop only; foreign ids drop out.
       products: await deps.store.productCards(ctx.shopId, modelReply.productIds),
-      quickReplies: modelReply.quickReplies,
+      quickReplies: await customerQuickReplies(modelReply.quickReplies),
     };
   }
   } // end of the LLM tool loop path
