@@ -41,8 +41,12 @@ const COLOR = "be";
 
 test("shopper asks for a size, orders in the chat, staff confirm, stock goes down", async ({ page, browser }) => {
   test.setTimeout(5 * 60_000);
-  // The nightly job's throwaway stack has no Claude key; this test needs the real AI.
-  test.skip(Boolean(process.env.CI) && !againstDeployment, "needs the real AI: run it against a preview with E2E_BASE_URL");
+  // This test needs the real AI. In CI only the nightly `ai` job (E2E_REAL_AI=1) gives
+  // the app a Claude key; the other jobs' throwaway stacks have none.
+  test.skip(
+    Boolean(process.env.CI) && !againstDeployment && !process.env.E2E_REAL_AI,
+    "needs the real AI: the nightly ai job runs it, or run it against a preview with E2E_BASE_URL",
+  );
 
   const staff = await (await browser.newContext({ viewport: { width: 375, height: 812 } })).newPage();
   await signIn(staff, "staff");
