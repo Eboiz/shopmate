@@ -29,9 +29,17 @@ describe("prompt", () => {
 
   it("customer prompt has the handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v1.1");
+    expect(PROMPT_VERSION).toBe("v1.2");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human", "not_covered_by_data", "misunderstood_twice"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
+  });
+
+  it("v1.2: policy text is answered, a discount ask is refused without a handoff", () => {
+    const customer = buildStablePrompt("customer");
+    expect(customer).toContain("policy_not_covered (trừ khi khách đòi giảm giá: xem dòng dưới)");
+    expect(customer).toContain("Kể cả khi khuyen_mai trống: từ chối lịch sự, không gọi handoff_to_staff.");
+    expect(customer).not.toContain("handoff_to_staff ngay với reason not_covered_by_data");
+    expect(customer).toContain("Câu hỏi về đổi trả, giao hàng, khuyến mãi thì gọi get_policy trước, không dùng reason này.");
   });
 
   it("requires the PB-11 confirmation and valid phone before a draft order", () => {

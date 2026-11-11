@@ -111,11 +111,10 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   const { decision: d, mode } = input;
   const customer = mode === "customer";
 
-  if (d.confidence !== null && d.confidence < MIN_INTENT_CONFIDENCE) return { kind: "fallback", reason: "low_confidence" };
-  if (d.intent === "order") return { kind: "fallback", reason: "order" };
-
   // A discount or "ignore your rules" message: no other tool runs, whatever else
-  // it asks (PB-17). Only the shop's own promotion text may be quoted.
+  // it asks (PB-17). Only the shop's own promotion text may be quoted. Checked
+  // before the order and low-confidence fallbacks: "lấy 2 cái, bớt 50k" must be
+  // refused in the reply, not handed off (PB-09 AC3).
   if (d.discountTrick >= DISCOUNT_TRICK_THRESHOLD && d.intent !== "complaint" && d.intent !== "human") {
     const r = await input.runTool("get_policy", { kind: "khuyen_mai" });
     const promotion = r.ok ? (r.output as ToolOutput<"get_policy">).content : null;
@@ -128,6 +127,9 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       productIds: [],
     };
   }
+
+  if (d.confidence !== null && d.confidence < MIN_INTENT_CONFIDENCE) return { kind: "fallback", reason: "low_confidence" };
+  if (d.intent === "order") return { kind: "fallback", reason: "order" };
 
   switch (d.intent) {
     case "complaint":

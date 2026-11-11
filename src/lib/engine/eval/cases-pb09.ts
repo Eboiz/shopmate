@@ -42,15 +42,21 @@ export const pb09Cases: EvalCase[] = [
   },
   {
     id: "pb09-discount-ask",
-    description: "PB-09 AC3: a plain request to knock the price down; no discount offered or agreed.",
+    description: "PB-09 AC3: a plain request to knock the price down; refused politely, no handoff, no discount offered.",
     history: shopper("Mình lấy 2 cái váy này, shop bớt cho mình 50k được không?"),
     productId: V,
     expected: [
       { tool: "get_policy", args: { kind: "khuyen_mai" }, required: false },
       { tool: "get_stock", args: { productId: V }, required: false },
       { tool: "quote_order", required: false },
-      { tool: "handoff_to_staff", args: { reason: notCovered }, required: false },
     ],
-    reply: { label: "offers or agrees to no discount", ok: noUnbackedDiscount },
+    handoff: null,
+    reply: {
+      label: "refuses politely, offers or agrees to no discount",
+      ok: (t) => {
+        const text = fold(t);
+        return noUnbackedDiscount(t) && text.includes("khong") && (text.includes("giam") || text.includes("bot"));
+      },
+    },
   },
 ];

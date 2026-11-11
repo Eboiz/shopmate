@@ -17,6 +17,7 @@ import { createDefaultModel } from "./anthropic-model";
 import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
+import { refusedHandoff, type RefusedHandoff } from "./handoff-guard";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
@@ -165,6 +166,16 @@ function blockedOrderRun(input: unknown, code: string, extra: object = {}): Tool
   return {
     log: { name: "create_draft_order", input, error: code },
     content: JSON.stringify({ error: code, ...extra }),
+    isError: true,
+  };
+}
+
+// PB-09 (F3, F4): a refused handoff is an error tool_result, so the model answers
+// from the data instead. isError means it is not counted as a handoff below.
+function refusedHandoffRun(input: unknown, refused: RefusedHandoff): ToolRun {
+  return {
+    log: { name: "handoff_to_staff", input, error: refused.code },
+    content: refused.message,
     isError: true,
   };
 }
@@ -554,6 +565,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             return { run: blockedOrderRun(u.input, "quote_changed"), ms: now() - s0, startMs: s0 - t0 };
           }
         }
+      }
+      // PB-09 (F3, F4): a handoff the shop's own data rules out is refused before
+      // the tool runs; the model gets the reason back and answers instead.
+      if (u.name === "handoff_to_staff" && mode === "customer") {
+        const refused = refusedHandoff(u.input, logs, input.history);
+        if (refused) return { run: refusedHandoffRun(u.input, refused), ms: now() - s0, startMs: s0 - t0 };
       }
       // recommend_size gets the height and weight the shopper actually wrote
       // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.

@@ -21,6 +21,7 @@ import {
 } from "./engine";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
+import { POLICY_HAS_TEXT_ERROR } from "./handoff-guard";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
 import { finalJson, scriptedModel, toolCalls, toolUse, type ScriptedResponse } from "./test/fake-model";
@@ -579,6 +580,22 @@ describe("runEngine", () => {
       expect(result.handoffReason).toBe("not_covered_by_data");
       expect(result.output.reply.text).toBe(HANDOFF_TEXT);
       expect(result.output.reply.text).not.toContain("bảng size");
+    });
+
+    it("not_covered_by_data after get_policy with text is refused as a tool error and the model's next reply is sent (PB-09 F3)", async () => {
+      const { handlers, model, store, run } = setup([
+        toolCalls(toolUse("get_policy", { kind: "doi_tra" })),
+        toolCalls(toolUse("handoff_to_staff", { reason: "not_covered_by_data" })),
+        reply("Dạ shop đổi trả trong 7 ngày ạ"),
+      ]);
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "đổi trả thế nào?" }] }));
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
+      const [r] = toolResults(model.calls[2]);
+      expect(r.is_error).toBe(true);
+      expect(r.content).toBe(POLICY_HAS_TEXT_ERROR);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe("Dạ shop đổi trả trong 7 ngày ạ");
     });
 
     it("question not covered by data (washing instructions) -> hands off with generic text", async () => {

@@ -215,6 +215,14 @@ describe("routeTurn", () => {
     expect((out as { task: string }).task).toContain("Từ chối");
   });
 
+  it("discount ask that reads like an order is refused by the router, not sent to the loop", async () => {
+    const { run, runTool } = setup({ get_policy: { ok: true, output: { kind: "khuyen_mai", content: null } } });
+    const out = await run({ decision: decision({ intent: "order", confidence: 0.4, discountTrick: 0.99 }) });
+    expect(runTool.mock.calls.map((c) => c[0])).toEqual(["get_policy"]);
+    expect(out).toMatchObject({ kind: "write", facts: { promotion: null }, productIds: [] });
+    expect((out as { task: string }).task).toContain("Từ chối");
+  });
+
   it("complaint, asking for a person, data not covered: customer hands off; staff gets personal/notes", async () => {
     expect(await setup().run({ decision: decision({ intent: "complaint" }) })).toMatchObject({ kind: "handoff", reason: "complaint" });
     expect(await setup().run({ decision: decision({ intent: "human" }) })).toMatchObject({ kind: "handoff", reason: "asked_for_human" });
