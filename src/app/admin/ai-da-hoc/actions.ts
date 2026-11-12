@@ -127,6 +127,7 @@ export async function draftTopics(): Promise<DraftResult> {
       .select("id, conversation_id, reason, question, status")
       .eq("shop_id", shopId)
       .in("reason", LEARNABLE_GAP_REASONS)
+      .is("product_id", null) // a product detail is learned from staff into its description, never drafted as a policy
       .in("status", ["open", "learned"])
       .gte("created_at", gapWindowStart())
       .order("created_at", { ascending: false });

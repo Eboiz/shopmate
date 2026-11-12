@@ -54,9 +54,11 @@ export function gapOfTurn(turn: GapTurn): Gap | null {
 
   // A policy question is about no product; otherwise the product on screen, or the
   // one product a search found.
-  let productId: string | null = null;
-  if (!readPolicy) productId = !aboutProductOnScreen && found.length === 1 ? found[0] : turn.productId;
-  return { reason: turn.offerMade, question, productId };
+  if (readPolicy) return { reason: turn.offerMade, question, productId: null };
+  const productId = !aboutProductOnScreen && found.length === 1 ? found[0] : turn.productId;
+  // A detail of no single known product has nowhere to be learned: product details
+  // come only from that product's description, never from a policy.
+  return productId === null ? null : { reason: turn.offerMade, question, productId };
 }
 
 // Product ids the turn's last successful search returned.

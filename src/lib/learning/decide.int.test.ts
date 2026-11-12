@@ -55,4 +55,13 @@ describe("owner decisions", () => {
     expect(await dismissGaps(db, B, [id])).toBe(0);
     expect(await dismissGaps(db, A, [id])).toBe(1);
   });
+
+  it("never turns a product detail question into a policy", async () => {
+    const { data } = await db
+      .from("data_gaps")
+      .insert({ shop_id: A, conversation_id: FX.a.conversation, reason: "not_covered_by_data", question: "Váy này chất gì?", product_id: FX.a.vay01 })
+      .select("id")
+      .single();
+    expect(await insertFromDraft(db, { shopId: A, userId: USER, gapIds: [data!.id], policyKind: "doi_tra", text: "Vải linen." })).toBe("no_questions");
+  });
 });

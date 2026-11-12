@@ -46,8 +46,13 @@ describe("learned facts in get_policy and product descriptions", () => {
     const vay = products.find((p) => p.productId === FX.a.vay01);
     expect(vay?.description?.endsWith("Vải linen, không co giãn.")).toBe(true);
     expect(vay?.description).not.toContain("Chờ duyệt.");
-    const ctx = await createSupabaseStore(db).loadTurnContext({ conversationId: null, shopId: FX.a.shop, productId: FX.a.vay01 });
+    const store = createSupabaseStore(db);
+    const ctx = await store.loadTurnContext({ conversationId: null, shopId: FX.a.shop, productId: FX.a.vay01 });
     expect(ctx.product?.description?.endsWith("Vải linen, không co giãn.")).toBe(true);
+    // The Jev router answers product_detail from the catalog.
+    const catalog = await store.catalog!(FX.a.shop);
+    expect(catalog.find((p) => p.id === FX.a.vay01)?.description?.endsWith("Vải linen, không co giãn.")).toBe(true);
+    expect(catalog.find((p) => p.id === FX.a.vay01)?.description).not.toContain("Chờ duyệt.");
     const other = await searchProducts({ query: "váy suông linen", limit: 5 }, ctxB, db);
     expect(other.products[0]?.description ?? "").not.toContain("Vải linen");
   });

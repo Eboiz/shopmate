@@ -53,8 +53,8 @@ describe("gapOfTurn (PB-35a: which turns record a question the AI couldn't answe
     expect(gapOfTurn(turn({ offerMade: "not_covered_by_data", logs: [policy()], productId: "p9" }))?.productId).toBeNull();
   });
 
-  it("does not guess a product when the search returned several", () => {
-    expect(gapOfTurn(turn({ offerMade: "not_covered_by_data", logs: [search(["p1", "p2"])] }))?.productId).toBeNull();
+  it("skips a product detail question when no single product is known (it can't become a policy)", () => {
+    expect(gapOfTurn(turn({ offerMade: "not_covered_by_data", logs: [search(["p1", "p2"])] }))).toBeNull();
   });
 
   it("skips not_covered_by_data with no data read (off-topic)", () => {

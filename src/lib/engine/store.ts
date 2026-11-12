@@ -144,13 +144,15 @@ export function createSupabaseStore(db: Db): EngineStore {
       ]);
       if (products.error) throw new Error(`products: ${products.error.message}`);
       if (variants.error) throw new Error(`variants: ${variants.error.message}`);
+      // PB-35a: the router answers product_detail from this description too.
+      const facts = await activeProductFacts(db, shopId, products.data.map((p) => p.id));
       return products.data.map((p) => {
         const own = variants.data.filter((v) => v.product_id === p.id);
         return {
           id: p.id,
           name: p.name,
           category: p.category,
-          description: p.description,
+          description: withFacts(p.description, facts.get(p.id) ?? []),
           colors: [...new Set(own.map((v) => v.color))],
           sizes: sortSizes(own.map((v) => v.size)),
         };

@@ -27,6 +27,7 @@ const rlsDb = {
       select: () => chain,
       eq: (key: string, value: unknown) => (gapFilters.push([key, value]), chain),
       in: (key: string, value: unknown) => (gapFilters.push([key, value]), chain),
+      is: (key: string, value: unknown) => (gapFilters.push([key, value]), chain),
       gte: () => chain,
       order: async () => ({ data: gapRows, error: null }),
     };
@@ -174,6 +175,7 @@ describe("draftTopics (Soạn câu trả lời)", () => {
     expect(gapFilters).toContainEqual(["shop_id", SHOP]);
     expect(gapFilters).toContainEqual(["status", ["open", "learned"]]);
     expect(gapFilters).toContainEqual(["reason", ["policy_not_covered", "not_covered_by_data"]]);
+    expect(gapFilters).toContainEqual(["product_id", null]);
     expect(analyzeGaps).toHaveBeenCalledWith(
       gapRows.map((g) => ({ id: g.id, conversationId: CONV, reason: "policy_not_covered", question: g.question })),
       { model: "model" },

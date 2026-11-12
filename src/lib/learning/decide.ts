@@ -63,13 +63,14 @@ export async function dismissGaps(db: Db, shopId: string, gapIds: string[]): Pro
 
 // "Duyệt" on a drafted topic: the owner's own words, used at once. `admin` is the
 // secret-key client (inserts are server only); the caller has checked the owner.
-// Re-checks the draft has no blank left and the questions are this shop's open ones.
+// Re-checks the draft has no blank left and the questions are this shop's open
+// policy questions (a product detail is never answered by a policy).
 export async function insertFromDraft(
   admin: Db,
   { shopId, userId, gapIds, policyKind, text }: Who & { gapIds: string[]; policyKind: PolicyKind; text: string },
 ): Promise<"ok" | "blank" | "no_questions"> {
   if (hasBlank(text) || !text.trim()) return "blank";
-  const { data: open, error } = await admin.from("data_gaps").select("id").in("id", gapIds).eq("shop_id", shopId).eq("status", "open");
+  const { data: open, error } = await admin.from("data_gaps").select("id").in("id", gapIds).eq("shop_id", shopId).eq("status", "open").is("product_id", null);
   if (error) throw new Error(`data_gaps: ${error.message}`);
   if (open.length === 0) return "no_questions";
   const { data: fact, error: factError } = await admin
