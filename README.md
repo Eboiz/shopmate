@@ -177,12 +177,14 @@ With `OPENROUTER_API_KEY` set, each turn is first decided by Jev (`typesafe/jev-
 ### Engine eval
 
 ```bash
-pnpm engine:eval                      # every case x 3 runs, LLM tool loop
+pnpm engine:eval                      # every case x 3 runs, like production: Haiku + Jev router
 EVAL_RUNS=1 EVAL_CASE=size-advice pnpm engine:eval
-OPENROUTER_API_KEY=... JEV_IN_TESTS=true EVAL_LABEL=jev-router pnpm engine:eval   # Jev router
+JEV_IN_TESTS=false EVAL_LABEL=llm-loop pnpm engine:eval   # LLM tool loop only
 ```
 
-Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared. Jev is off under vitest unless `JEV_IN_TESTS=true`.
+Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared.
+
+`pnpm engine:eval` and `pnpm eval:injection` run like production: `ANTHROPIC_MODEL` defaults to `claude-haiku-5-5` and the Jev router is on (`JEV_IN_TESTS=true`), with `OPENROUTER_API_KEY` from `.env.test.local` or `.env.local`. Without that key every turn uses the LLM tool loop, and the eval prints a warning. The shell wins: `ANTHROPIC_MODEL=…` or `JEV_IN_TESTS=false` changes one run. Unit and integration tests are unchanged: Jev stays off there. The injection token budget (`EVAL_MAX_TOKENS`) counts Claude tokens only; Jev calls go to OpenRouter.
 
 PB-31 groups (`src/lib/engine/eval/cases-pb31.ts`): `replay-*` holds the 18 shopper messages of the handoff table in Eboiz/Documents#32, each with its expected result (answer, offer of staff + reason, or handoff + reason); `near-*` holds typos, missing diacritics, other names (đầm/váy, quần bò/quần jean, somi, jacket) and measurements just outside the size chart. Run one group with `EVAL_GROUP=replay- pnpm engine:eval` (or `near-`). Every case is labeled `shouldHandOff`, and the summary has three more columns: **handoff rate** (runs handed to staff), **offer rate** (runs that asked "Bạn có muốn mình nhờ nhân viên…"), and **correct decision** (runs whose answer / offer / handoff matches the label). Report both the handoff rate and correct decision, so a lower handoff rate can't come from the AI making answers up.
 

@@ -71,6 +71,9 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
     assertLocalDb();
     // Through ANTHROPIC_API_URL (the team gateway) when set, like the engine.
     model = createDefaultModel();
+    if (process.env.JEV_IN_TESTS === "true" && !process.env.OPENROUTER_API_KEY?.trim()) {
+      console.warn("engine eval: OPENROUTER_API_KEY is not set, so every turn uses the LLM tool loop, not the Jev router production uses.");
+    }
     db = createAdminClient();
     store = createSupabaseStore(db);
     await seedTwoShops(db);
