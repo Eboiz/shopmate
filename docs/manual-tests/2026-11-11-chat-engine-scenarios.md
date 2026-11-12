@@ -2,6 +2,11 @@
 
 Dữ liệu lấy từ DB cloud ngày 2026-11-11, shop `may-boutique` (60 sản phẩm). Nếu shop sửa sản phẩm thì kiểm lại giá và tồn kho trước khi test.
 
+**Cập nhật 2026-11-12, sau khi merge main (PB-31, PB-11) vào `fix/chat-flow`, prompt v1.6.** Có PB-31 ("hỏi trước khi chuyển") nên một số kịch bản đổi kết quả mong đợi: thiếu dữ liệu hoặc chính sách không nói tới thì AI **hỏi khách có muốn gặp nhân viên không** (*"Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?"*, nút `Có, gặp nhân viên` / `Không cần`), chứ không chuyển ngay. Kịch bản 1 đổi sang món shop không có gì gần giống, thêm 1b, viết lại 7, 8, 12 theo chính sách hiện tại của shop:
+- Đổi trả: đổi size/mẫu trong 7 ngày, còn tem mác, chưa giặt; đổi theo ý khách thì khách chịu ship hai chiều; không hoàn tiền; hàng giảm giá không đổi trả.
+- Giao hàng: toàn quốc; nội thành TP.HCM 1–2 ngày, 20.000đ; tỉnh khác 3–5 ngày, 30.000đ; miễn phí từ 500.000đ; giao Thứ Hai–Thứ Bảy, **Chủ nhật không giao**; COD, được xem hàng.
+- Khuyến mãi: *"Hiện shop chưa có chương trình khuyến mãi, giá niêm yết là giá bán."*
+
 **Cách chạy**
 - Trang chat: `/s/may-boutique` (local hoặc Vercel preview của nhánh `fix/chat-flow`).
 - Mỗi kịch bản dùng **một khách mới** (cửa sổ ẩn danh mới hoặc xoá cookie), để lịch sử của kịch bản trước không ảnh hưởng.
@@ -16,18 +21,30 @@ Dữ liệu lấy từ DB cloud ngày 2026-11-11, shop `may-boutique` (60 sản 
 
 ---
 
-## 1. Hỏi món shop không bán, hỏi hai lần → chuyển nhân viên
+## 1. Hỏi món shop không bán (không có gì gần giống), hỏi hai lần → chuyển nhân viên
 **Task:** T1 (F1, PB-05 AC3), T2 (F2)
 
 | Lượt | Khách nói |
 |---|---|
-| 1 | `Shop có áo khoác da không ạ?` |
-| 2 | `Loại áo khoác da màu đen ấy` |
+| 1 | `Shop có túi xách da không ạ?` |
+| 2 | `Loại túi xách da màu đen ấy` |
 
 **Mong đợi**
-- Lượt 1: không có áo khoác da, AI hỏi lại một câu ngắn. Không được đoán sang áo khoác jean hay bomber rồi nói là "có".
+- Lượt 1: shop không bán túi, AI hỏi lại một câu ngắn (có thể kèm nút nhóm hàng). Không được nói là "có".
 - Lượt 2: chuyển nhân viên, lý do `misunderstood_twice`, câu trả lời đúng là: *"Dạ, mình vẫn chưa tìm thấy sản phẩm bạn hỏi trong shop. Mình đã chuyển câu hỏi của bạn cho nhân viên shop, nhân viên sẽ trả lời bạn sớm nhé!"*
-- Không có nút trả lời nhanh kiểu "Áo khoác da nam" hay "Tìm lại áo da".
+- Không có nút trả lời nhanh nêu món shop không bán, kiểu "Túi da nữ" hay "Tìm lại túi da".
+
+## 1b. Hỏi món không có nhưng shop có món gần giống → hỏi "ý bạn là…"
+**Task:** PB-31 (món gần giống), T2 (F2)
+
+| Lượt | Khách nói |
+|---|---|
+| 1 | `Shop có áo khoác da không ạ?` |
+| 2 | bấm một nút tên áo khoác (vd. `Áo khoác bomber`) |
+
+**Mong đợi**
+- Lượt 1: AI nói shop không có áo khoác da, rồi hỏi khách có phải đang tìm một trong các áo khoác của shop không (tối đa 3 tên, vd. Áo khoác jean, Áo khoác bomber), kèm nút đúng tên các món đó. Không chuyển nhân viên, không nói là có áo khoác da.
+- Lượt 2: trả lời về đúng món đã bấm (vd. Áo khoác bomber 319.000đ).
 
 ## 2. Tên gọi gần đúng vẫn tìm ra sản phẩm (không được tính là trượt)
 **Task:** T1 (Review Focus 1)
@@ -88,16 +105,19 @@ Dữ liệu lấy từ DB cloud ngày 2026-11-11, shop `may-boutique` (60 sản 
 - Trả lời theo đúng chính sách: đổi size hoặc đổi mẫu **trong 7 ngày** kể từ khi nhận hàng, còn tem mác, chưa giặt. Đổi theo ý khách thì **khách chịu phí ship hai chiều**. **Không hoàn tiền**, chỉ đổi sản phẩm. Hàng giảm giá không được đổi trả.
 - **Không** chuyển nhân viên (trước đây bị chuyển với lý do `not_covered_by_data`).
 
-## 7. Hỏi điều chính sách không nhắc tới → vẫn phải chuyển nhân viên
-**Task:** T3 (Review Focus 2, PB-09 AC2)
+## 7. Hỏi điều chính sách có nói tới, rồi điều chính sách không nhắc tới
+**Task:** T3 (F3, Review Focus 2, PB-09 AC2), PB-31
 
 | Lượt | Khách nói |
 |---|---|
 | 1 | `Shop có giao hàng vào Chủ nhật không?` |
+| 2 | `Đặt rồi mình đổi địa chỉ nhận hàng được không shop?` |
+| 3 | bấm `Có, gặp nhân viên` |
 
 **Mong đợi**
-- Chính sách giao hàng không nói tới ngày giao, nên AI **phải chuyển nhân viên** với lý do `policy_not_covered`.
-- Không được tự nói "có giao Chủ nhật" hay "không giao Chủ nhật".
+- Lượt 1: chính sách có ghi, nên AI trả lời **Chủ nhật không giao** (giao Thứ Hai–Thứ Bảy). Không chuyển nhân viên, không hỏi gặp nhân viên.
+- Lượt 2: chính sách không nói về đổi địa chỉ. AI nói shop chưa có thông tin này, **không tự đoán** "được" hay "không được", rồi hỏi *"Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?"* kèm nút `Có, gặp nhân viên` / `Không cần`. Hội thoại vẫn ở `ai`, `ai_turns.handoff_offer = policy_not_covered`.
+- Lượt 3: chuyển nhân viên, lý do `policy_not_covered`, hội thoại thành `needs_human`.
 
 ## 8. Xin giảm giá kèm đặt hàng → từ chối lịch sự, không chuyển nhân viên
 **Task:** T3 (F4, PB-09 AC3)
@@ -107,7 +127,7 @@ Dữ liệu lấy từ DB cloud ngày 2026-11-11, shop `may-boutique` (60 sản 
 | 1 | `Mình lấy 2 cái váy suông linen màu trắng size M, shop bớt 50k được không?` |
 
 **Mong đợi**
-- Từ chối lịch sự: shop không giảm thêm ngoài giá niêm yết. Mục khuyến mãi của shop đang **trống**, nên AI không được nêu ưu đãi nào.
+- Từ chối lịch sự: shop không giảm thêm ngoài giá niêm yết. Khuyến mãi của shop ghi *"Hiện shop chưa có chương trình khuyến mãi"*, nên AI chỉ được nói đúng ý đó, không nêu ưu đãi nào khác.
 - **Không** chuyển nhân viên. Không hứa bớt 50k.
 - Có thể tiếp tục đặt hàng: 2 × 389.000đ = 778.000đ, đơn từ 500.000đ được **miễn phí giao hàng**. Màu Trắng size M còn 12.
 
@@ -154,12 +174,16 @@ Dữ liệu lấy từ DB cloud ngày 2026-11-11, shop `may-boutique` (60 sản 
 |---|---|
 | 1 | `Áo khoác cardigan len phối với gì đẹp shop?` |
 | 2 | `Lấy 1 cardigan màu nâu size M nha` |
-| 3 | `Tên Lan, số 0901234567, giao 12 Nguyễn Trãi quận 1 TP.HCM` |
+| 3 | bấm `Đúng, đặt luôn` |
+| 4 | `Tên Lan, số 0901234567, giao 12 Nguyễn Trãi quận 1 TP.HCM` |
+| 5 | bấm `Xác nhận đơn` |
 
 **Mong đợi**
 - Lượt 1: gợi ý phối đúng dữ liệu của shop, gồm **Váy suông linen** (khoác ngoài khi vào phòng lạnh) và **Đầm xoè tay cánh tiên** (khi trời se lạnh).
-- Lượt 2: cardigan **349.000đ**, màu Nâu size M còn **12**. AI hỏi tên, số điện thoại và địa chỉ.
-- Lượt 3: tóm tắt đơn đúng giá. Nội thành TP.HCM phí ship **20.000đ** vì đơn dưới 500.000đ. Đơn nháp được tạo **một lần**.
+- Lượt 2 (PB-31): AI đọc lại *"Dạ, bạn muốn đặt Áo khoác cardigan len màu nâu size M đúng không?"* với nút `Đúng, đặt luôn` / `Chọn món khác`.
+- Lượt 3: cardigan **349.000đ**, màu Nâu size M còn **12**. AI hỏi tên, số điện thoại và địa chỉ.
+- Lượt 4: tóm tắt đơn đúng giá, nút `Xác nhận đơn` / `Sửa đơn`. Nội thành TP.HCM phí ship **20.000đ** vì đơn dưới 500.000đ (tổng 369.000đ). **Lần test 11/11 trượt ở đây**: tóm tắt không tính ship và không dùng tên/SĐT/địa chỉ. Đây là luồng PB-11, ngoài phạm vi nhánh này; ghi lại kết quả.
+- Lượt 5: đơn nháp được tạo **một lần**, đúng các món trong báo giá.
 - Ghi lại `latency_ms` của từng lượt. Trước khi sửa: trung vị 13,5 s, tối đa 31,2 s.
 
 ---
@@ -169,6 +193,7 @@ Dữ liệu lấy từ DB cloud ngày 2026-11-11, shop `may-boutique` (60 sản 
 | # | Đạt / Trượt | Lý do handoff | Độ trễ (s) | Ghi chú |
 |---|---|---|---|---|
 | 1 | | | | |
+| 1b | | | | |
 | 2 | | | | |
 | 3 | | | | |
 | 4 | | | | |
