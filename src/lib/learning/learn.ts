@@ -7,7 +7,7 @@ import { policyKindSchema, type LearnInput, type LearnResult, type ReviewReason 
 import { DEFAULT_MODEL, type ModelClient } from "@/lib/engine/engine";
 import { mentionsOffer } from "@/lib/engine/discount-guard";
 import { toStructuredOutputSchema } from "@/lib/engine/model-reply";
-import { evidenceInReply, hasOneOffMarker, hasVagueMarker, numbersBacked, redactPersonal } from "./checks";
+import { evidenceInReply, hasOneOffMarker, hasVagueMarker, numbersBacked, redactPersonal, ruleSupported } from "./checks";
 import { buildLearnSystemPrompt, buildLearnUserMessage } from "./prompt";
 
 export type LearningDeps = { model: ModelClient; modelName?: string };
@@ -61,15 +61,18 @@ export async function learnFromStaffReply(input: LearnInput, deps: LearningDeps)
   if (!out.rule.trim()) return skip("no_rule");
   if (!evidenceInReply(out.evidence, input.staffReply)) return skip("evidence_not_found");
 
-  const rule = redactPersonal(out.rule, input.shopperName).slice(0, MAX_RULE).trim();
+  const rule = redactPersonal(out.rule, input.shopperName);
   const evidence = redactPersonal(out.evidence, input.shopperName);
   if (!rule || !evidence) return skip("no_rule");
+  // Never cut a rule: the cut part may hold its conditions ("trừ hàng sale").
+  if (rule.length > MAX_RULE) return skip("too_long");
   if (!numbersBacked(rule, input.staffReply)) return skip("number_mismatch");
 
   const reviewReasons: ReviewReason[] = [];
   if (mentionsOffer(rule)) reviewReasons.push("discount");
   if (out.conflictsWithPolicy) reviewReasons.push("conflict");
   if (out.vague || hasVagueMarker(input.staffReply)) reviewReasons.push("vague");
+  if (!ruleSupported(rule, out.evidence, input.staffReply)) reviewReasons.push("unverified");
   if (out.needsReview) reviewReasons.push("model");
   return {
     status: "learn",

@@ -150,3 +150,12 @@ describe("mentionsOffer", () => {
     expect(mentionsOffer(t)).toBe(false);
   });
 });
+
+describe("mentionsOffer review fixes", () => {
+  it("counts a gift staff give as an offer", () => {
+    expect(mentionsOffer("Nhân viên tặng quà cho khách mới")).toBe(true);
+  });
+  it("keeps the staff deferral for replies", () => {
+    expect(findUnbackedDiscount("Giảm giá thì nhân viên sẽ báo bạn nhé", [])).toBeNull();
+  });
+});

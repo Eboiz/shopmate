@@ -41,3 +41,11 @@ describe("judgeAfter", () => {
     expect(r.unsupportedAmounts).toEqual(["20000"]);
   });
 });
+
+describe("judgeAfter review fixes", () => {
+  it("fails an answer that flips the learned fact", () => {
+    const q = beforeAfterTopics[0].questions[0];
+    const run = { calledGetPolicy: true, handoffReason: null, reply: "Dạ shop không cho kiểm hàng ạ" };
+    expect(judgeAfter(q, run, ["Shop cho kiểm hàng trước khi nhận."]).passed).toBe(false);
+  });
+});

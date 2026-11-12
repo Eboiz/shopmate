@@ -121,3 +121,44 @@ describe("learnFromStaffReply", () => {
     await expect(learnFromStaffReply(input(), { model })).rejects.toThrow("boom");
   });
 });
+
+describe("learnFromStaffReply review fixes", () => {
+  it("needs review when the rule flips the staff's negation", async () => {
+    const staffReply = "Dạ shop không cho kiểm hàng ạ";
+    const out = output({ evidence: "shop không cho kiểm hàng" });
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
+    expect(result).toMatchObject({ status: "learn", needsReview: true });
+    if (result.status === "learn") expect(result.reviewReasons).toContain("unverified");
+  });
+
+  it("needs review when the rule says much the staff didn't", async () => {
+    const out = output({ rule: "Shop bán sỉ cho đại lý ở mọi tỉnh thành và cho kiểm hàng." });
+    const result = await learnFromStaffReply(input(), { model: modelSaying(out) });
+    expect(result).toMatchObject({ status: "learn", needsReview: true });
+    if (result.status === "learn") expect(result.reviewReasons).toContain("unverified");
+  });
+
+  it("needs review for a gift that names staff", async () => {
+    const staffReply = "Dạ nhân viên tặng quà cho khách mới ạ";
+    const out = output({ policyKind: "khuyen_mai", rule: "Nhân viên tặng quà cho khách mới.", evidence: "nhân viên tặng quà cho khách mới" });
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
+    expect(result).toMatchObject({ status: "learn", needsReview: true });
+    if (result.status === "learn") expect(result.reviewReasons).toContain("discount");
+  });
+
+  it("removes an honorific and name even without shopperName", async () => {
+    const staffReply = "Dạ chị Thảo ơi, shop nhận COD toàn quốc ạ";
+    const out = output({ rule: "Shop nhận COD cho chị Thảo trên toàn quốc.", evidence: "shop nhận COD toàn quốc" });
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
+    expect(result.status).toBe("learn");
+    if (result.status === "learn") expect(result.rule).not.toContain("Thảo");
+  });
+
+  it("skips a rule too long to keep whole instead of cutting it", async () => {
+    const staffReply = `Dạ ${"đổi trong 7 ngày, ".repeat(30)}trừ hàng sale ạ`;
+    const rule = `${"Đổi trong 7 ngày, ".repeat(30)}trừ hàng sale.`;
+    const out = output({ policyKind: "doi_tra", rule, evidence: "trừ hàng sale" });
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
+    expect(result).toMatchObject({ status: "skip", skipReason: "too_long" });
+  });
+});

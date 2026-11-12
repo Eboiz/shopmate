@@ -93,3 +93,11 @@ describe("analyzeGaps", () => {
     await expect(analyzeGaps(G, { model: scriptedModel([text("{}")]) })).rejects.toThrow("analyzeGaps");
   });
 });
+
+describe("analyzeGaps review fixes", () => {
+  it("keeps a fallback draft whole when the title has brackets", async () => {
+    const [t] = await analyzeGaps(G, { model: modelSaying([topic({ title: "] Shop giao miễn phí", draft: "bad" })]) });
+    expect(t.title).not.toMatch(/[[\]]/);
+    expect(t.draft.replace(/\[[^\]]*\]/g, "").trim()).toBe("");
+  });
+});

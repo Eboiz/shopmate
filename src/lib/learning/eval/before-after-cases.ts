@@ -7,7 +7,8 @@ import { fold } from "@/lib/engine/text";
 import { comparableNumbers } from "../checks";
 import { learnCases, type LearnCase } from "./learn-cases";
 
-export type BeforeAfterQuestion = { id: string; text: string; mustSay: RegExp /* on the folded reply */ };
+// mustSay / mustNotSay: on the folded reply. mustNotSay catches a flipped fact.
+export type BeforeAfterQuestion = { id: string; text: string; mustSay: RegExp; mustNotSay?: RegExp };
 export type BeforeAfterTopic = { id: string; staff: LearnCase["input"]; questions: [BeforeAfterQuestion, BeforeAfterQuestion] };
 
 const staffOf = (id: string) => {
@@ -16,21 +17,24 @@ const staffOf = (id: string) => {
   return c.input;
 };
 
+const NOT_INSPECT = /khong (duoc |cho |the |ho tro )*(kiem|mo|xem)/;
+const NOT_COD = /khong (ho tro |nhan )+(cod|thanh toan)/;
+
 export const beforeAfterTopics: BeforeAfterTopic[] = [
   {
     id: "kiem-hang",
     staff: staffOf("L01-kiem-hang"),
     questions: [
-      { id: "kiem-hang-1", text: "Shop có cho kiểm hàng trước khi nhận không?", mustSay: /kiem/ },
-      { id: "kiem-hang-2", text: "Nhận hàng mình được mở ra xem trước rồi mới trả tiền không shop?", mustSay: /kiem|xem/ },
+      { id: "kiem-hang-1", text: "Shop có cho kiểm hàng trước khi nhận không?", mustSay: /kiem/, mustNotSay: NOT_INSPECT },
+      { id: "kiem-hang-2", text: "Nhận hàng mình được mở ra xem trước rồi mới trả tiền không shop?", mustSay: /kiem|xem/, mustNotSay: NOT_INSPECT },
     ],
   },
   {
     id: "trong-ngay",
     staff: staffOf("L02-giao-trong-ngay"),
     questions: [
-      { id: "trong-ngay-1", text: "Nội thành có giao trong ngày không shop?", mustSay: /trong ngay|11/ },
-      { id: "trong-ngay-2", text: "Mình ở quận 3, đặt sáng nay chiều nhận được không?", mustSay: /trong ngay|11/ },
+      { id: "trong-ngay-1", text: "Nội thành có giao trong ngày không shop?", mustSay: /trong ngay|11/, mustNotSay: /khong (the )?(giao|ho tro) (trong ngay|hoa toc)/ },
+      { id: "trong-ngay-2", text: "Mình ở quận 3, đặt sáng nay chiều nhận được không?", mustSay: /trong ngay|11/, mustNotSay: /khong (the )?(giao|ho tro) (trong ngay|hoa toc)/ },
     ],
   },
   {
@@ -45,8 +49,8 @@ export const beforeAfterTopics: BeforeAfterTopic[] = [
     id: "cod",
     staff: staffOf("L04-cod-ten-khach"),
     questions: [
-      { id: "cod-1", text: "Shop có ship COD không?", mustSay: /cod|khi nhan/ },
-      { id: "cod-2", text: "Mình nhận hàng rồi mới trả tiền được không?", mustSay: /cod|khi nhan/ },
+      { id: "cod-1", text: "Shop có ship COD không?", mustSay: /cod|khi nhan/, mustNotSay: NOT_COD },
+      { id: "cod-2", text: "Mình nhận hàng rồi mới trả tiền được không?", mustSay: /cod|khi nhan/, mustNotSay: NOT_COD },
     ],
   },
 ];
@@ -66,7 +70,8 @@ export function judgeAfter(q: BeforeAfterQuestion, run: EngineRun, policyTexts: 
   const unsupportedAmounts = amountsIn(run.reply)
     .map((a) => a.replace(/%$/, ""))
     .filter((n) => !known.has(n));
-  const saysFact = q.mustSay.test(fold(run.reply));
+  const folded = fold(run.reply);
+  const saysFact = q.mustSay.test(folded) && !(q.mustNotSay?.test(folded) ?? false);
   return {
     passed: run.calledGetPolicy && run.handoffReason === null && saysFact && unsupportedAmounts.length === 0,
     saysFact,

@@ -25,9 +25,10 @@ const MAX_SAMPLES = 3;
 const MAX_TITLE = 80;
 const FALLBACK_TITLE = "Câu hỏi khác";
 
-// A title states no fact: tokens with a digit are dropped.
+// A title states no fact and can't close a blank: tokens with a digit and
+// square brackets are dropped.
 function cleanTitle(title: string): string {
-  const out = title.replace(/\S*\d\S*/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_TITLE).trim();
+  const out = title.replace(/\S*\d\S*/g, " ").replace(/[[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_TITLE).trim();
   return out || FALLBACK_TITLE;
 }
 

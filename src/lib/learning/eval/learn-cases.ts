@@ -37,6 +37,7 @@ export const learnCases: LearnCase[] = [
     expect: "active",
     policyKind: "giao_hang",
     mustInclude: /kiem hang/,
+    mustNotInclude: /\bkhong\b/,
   },
   {
     id: "L02-giao-trong-ngay",
@@ -53,6 +54,7 @@ export const learnCases: LearnCase[] = [
     input: pair("Hàng sale có đổi được không?", "Dạ hàng sale shop không nhận đổi trả chị nhé"),
     expect: "active",
     policyKind: "doi_tra",
+    mustInclude: /khong/,
   },
   {
     id: "L04-cod-ten-khach",
@@ -137,6 +139,7 @@ export function rightKind(c: LearnCase, result: LearnResult): boolean {
   if (result.status !== "learn") return true;
   if (c.policyKind && result.policyKind !== c.policyKind) return false;
   if (c.mustInclude && !c.mustInclude.test(fold(result.rule))) return false;
+  if (c.mustNotInclude?.test(fold(result.rule))) return false;
   return true;
 }
 

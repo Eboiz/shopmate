@@ -32,9 +32,10 @@ export const learnInputSchema = z.object({
 });
 
 // Why a learned rule must wait for the owner even in "auto" mode.
-export const reviewReasonSchema = z.enum(["discount", "conflict", "vague", "model"]);
+// unverified: the rule flips the staff's negation or says much the staff didn't write.
+export const reviewReasonSchema = z.enum(["discount", "conflict", "vague", "unverified", "model"]);
 // Why nothing was learned.
-export const skipReasonSchema = z.enum(["one_off", "no_rule", "evidence_not_found", "number_mismatch", "invalid_output"]);
+export const skipReasonSchema = z.enum(["one_off", "no_rule", "evidence_not_found", "number_mismatch", "too_long", "invalid_output"]);
 
 export const learnResultSchema = z.discriminatedUnion("status", [
   z.object({

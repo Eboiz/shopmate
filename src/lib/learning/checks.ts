@@ -55,12 +55,14 @@ const PHONE = /(?:\+84|\b84|\b0)(?:[\s.-]?\d){8,10}\b/g;
 // "quận 1" and "7 ngày" don't match: the number comes after, or no capital follows.
 const ADDRESS = /\b\d+[a-z]?(?:\/\d+)*\s+(?:đường\s+)?\p{Lu}\p{Ll}*(?:\s+\p{Lu}\p{Ll}*)+/gu;
 const HONORIFIC = "(?:chị|anh|bạn|em|cô|chú)";
+// An honorific and a capitalized name, when the shopper's name isn't known: "chị Thảo".
+const ADDRESSED_NAME = /(?<![\p{L}\p{N}])(?:[Cc]hị|[Aa]nh|[Bb]ạn|[Ee]m|[Cc]ô|[Cc]hú)\s+\p{Lu}\p{Ll}*(?:\s+\p{Lu}\p{Ll}*)*(?![\p{L}\p{N}])/gu;
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // The text without phone numbers, street addresses and the shopper's name.
 export function redactPersonal(text: string, shopperName?: string | null): string {
-  let out = text.normalize("NFC").replace(PHONE, " ").replace(ADDRESS, " ");
+  let out = text.normalize("NFC").replace(PHONE, " ").replace(ADDRESS, " ").replace(ADDRESSED_NAME, " ");
   const name = shopperName?.normalize("NFC").trim();
   if (name) {
     const re = new RegExp(`(?<![\\p{L}\\p{N}])(?:${HONORIFIC}\\s+)?${escapeRegExp(name)}(?![\\p{L}\\p{N}])`, "giu");
@@ -80,4 +82,19 @@ export function draftIsBlankOnly(draft: string): boolean {
   if (!hasBlank(draft)) return false;
   const outside = draft.replace(/\[[^\]]*\]/g, " ");
   return !/\d/.test(outside) && !mentionsOffer(outside);
+}
+
+const NEGATION = /\b(khong|chua|chang|ko|khg)\b/;
+const tokens = (text: string) => new Set(fold(text.normalize("NFC")).match(/[\p{L}\p{N}]+/gu) ?? []);
+// Share of the rule's words the staff reply must hold.
+const MIN_COVERAGE = 0.75;
+
+// True when the rule keeps the evidence's negation (or its absence) and most of
+// its words come from the staff reply. A rewrite that fails needs the owner.
+export function ruleSupported(rule: string, evidence: string, staffReply: string): boolean {
+  if (NEGATION.test(fold(rule)) !== NEGATION.test(fold(evidence))) return false;
+  const words = [...tokens(rule)];
+  if (words.length === 0) return false;
+  const staff = tokens(staffReply);
+  return words.filter((w) => staff.has(w)).length / words.length >= MIN_COVERAGE;
 }

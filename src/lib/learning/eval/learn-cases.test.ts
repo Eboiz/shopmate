@@ -58,3 +58,11 @@ describe("learn eval scoring", () => {
     expect(activeDiscount(learned({ rule: "Khách mới được giảm 10%.", needsReview: true }))).toBe(false);
   });
 });
+
+describe("learn eval scoring review fixes", () => {
+  it("fails L01 when the rule flips to không", () => {
+    const L01 = learnCases[0];
+    const r: LearnResult = { status: "learn", policyKind: "giao_hang", rule: "Shop không cho kiểm hàng.", evidence: "x", needsReview: false, reviewReasons: [], reason: "" };
+    expect(rightKind(L01, r)).toBe(false);
+  });
+});
