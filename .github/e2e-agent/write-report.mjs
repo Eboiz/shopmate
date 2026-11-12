@@ -1,9 +1,13 @@
 // Writes the nightly E2E report (docs/e2e-reports/<date>.md) from Playwright JSON results.
 // node write-report.mjs --date 2026-11-07 --suite results.json [--smoke smoke.json]
-//   [--summary summary.md] [--agent ran|skipped|failed] --out docs/e2e-reports/2026-11-07.md
+//   [--summary summary.md] [--agent ran|skipped|failed]
+//   [--ai ran|skipped|failed] [--injection injection.json] [--main-flow main-flow.json]
+//   --out docs/e2e-reports/2026-11-07.md
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseArgs } from "node:util";
+// Only type imports in that file, so plain node loads it without the app's dependencies.
+import { CHECK_LABELS } from "../../src/lib/engine/eval/injection-results.ts";
 
 const { values: a } = parseArgs({
   options: {
@@ -13,6 +17,9 @@ const { values: a } = parseArgs({
     summary: { type: "string" },
     agent: { type: "string" },
     run: { type: "string" },
+    ai: { type: "string" },
+    injection: { type: "string" },
+    "main-flow": { type: "string" },
     out: { type: "string" },
   },
 });
@@ -97,6 +104,50 @@ const lines = [
 ];
 const summary = readText(a.summary);
 if (summary) lines.push("### Agent đã làm", "", summary, "");
+
+const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+// Ids and check names only: replies are model text and stay in the artifact.
+const safe = (v) => String(v ?? "").replace(/[^\p{L}\p{N} ._:/-]/gu, "").slice(0, 80);
+
+// The PB-17 injection eval (critical cases), from the ai job's injection.json.
+function injection(results) {
+  const title = ["### Prompt injection (câu critical)", ""];
+  if (!Array.isArray(results?.cases)) return [...title, "Không có kết quả (eval lỗi trước khi ghi kết quả).", ""];
+  const cases = results.cases;
+  const passed = cases.filter((c) => c.status === "passed").length;
+  const failed = cases.filter((c) => c.status === "failed");
+  const notRun = cases.reduce((s, c) => s + (Number(c.notRun) || 0), 0);
+  const t = results.tokens ?? {};
+  const tokens = ["input", "output", "cacheCreation", "cacheRead"].reduce((s, k) => s + (Number(t[k]) || 0), 0);
+  const out = [
+    ...title,
+    `**${passed}/${cases.length} câu đạt · ${failed.length} không đạt · ${notRun} lượt chưa chạy** · model \`${safe(results.model)}\` · prompt \`${safe(results.promptVersion)}\` · ${fmtTokens(tokens)}/${fmtTokens(Number(results.maxTokens) || 0)} token`,
+    "",
+  ];
+  if (results.stopped) {
+    out.push(`⚠️ Dừng giữa chừng: ${results.stopped.reason === "quota" ? "gateway trả 429 (hết quota)" : "chạm ngân sách token"}.`, "");
+  }
+  if (results.integrity?.length) out.push(`❌ DB bị đổi sau khi chạy: ${results.integrity.length} dòng (giá, tồn kho hoặc chính sách).`, "");
+  if (failed.length) {
+    out.push("**Câu không đạt:**", "");
+    for (const c of failed) {
+      const checks = [...new Set((c.runs ?? []).flatMap((r) => (r.failures ?? []).map((f) => f.check)))];
+      out.push(`- ❌ \`${safe(c.id)}\` — ${checks.map((k) => CHECK_LABELS[k] ?? safe(k)).join(", ")}`);
+    }
+    out.push("");
+  }
+  out.push("Từng câu trả lời: báo cáo HTML trong artifact `e2e-ai` của lần chạy.", "");
+  return out;
+}
+
+lines.push("## AI thật (chỉ khi engine đổi)", "");
+if (a.ai === "ran" || a.ai === "failed") {
+  if (a.ai === "failed") lines.push("Job AI lỗi giữa chừng: xem log workflow.", "");
+  lines.push(...injection(readJson(a.injection)));
+  lines.push(...section("Luồng chính: hỏi size → đơn nháp → nhân viên xác nhận", readJson(a["main-flow"])).map((l) => l.replace(/^## /, "### ")));
+} else {
+  lines.push("Không có thay đổi trong `src/lib/engine/` hay `src/contract/` 24 giờ qua: không gọi Claude.", "");
+}
 
 mkdirSync(dirname(a.out), { recursive: true });
 writeFileSync(a.out, lines.join("\n"));

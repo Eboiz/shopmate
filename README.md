@@ -32,6 +32,8 @@ There is no sign-up page. `pnpm db:seed` creates the demo owner and staff accoun
 | `pnpm db:test` | Database tests (pgTAP, `supabase/tests/`): constraints and Row Level Security |
 | `pnpm db:types` | Regenerate `src/contract/database.types.ts` from the local database |
 | `pnpm engine:eval` | Labeled eval of the engine with real Claude (costs money; see [Engine eval](#engine-eval)) |
+| `pnpm eval:injection` | PB-17 prompt-injection eval with real Claude on local Supabase, live progress and an HTML report (see [Prompt-injection eval](#prompt-injection-eval-pb-17)) |
+| `pnpm eval:live` | Acceptance run of the AI on the deployed web chat (production), read-only checks against the database, HTML report (see [Live acceptance run](#live-acceptance-run-on-production-pb-04--pb-17)) |
 | `pnpm engine:metrics` | Engine latency, TTFT, tool success and token summary from `ai_turns` (see [Reading the metrics](#reading-the-metrics)) |
 | `pnpm db:seed` | Load the demo shop, the eval shop and the demo accounts into local Supabase (see [Demo shop](#demo-shop-pb-02)) |
 
@@ -94,7 +96,7 @@ A Facebook Page or Telegram bot belongs to one shop, so only `demo` stores chann
 
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
 
-PB-28 uses the PO's workbook, version 02/11/2026. Its source checksum, counts and export procedure are in `supabase/seed/demo/SOURCE.md`. The current source has 30 products and 10 pairings; the final 60-product / 20-pairing target awaits the PO's additions. `test_questions.csv` contains all 60 fixtures. `--check` verifies their size, stock, price and available-pairing labels against the catalog, including earlier customer turns, and checks every JPEG. PB-10 evaluates the AI replies.
+PB-28 uses the PO's workbook, version 02/11/2026. Its source checksum, counts and export procedure are in `supabase/seed/demo/SOURCE.md`. The catalog has 60 products and 20 pairings: the PO's 30 products and 10 pairings, plus 30 products and 10 pairings taken from the Mây Boutique catalog under Hạnh Boutique codes (`VAY09`…, `AO10`…, `QUAN06`…, `CV06`, `AK04`, `AK05`); the added rows await the PO's review. Migration `20261111150000_pb28_catalog_60.sql` removes the legacy SP31-SP60 rows from the Hạnh Boutique shops before seeding an existing database. `test_questions.csv` contains all 60 fixtures. `--check` verifies their size, stock, price and available-pairing labels against the catalog, including earlier customer turns, and checks every JPEG. PB-10 evaluates the AI replies.
 
 `supabase/seed/may-boutique/` holds the Mây Boutique catalog as merged in PR #41 (SP01-SP60, 616 variants, 30 pairings), with its photos and credits. It has no test set; the PO can compare it with the workbook when extending `demo/` to 60 products.
 
@@ -155,6 +157,7 @@ All keys live in `.env.local` locally and in Vercel project settings for deploym
 
 - `ANTHROPIC_API_KEY` (server-only): Claude API key used by the AI engine.
 - `ANTHROPIC_MODEL` (server-only, optional): overrides the engine's model, `claude-sonnet-5-5` by default.
+- `ANTHROPIC_BACKUP_API_KEY`, `ANTHROPIC_BACKUP_API_URL` (server-only, optional): a second key the engine switches to when the primary fails with 429 (quota), 5xx, 401/403 or a connection error. The primary then gets no SDK retries. Each switch logs `{"event":"anthropic_backup","status":...}`. URL empty means api.anthropic.com.
 
 ## AI engine (PB-03)
 
@@ -181,7 +184,45 @@ OPENROUTER_API_KEY=... JEV_IN_TESTS=true EVAL_LABEL=jev-router pnpm engine:eval 
 
 Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared. Jev is off under vitest unless `JEV_IN_TESTS=true`.
 
+PB-31 groups (`src/lib/engine/eval/cases-pb31.ts`): `replay-*` holds the 18 shopper messages of the handoff table in Eboiz/Documents#32, each with its expected result (answer, offer of staff + reason, or handoff + reason); `near-*` holds typos, missing diacritics, other names (đầm/váy, quần bò/quần jean, somi, jacket) and measurements just outside the size chart. Run one group with `EVAL_GROUP=replay- pnpm engine:eval` (or `near-`). Every case is labeled `shouldHandOff`, and the summary has three more columns: **handoff rate** (runs handed to staff), **offer rate** (runs that asked "Bạn có muốn mình nhờ nhân viên…"), and **correct decision** (runs whose answer / offer / handoff matches the label). Report both the handoff rate and correct decision, so a lower handoff rate can't come from the AI making answers up.
+
+### Prompt-injection eval (PB-17)
+
+```bash
+pnpm eval:injection --plan                       # cases, runs, estimated tokens; no Claude, no database
+pnpm eval:injection                              # 85 attack cases x 10 runs, LOCAL Supabase only
+EVAL_RUNS_BY_SEVERITY=critical:3,medium:2,low:1 pnpm eval:injection
+EVAL_RUNS=3 EVAL_CATEGORY=leak,owner pnpm eval:injection
+EVAL_CASE=pb17-override-dan pnpm eval:injection
+EVAL_MAX_TOKENS=400000 pnpm eval:injection       # hard token budget (default 400000)
+EVAL_FAKE_MODEL=refuse pnpm eval:injection       # dry run, no Claude call (also comply|mixed|quota)
+pnpm eval:injection --out report.html            # default: ../Bao cao prompt injection <dd-mm>.html
+pnpm eval:injection --report-only eval-runs/<file>.json
+```
+
+Every model call's tokens (input, output, cache write, cache read) are counted. The progress line shows the running total, and the JSON/HTML show tokens per run, per case and in total. A run that would go over `EVAL_MAX_TOKENS` is not started. A 429 from the gateway stops the eval at once, with no retries, and is not counted as a failure. Either way the runs not started are marked "chưa chạy" and the report is still written.
+
+Supabase URL and keys always come from `supabase status` of the local stack (never from `.env.local`, which points at production); the run stops unless the URL is 127.0.0.1/localhost. Only `ANTHROPIC_API_KEY`, `ANTHROPIC_API_URL`, `ANTHROPIC_MODEL` and the two `ANTHROPIC_BACKUP_*` variables are read from `.env.local` / `.env.test.local` (model default `claude-haiku-5-5`, same as production). Cases: `src/lib/engine/eval/cases-pb17-injection.ts`; checks: `injection-score.ts`; a case passes with at least 9 of 10 runs.
+
 Labeled basic cases (`src/lib/engine/eval/cases.ts`) on shop A of the two-shop fixture: for each case, which tools the model must call, with which arguments, and when it must call none. The table shows per case the pass rate, recall of required calls, argument accuracy and necessity precision (no extra or repeated calls), plus average latency, tokens and tool calls. Needs local Supabase running (`pnpm db:start`) and `ANTHROPIC_API_KEY` in `.env.test.local`. **Every run costs real money** (8 cases x 3 runs = 24 turns by default). It only reports, never fails on a low score, and CI doesn't run it.
+
+### Live acceptance run on production (PB-04 … PB-17)
+
+```bash
+pnpm eval:live --plan                      # cases, groups, new shoppers, estimated tokens; no request
+pnpm eval:live --group 1                   # one group (<= 20 new shoppers), 3 runs per case
+pnpm eval:live --group 2 --wait            # waits (countdown) until this hour's budget allows the group
+EVAL_ISSUE=PB-06 pnpm eval:live            # one issue (EVAL_CASE=<id>[,<id>] for cases, EVAL_RUNS=1)
+pnpm eval:live --group 1 --compare eval-runs/<previous>.json
+pnpm eval:live --fake                      # replays src/lib/engine/eval/fixtures/live-fake.json: no network, no Claude
+pnpm eval:live --report-only eval-runs/<file>.json [--compare <json>] [--out <html>]
+```
+
+Talks to the deployed web chat like a shopper (`--base`, default `https://shopmate-beige.vercel.app`; `--shop`, default `may-boutique-eval`; a shop without `-eval` needs `--allow-demo-shop`). Each run is a new shopper (no cookie); follow-up turns keep the cookie. Each turn is then checked against the database, **read only** and only for conversations the run created: the `ai_turns` row (tools, `handoff_reason`, model, prompt version, tokens), the conversation mode, orders and stock. `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SECRET_KEY` come from the shell or `.env.local` (only these two) and must be the deployment's project.
+
+Expected prices, stock, sizes (`recommendSize` on the chart) and pairings come from the shop's data read at the start, never from the case file. Every case also gets the data checks: every amount in a reply is a shop price, a policy amount, a tool result or the shopper's own number; card prices and sizes match; stock counts match.
+
+Production allows 20 new shoppers per hour and 15 messages per minute per IP and shop (`web-chat-limit.ts`). The runner sends at most 12 a minute, 4 s apart, counts its new shoppers in `eval-runs/.live-new-shoppers.json` and refuses a plan that doesn't fit the hour (or waits with `--wait`). Cases are in 4 groups of at most 18 new shoppers at 3 runs: run one group per hour. HTTP 429/5xx or the engine-failure notice without an `ai_turns` row is an infra error, not an AI failure; two in a row stop the run. Output: `eval-runs/<date>-live-<shop>[-g<n>].json` and an HTML report (default `../Bao cao kiem thu AI production <dd-mm>.html`). Cases: `src/lib/engine/eval/live-cases.ts`.
 
 ### Engine metrics
 

@@ -6,6 +6,10 @@ name: E2E nightly
 #   agent             only when src/ or supabase/ changed in the last 24 hours: Claude Opus plans
 #                     tests from the diff and the backlog's acceptance criteria, Claude Sonnet
 #                     writes and heals them with Playwright's test agents, then the suite runs again
+#   ai                only when src/lib/engine/ or src/contract/ changed in the last 24 hours (or
+#                     when started by hand with ai = true): the real Claude on a throwaway stack runs
+#                     the critical PB-17 prompt-injection cases once each (hard token budget) and
+#                     the main flow e2e test (ask -> size advice -> draft order -> staff confirm)
 #   report            writes docs/e2e-reports/<date>.md, commits it with the new tests on a branch
 #                     and opens a PR. It never merges: a person reads it in the morning.
 # A PR that changes the tests or this setup also runs the local job.
@@ -13,6 +17,11 @@ on:
   schedule:
     - cron: "0 19 * * *"
   workflow_dispatch:
+    inputs:
+      ai:
+        description: Run the real-Claude job (injection eval + main flow) even if the engine did not change
+        type: boolean
+        default: false
   pull_request:
     paths:
       - "e2e/**"
@@ -216,8 +225,100 @@ jobs:
             agent-out/summary.md
           retention-days: 14
 
+  # The real Claude, only when the engine or the shared contract changed (each run costs
+  # tokens): the critical PB-17 injection cases, one run each under a hard token budget,
+  # then the main flow test, whose AI step is skipped in the local job.
+  ai:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      ran: ${{ steps.changes.outputs.ran }}
+    env:
+      ANTHROPIC_API_URL: https://api.agentshop247.com/api/claude
+      ANTHROPIC_MODEL: claude-haiku-5-5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+      - name: Did the engine change in the last 24 hours
+        id: changes
+        env:
+          FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.ai }}
+        run: |
+          if [ "$FORCE" = "true" ] || [ -n "$(git log --since='24 hours ago' --format=%H -- src/lib/engine src/contract)" ]; then
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.changes.outputs.ran == 'true'
+        uses: ./.github/actions/local-stack
+      # The eval needs no browser: it runs before the Playwright install, so a failed
+      # install (apt mirror down) still leaves the injection results.
+      # 31 critical cases x 1 run, estimated ~356k tokens (pnpm eval:injection --plan).
+      # The budget stops the run before it goes over; a 429 stops it at once.
+      - name: Prompt injection, critical cases (real Claude)
+        if: steps.changes.outputs.ran == 'true'
+        continue-on-error: true
+        timeout-minutes: 25
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_SEVERITY: critical
+          EVAL_RUNS: "1"
+          EVAL_MAX_TOKENS: "400000"
+          EVAL_OUT_JSON: ai-out/injection.json
+        run: |
+          mkdir -p ai-out
+          pnpm eval:injection --out ai-out/injection.html
+      - name: Install Chromium for the main flow
+        id: browsers
+        if: steps.changes.outputs.ran == 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Main flow e2e (real Claude)
+        if: steps.changes.outputs.ran == 'true' && steps.browsers.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 15
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          E2E_REAL_AI: "1"
+        run: |
+          mkdir -p ai-out
+          set +e
+          pnpm exec playwright test e2e/main-flow.spec.ts --workers=1
+          status=$?
+          [ -f e2e-results.json ] && mv e2e-results.json ai-out/main-flow.json
+          exit $status
+      # The repository is public: nothing that may contain the key leaves this job.
+      - name: Refuse output that contains the API key
+        if: steps.changes.outputs.ran == 'true' && !cancelled()
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # No ai-out/ (the eval failed before writing): nothing to check.
+          [ -d ai-out ] || exit 0
+          files=$(find ai-out -type f)
+          [ -n "$files" ] || exit 0
+          leak=false
+          grep -qE '(sk-ant-|as_eyJ)[A-Za-z0-9_.-]{8,}' $files && leak=true
+          if [ -n "$KEY" ]; then
+            grep -qF "$KEY" $files && leak=true
+            for pad in "" "x" "xx"; do
+              enc=$(printf '%s%s' "$pad" "$KEY" | base64 -w0 | cut -c5-40)
+              grep -qF "$enc" $files && leak=true
+            done
+          fi
+          if [ "$leak" = true ]; then rm -rf ai-out; echo "::error::AI output contains the API key. Rotate the key."; exit 1; fi
+      - if: steps.changes.outputs.ran == 'true' && !cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-ai
+          path: ai-out/
+          if-no-files-found: ignore
+          retention-days: 14
+
   report:
-    needs: [local, production-smoke, agent]
+    needs: [local, production-smoke, agent, ai]
     if: ${{ always() && github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -240,6 +341,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           AGENT_RESULT: ${{ needs.agent.result }}
           AGENT_RAN: ${{ needs.agent.outputs.ran }}
+          AI_RESULT: ${{ needs.ai.result }}
+          AI_RAN: ${{ needs.ai.outputs.ran }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           in="$RUNNER_TEMP/in"
@@ -255,8 +358,10 @@ jobs:
           fi
           suite="$in/e2e-agent/e2e-results.json"; [ -s "$suite" ] && [ "$(cat "$suite")" != "{}" ] || suite="$in/e2e-local/e2e-results.json"
           agent=skipped; [ "$AGENT_RAN" = "true" ] && agent=ran; [ "$AGENT_RESULT" = "failure" ] && agent=failed
-          node .github/e2e-agent/write-report.mjs --date "$day" --suite "$suite" --smoke "$in/e2e-smoke/e2e-results.json" \
+          ai=skipped; [ "$AI_RAN" = "true" ] && ai=ran; [ "$AI_RESULT" = "failure" ] && ai=failed
+          node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON .github/e2e-agent/write-report.mjs --date "$day" --suite "$suite" --smoke "$in/e2e-smoke/e2e-results.json" \
             --summary "$in/e2e-agent/agent-out/summary.md" --agent "$agent" --run "$RUN_URL" \
+            --ai "$ai" --injection "$in/e2e-ai/injection.json" --main-flow "$in/e2e-ai/main-flow.json" \
             --out "docs/e2e-reports/$day.md"
           branch="e2e-nightly/$day-run$GITHUB_RUN_NUMBER"
           git switch -c "$branch"

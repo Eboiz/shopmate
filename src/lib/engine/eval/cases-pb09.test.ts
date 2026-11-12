@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { tools } from "@/contract";
 import { HANDOFF_TEXT } from "../engine";
+import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "../handoff-offer";
 import { toModelMessages } from "../messages";
 import { evalCases } from "./cases";
 import { pb09Cases } from "./cases-pb09";
@@ -14,12 +15,15 @@ const correct: Record<string, { calls: ActualCall[]; outcome: RunOutcome }> = {
     calls: [{ name: "get_policy", input: { kind: "doi_tra" } }],
     outcome: { handoffReason: null, replyText: "Dạ shop cho đổi trong 7 ngày ạ." },
   },
+  // PB-31 soft handoff: the offer's handoff_to_staff call is not logged.
   "pb09-free-ship-not-covered": {
-    calls: [
-      { name: "get_policy", input: { kind: "giao_hang" } },
-      { name: "handoff_to_staff", input: { reason: "policy_not_covered" } },
-    ],
-    outcome: { handoffReason: "policy_not_covered", replyText: HANDOFF_TEXT },
+    calls: [{ name: "get_policy", input: { kind: "giao_hang" } }],
+    outcome: {
+      handoffReason: null,
+      handoffOffer: "policy_not_covered",
+      replyText: `Dạ shop chưa ghi chính sách phí ship. ${OFFER_QUESTION}`,
+      quickReplies: OFFER_QUICK_REPLIES,
+    },
   },
   "pb09-discount-ask": {
     calls: [{ name: "get_policy", input: { kind: "khuyen_mai" } }],
@@ -54,12 +58,14 @@ describe("pb09Cases", () => {
     expect(scoreRun(c, calls, { handoffReason: "policy_not_covered", replyText: HANDOFF_TEXT }).passed).toBe(false);
   });
 
-  it("AC2: reject an answer without the handoff, or one that promises free shipping", () => {
+  it("AC2: reject an answer without the offer, a hard handoff, or one that promises free shipping", () => {
     const c = byId("pb09-free-ship-not-covered");
-    const policyOnly = [{ name: "get_policy", input: { kind: "giao_hang" } }];
+    const policyOnly = correct[c.id].calls;
     expect(scoreRun(c, policyOnly, { handoffReason: null, replyText: "Dạ shop miễn phí ship ạ." }).passed).toBe(false);
-    const handedOff = correct[c.id].calls;
-    expect(scoreRun(c, handedOff, { handoffReason: "policy_not_covered", replyText: "Dạ shop freeship cho bạn ạ" }).passed).toBe(false);
+    const offer = correct[c.id].outcome;
+    expect(scoreRun(c, policyOnly, { ...offer, replyText: `Dạ shop freeship cho bạn ạ. ${OFFER_QUESTION}` }).passed).toBe(false);
+    const handedOff: ActualCall[] = [...policyOnly, { name: "handoff_to_staff", input: { reason: "policy_not_covered" } }];
+    expect(scoreRun(c, handedOff, { handoffReason: "policy_not_covered", replyText: HANDOFF_TEXT }).passed).toBe(false);
   });
 
   it("AC3: reject a reply that agrees to a discount, and a draft order", () => {
@@ -69,5 +75,14 @@ describe("pb09Cases", () => {
       expect(scoreRun(c, calls, { handoffReason: null, replyText }).passed, replyText).toBe(false);
     }
     expect(scoreRun(c, [{ name: "create_draft_order", input: {} }], correct[c.id].outcome).passed).toBe(false);
+  });
+
+  it("AC3 (prompt v1.2): reject handing a discount request to staff", () => {
+    const c = byId("pb09-discount-ask");
+    const handedOff: ActualCall[] = [
+      { name: "get_policy", input: { kind: "khuyen_mai" } },
+      { name: "handoff_to_staff", input: { reason: "policy_not_covered" } },
+    ];
+    expect(scoreRun(c, handedOff, { handoffReason: "policy_not_covered", replyText: HANDOFF_TEXT }).passed).toBe(false);
   });
 });

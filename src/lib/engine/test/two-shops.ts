@@ -12,11 +12,21 @@ export const FX = {
     vay01: a("11"),
     ao03: a("12"),
     quan05: a("13"),
+    // PB-31 eval (replay + near matches): a blazer to order, two jackets close to
+    // "áo khoác da", and jeans for "quần bò".
+    blazer: a("14"),
+    bomber: a("15"),
+    jacketJean: a("16"),
+    jean: a("17"),
     vay01MBe: a("21"),
     vay01LBe: a("22"),
     vay01MDen: a("23"),
     ao03STrang: a("24"),
     ao03MTrang: a("25"),
+    blazerSDen: a("26"),
+    bomberMDen: a("27"),
+    jacketJeanMXanh: a("28"),
+    jeanMXanh: a("29"),
     shopper: a("41"),
     conversation: a("31"),
   },
@@ -75,6 +85,10 @@ export async function seedTwoShops(db: Db): Promise<void> {
       { id: FX.a.ao03, shop_id: A, code: "AO03", name: "Áo sơ mi trắng", category: "áo", price: 250000 },
       { id: FX.a.quan05, shop_id: A, code: "QUAN05", name: "Quần ống rộng", category: null, price: 300000 },
       { id: FX.b.vay01, shop_id: B, code: "VAY01", name: "Váy suông linen", category: "váy", price: 420000 },
+      { id: FX.a.blazer, shop_id: A, code: "AO07", name: "Áo blazer", category: "áo", price: 450000 },
+      { id: FX.a.bomber, shop_id: A, code: "KHOAC01", name: "Áo khoác bomber", category: "áo khoác", price: 480000 },
+      { id: FX.a.jacketJean, shop_id: A, code: "KHOAC02", name: "Áo khoác jean", category: "áo khoác", price: 420000 },
+      { id: FX.a.jean, shop_id: A, code: "QUAN08", name: "Quần jean ống đứng", category: "quần", price: 380000 },
     ]),
   );
   await must(
@@ -86,6 +100,10 @@ export async function seedTwoShops(db: Db): Promise<void> {
       { id: FX.a.ao03STrang, shop_id: A, product_id: FX.a.ao03, size: "S", color: "trắng", stock: 3 },
       { id: FX.a.ao03MTrang, shop_id: A, product_id: FX.a.ao03, size: "M", color: "trắng", stock: 0 },
       { id: FX.b.vay01MBe, shop_id: B, product_id: FX.b.vay01, size: "M", color: "be", stock: 9 },
+      { id: FX.a.blazerSDen, shop_id: A, product_id: FX.a.blazer, size: "S", color: "đen", stock: 4 },
+      { id: FX.a.bomberMDen, shop_id: A, product_id: FX.a.bomber, size: "M", color: "đen", stock: 3 },
+      { id: FX.a.jacketJeanMXanh, shop_id: A, product_id: FX.a.jacketJean, size: "M", color: "xanh", stock: 2 },
+      { id: FX.a.jeanMXanh, shop_id: A, product_id: FX.a.jean, size: "M", color: "xanh", stock: 6 },
     ]),
   );
   const chart = (shop_id: string, product_id: string, size: string, h: [number, number], w: [number, number]) => ({

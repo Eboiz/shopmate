@@ -41,8 +41,12 @@ const COLOR = "be";
 
 test("shopper asks for a size, orders in the chat, staff confirm, stock goes down", async ({ page, browser }) => {
   test.setTimeout(5 * 60_000);
-  // The nightly job's throwaway stack has no Claude key; this test needs the real AI.
-  test.skip(Boolean(process.env.CI) && !againstDeployment, "needs the real AI: run it against a preview with E2E_BASE_URL");
+  // This test needs the real AI. In CI only the nightly `ai` job (E2E_REAL_AI=1) gives
+  // the app a Claude key; the other jobs' throwaway stacks have none.
+  test.skip(
+    Boolean(process.env.CI) && !againstDeployment && !process.env.E2E_REAL_AI,
+    "needs the real AI: the nightly ai job runs it, or run it against a preview with E2E_BASE_URL",
+  );
 
   const staff = await (await browser.newContext({ viewport: { width: 375, height: 812 } })).newPage();
   await signIn(staff, "staff");
@@ -60,13 +64,10 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   const stockBefore = await readStock(staff, PRODUCT, SIZE, COLOR);
   expect(stockBefore, "seeded stock must allow one more order; run pnpm db:seed").toBeGreaterThan(0);
 
-  // 1. Shop page, open the dress, ask about it.
+  // 1. Shop page: find the dress (the grid shows 12 products) and ask about it.
   await page.goto(`/s/${DEMO_SHOP_SLUG}`);
-  await page
-    .locator("article", { has: page.getByRole("heading", { name: PRODUCT, exact: true }) })
-    .getByRole("link", { name: PRODUCT, exact: true })
-    .click();
-  await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Tìm sản phẩm" }).fill(PRODUCT);
+  await page.getByRole("button", { name: `Hỏi về mẫu này: ${PRODUCT}`, exact: true }).click();
 
   // Each shop reply has a label ("Trợ lý AI", or "Shop" for a system notice)
   // followed by its text bubble. Only the bubble is read: the product cards

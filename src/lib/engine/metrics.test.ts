@@ -62,6 +62,7 @@ const row = (over: Partial<Tables<"ai_turns">>): Tables<"ai_turns"> => ({
   tool_calls: [],
   postcheck: null,
   handoff_reason: null,
+  handoff_offer: null,
   input_tokens: 1,
   output_tokens: 2,
   created_at: "2026-11-06T00:00:00Z",

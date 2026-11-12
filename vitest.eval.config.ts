@@ -15,6 +15,8 @@ export default defineConfig({
     include: ["src/**/*.eval.ts"],
     fileParallelism: false,
     testTimeout: 120_000,
-    env: testEnv(),
+    // `pnpm eval:injection` builds the env itself (local Supabase only, see
+    // src/lib/engine/eval/eval-env.ts); .env.test.local must not override it.
+    env: process.env.EVAL_ENV_FROM_RUNNER === "1" ? {} : testEnv(),
   },
 });

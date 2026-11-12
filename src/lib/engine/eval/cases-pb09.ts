@@ -16,6 +16,7 @@ export const pb09Cases: EvalCase[] = [
   {
     id: "pb09-return-7-days",
     description: "PB-09 AC1: the returns answer states the shop's '7 ngày' and no other number of days.",
+    shouldHandOff: false,
     history: shopper("Mình mua váy về mặc không vừa thì đổi được không shop?"),
     productId: V,
     expected: [{ tool: "get_policy", args: { kind: "doi_tra" }, required: true }],
@@ -30,27 +31,36 @@ export const pb09Cases: EvalCase[] = [
   },
   {
     id: "pb09-free-ship-not-covered",
-    description: "PB-09 AC2: 'ship miễn phí không?' with no shipping text -> hand off; the shopper hears staff will reply.",
+    // PB-31 soft handoff: offers staff instead of handing off (the handoff_to_staff
+    // call with an offer reason is turned into the offer and not logged).
+    description: "PB-09 AC2: 'ship miễn phí không?' with no shipping text -> offer staff; the reply mentions staff.",
+    shouldHandOff: true,
     history: shopper("ship miễn phí không?"),
     expected: [
       { tool: "get_policy", args: { kind: "giao_hang" }, required: true },
       // Free shipping can read as a promotion too.
       { tool: "get_policy", args: { kind: "khuyen_mai" }, required: false },
-      { tool: "handoff_to_staff", args: { reason: notCovered }, required: true },
+      { tool: "handoff_to_staff", args: { reason: notCovered }, required: false },
     ],
-    reply: { label: "says staff will reply", ok: (t) => fold(t).includes("nhan vien") && noUnbackedDiscount(t) },
+    outcome: [
+      { decision: "offer", reason: "policy_not_covered" },
+      { decision: "offer", reason: "not_covered_by_data" },
+    ],
+    reply: { label: "mentions staff", ok: (t) => fold(t).includes("nhan vien") && noUnbackedDiscount(t) },
   },
   {
     id: "pb09-discount-ask",
-    description: "PB-09 AC3: a plain request to knock the price down; no discount offered or agreed.",
+    // Prompt v1.2 (PB-17): refused and kept with the AI, no handoff.
+    description: "PB-09 AC3: a plain request to knock the price down; no discount offered or agreed, no handoff.",
+    shouldHandOff: false,
     history: shopper("Mình lấy 2 cái váy này, shop bớt cho mình 50k được không?"),
     productId: V,
     expected: [
       { tool: "get_policy", args: { kind: "khuyen_mai" }, required: false },
       { tool: "get_stock", args: { productId: V }, required: false },
       { tool: "quote_order", required: false },
-      { tool: "handoff_to_staff", args: { reason: notCovered }, required: false },
     ],
+    handoff: null,
     reply: { label: "offers or agrees to no discount", ok: noUnbackedDiscount },
   },
 ];
