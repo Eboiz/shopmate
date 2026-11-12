@@ -3,6 +3,12 @@ import { idSchema, modelReplySchema, quickReplySchema, type ModelReply } from "@
 import { VIEWING_PRODUCT_REF } from "./prompt";
 
 export const FALLBACK_TEXT = "Dạ, bạn nói rõ hơn giúp mình được không ạ?";
+// Sent back once when the final reply is not the JSON object. The team gateway
+// drops output_config.format (2026-11-12: 12/12 plain-text replies with and
+// without it), so the format rests on the prompt, and turns with a photo often
+// get plain text.
+export const FORMAT_RETRY_NOTE =
+  "Câu trả lời trên chưa đúng định dạng. Viết lại đúng nội dung đó thành MỘT object JSON {\"text\": ..., \"productIds\": [...], \"quickReplies\": [...]}, không thêm chữ nào ngoài JSON.";
 
 const MAX_TEXT = 1000;
 const MAX_ITEMS = 10;

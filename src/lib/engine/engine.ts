@@ -21,7 +21,7 @@ import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffe
 import { executeTool, type ToolRun } from "./execute-tool";
 import { latestShopperPhotoPaths, toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
-import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
+import { FALLBACK_TEXT, FORMAT_RETRY_NOTE, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
@@ -265,6 +265,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // it was for, and whether the model already got its one retry.
   let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
   let sizeRetried = false;
+  // The tool loop's final reply was plain text once and was sent back (FORMAT_RETRY_NOTE).
+  let formatRetried = false;
   let sizeFallback = false;
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
@@ -547,6 +549,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     if (res.stop_reason !== "tool_use") {
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const parsed = parseModelReply(text);
+      // An answer written as plain text instead of the JSON object: ask once
+      // for the same answer as JSON; still unreadable, FALLBACK_TEXT is sent.
+      if (!parsed.ok && !formatRetried && text.trim() !== "") {
+        formatRetried = true;
+        console.warn(`engine: final reply is not the JSON object (${text.length} chars), asking once more`);
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: FORMAT_RETRY_NOTE },
+        );
+        continue;
+      }
       // sizeAdvice is set inside a callback; TS can't see it.
       const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice;
       const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
