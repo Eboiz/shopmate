@@ -10,12 +10,20 @@ import { createClient } from "@/lib/supabase/server";
 // answer sees the new values. The shop comes from requireStaff() (src/lib/auth.ts).
 
 export type CatalogVariant = { id: string; size: string; color: string; stock: number };
+export type CatalogSizeRow = {
+  size: string;
+  heightMin: number;
+  heightMax: number;
+  weightMin: number;
+  weightMax: number;
+};
 export type CatalogProduct = {
   id: string;
   code: string;
   name: string;
   price: number;
   variants: CatalogVariant[];
+  sizeChart: CatalogSizeRow[];
 };
 export type CatalogPolicy = { kind: PolicyKind; content: string };
 export type CatalogPairing = {
@@ -30,7 +38,9 @@ export async function getCatalog(shopId: string) {
   const [products, policies, pairings] = await Promise.all([
     supabase
       .from("products")
-      .select("id, code, name, price, variants(id, size, color, stock)")
+      .select(
+        "id, code, name, price, variants(id, size, color, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)",
+      )
       .eq("shop_id", shopId)
       .order("code"),
     supabase.from("policies").select("kind, content").eq("shop_id", shopId),
@@ -44,11 +54,21 @@ export async function getCatalog(shopId: string) {
     if (result.error) throw new Error(`Không đọc được dữ liệu shop: ${result.error.message}`);
   }
 
-  const productList: CatalogProduct[] = (products.data ?? []).map((product) => ({
+  const productList: CatalogProduct[] = (products.data ?? []).map(({ size_charts, ...product }) => ({
     ...product,
     variants: product.variants.toSorted(
       (a, b) => a.color.localeCompare(b.color, "vi") || compareSizes(a.size, b.size),
     ),
+    // Ranges never overlap (PB-24), so the smallest height comes first.
+    sizeChart: size_charts
+      .toSorted((a, b) => a.height_min_cm - b.height_min_cm)
+      .map((row) => ({
+        size: row.size,
+        heightMin: row.height_min_cm,
+        heightMax: row.height_max_cm,
+        weightMin: row.weight_min_kg,
+        weightMax: row.weight_max_kg,
+      })),
   }));
   const nameById = new Map(productList.map((product) => [product.id, product.name]));
 
