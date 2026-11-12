@@ -63,7 +63,9 @@ describe("web chat on local Supabase", () => {
 
   it("lists only the shop's products with in-stock colors and sizes", async () => {
     const catalog = await loadCatalog({ id: FX.a.shop, name: "Shop A PB-03" });
-    expect(catalog.products.map((p) => p.id).toSorted()).toEqual([FX.a.ao03, FX.a.quan05, FX.a.vay01].toSorted());
+    expect(catalog.products.map((p) => p.id).toSorted()).toEqual(
+      [FX.a.ao03, FX.a.quan05, FX.a.vay01, FX.a.blazer, FX.a.bomber, FX.a.jacketJean, FX.a.jean].toSorted(),
+    );
     const vay = catalog.products.find((p) => p.id === FX.a.vay01)!;
     expect(vay).toMatchObject({ price: 350000, colors: ["be", "đen"], sizesInStock: ["M"] });
   });

@@ -4,6 +4,8 @@ import type { EngineInput } from "@/contract";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
 import { FALLBACK_TEXT } from "./model-reply";
+import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
+import { ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
 import type { JevClient, JevResponse } from "./jev";
 import type { TurnMetrics } from "./metrics";
 import { PROMPT_VERSION } from "./prompt";
@@ -58,7 +60,7 @@ function setup(jev: JevClient | null, responses: Parameters<typeof scriptedModel
     get_policy: vi.fn(async () => ({ kind: "khuyen_mai", content: null })),
     recommend_size: vi.fn(async () => ({ status: "ok", size: "L", sizeByHeight: "M", sizeByWeight: "L" })),
     handoff_to_staff: vi.fn(async () => ({ mode: "needs_human" })),
-    search_products: vi.fn(async () => ({ products: [] })),
+    search_products: vi.fn(async () => ({ match: "none" as const, products: [] })),
   };
   const model = scriptedModel(responses);
   const metrics: TurnMetrics[] = [];
@@ -125,7 +127,14 @@ describe("runEngine with Jev routing", () => {
       toolCalls(toolUse("get_stock", { productId: VAY })),
       finalJson({ text: "Bạn cho mình xin tên và số điện thoại nhé", productIds: [], quickReplies: [] }),
     ]);
-    const result = await run(input("lấy cho mình 1 cái"));
+    // the order was read back already (PB-31)
+    const result = await run(input("đúng rồi", {
+      history: [
+        { sender: "shopper", text: "lấy cho mình 1 cái" },
+        { sender: "ai", text: "Dạ, bạn muốn đặt Váy suông linen đúng không?" },
+        { sender: "shopper", text: "đúng rồi" },
+      ],
+    }));
     expect(model.calls[0].tools?.length).toBeGreaterThan(0);
     expect(result.output.reply.text).toContain("số điện thoại");
     expect(metrics[0].route).toMatchObject({ path: "llm_loop", fallbackReason: "order", intent: "order" });
@@ -185,6 +194,85 @@ describe("runEngine with Jev routing", () => {
     const twice = setup(greeting(), [cut, cut]);
     expect((await twice.run(input("chào"))).output.reply.text).toBe(FALLBACK_TEXT);
     error.mockRestore();
+  });
+
+  describe("PB-31 on the Jev path", () => {
+    const intent = (choice: string, extra: Record<string, unknown> = {}) =>
+      jevSaying({ intent: { type: "choice", choice, confidence: 0.95 }, ...extra });
+
+    it("(a) 'cho mua …' that Jev reads as human is read back as an order, no handoff, no model call", async () => {
+      const { model, handlers, store, run } = setup(intent("human"), []);
+      const result = await run(input("cho mua 1 váy màu be size M"));
+      expect(model.calls).toHaveLength(0);
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply).toEqual({
+        text: orderConfirmText("Váy suông linen", "Be", "M"),
+        products: [],
+        quickReplies: [ORDER_CONFIRM_YES, ORDER_CONFIRM_NO],
+      });
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    });
+
+    it("PB-14 stays: complaint and asking for a person hand off at once", async () => {
+      for (const [choice, text, reason] of [["human", "kêu chủ ra đây", "asked_for_human"], ["complaint", "hàng giao bị rách", "complaint"]]) {
+        const { run } = setup(intent(choice), []);
+        expect((await run(input(text))).handoffReason, text).toBe(reason);
+      }
+      const twice = setup(intent("unclear", { asked_to_clarify: { type: "noul", noul: 0.9 } }), []);
+      expect((await twice.run(input("??? kkk"))).handoffReason).toBe("misunderstood_twice");
+    });
+
+    it("(b) the catalog question skips Jev: groups with a few products, groups as buttons", async () => {
+      const jev = intent("unclear", { asked_to_clarify: { type: "noul", noul: 0.9 } });
+      const { model, metrics, run } = setup(jev, []);
+      const result = await run(input("hiện tại bên mình có những sản phẩm gì"));
+      expect(jev.decide).not.toHaveBeenCalled();
+      expect(model.calls).toHaveLength(0);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain("Váy & đầm: Váy suông linen");
+      expect(result.output.reply.quickReplies).toEqual(["Váy & đầm"]);
+      expect(metrics[0].route).toEqual({ path: "catalog" });
+    });
+
+    it("(c) off-topic / the staff's name: only the shop and the staff offer (not_covered_by_data)", async () => {
+      const { model, store, run } = setup(intent("off_topic"), []);
+      const result = await run(input("Tôi có thể biết tên nhân viên sắp tư vấn cho mình không?"));
+      expect(model.calls).toHaveLength(0);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain(OFFER_QUESTION);
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0]).toMatchObject({ handoff_reason: null, handoff_offer: "not_covered_by_data" });
+    });
+
+    it("(d) 'mặc không vừa thì đổi được không' is answered from doi_tra even when Jev says product_detail", async () => {
+      const { handlers, run } = setup(intent("product_detail"), [reply("Dạ, shop đổi size trong 7 ngày ạ.")]);
+      handlers.get_policy.mockResolvedValue({ kind: "doi_tra", content: "Đổi size trong 7 ngày" } as never);
+      const result = await run(input("Mua về mặc không vừa thì đổi được không shop?"));
+      expect(handlers.get_policy).toHaveBeenCalledWith({ kind: "doi_tra" }, expect.anything(), expect.anything());
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe("Dạ, shop đổi size trong 7 ngày ạ.");
+    });
+
+    it("soft handoff: a policy the shop didn't write is offered, not handed off", async () => {
+      const { handlers, store, run } = setup(intent("policy", { policy_kind: { type: "choice", choice: "khuyen_mai" } }), []);
+      const result = await run(input("shop có chương trình khuyến mãi gì không"));
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      await result.turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("policy_not_covered");
+    });
+
+    it("'bớt 50k' is refused, never handed off", async () => {
+      const jev = intent("stock", { discount_trick: { type: "noul", noul: 0.95 } });
+      const { handlers, run } = setup(jev, [reply("Dạ, shop không giảm giá thêm được ạ.")]);
+      const result = await run(input("Mình lấy 2 cái, shop bớt cho mình 50k được không?"));
+      expect(result.handoffReason).toBeNull();
+      expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+      expect(result.output.reply.text).toBe("Dạ, shop không giảm giá thêm được ạ.");
+    });
   });
 
   it("an order in progress (last turn read back a quote) skips Jev and stays in the tool loop (PB-11)", async () => {

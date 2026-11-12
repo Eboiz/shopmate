@@ -14,7 +14,7 @@ const fn = (impl: Handler) => vi.fn<Handler>(impl);
 
 function fakeHandlers(overrides: Partial<Record<ToolName, (...args: unknown[]) => unknown>> = {}) {
   const base = {
-    search_products: fn(async () => ({ products: [] })),
+    search_products: fn(async () => ({ match: "none" as const, products: [] })),
     get_stock: fn(async () => ({})),
     recommend_size: fn(async () => ({})),
     get_pairings: fn(async () => ({ pairings: [] })),

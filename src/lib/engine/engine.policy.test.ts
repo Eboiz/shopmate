@@ -4,7 +4,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineInput } from "@/contract";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE } from "./discount-guard";
-import { HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
+import { runEngine, type EngineDeps } from "./engine";
+import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import { buildStablePrompt } from "./prompt";
 import { ECHO_RETRY_NOTE, REFUSAL_TEXT } from "./refusal-guard";
 import type { EngineStore } from "./store";
@@ -51,15 +52,16 @@ const lastUserText = (params: Anthropic.MessageCreateParamsNonStreaming) => para
 describe("policy answers (PB-09)", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("AC2: a policy the shop didn't write goes to staff with policy_not_covered", async () => {
+  it("AC2 + PB-31: a policy the shop didn't write offers staff first (policy_not_covered), no handoff yet", async () => {
     const { handlers, run } = setup([
       toolCalls(toolUse("get_policy", { kind: "giao_hang" })),
       toolCalls(toolUse("handoff_to_staff", { reason: "policy_not_covered" })),
     ]);
     const result = await run(ask("ship miễn phí không?"));
-    expect(handlers.handoff_to_staff).toHaveBeenCalledTimes(1);
-    expect(result.handoffReason).toBe("policy_not_covered");
-    expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toContain(OFFER_QUESTION);
+    expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
   });
 
   describe("AC3: no discount the policy doesn't offer", () => {

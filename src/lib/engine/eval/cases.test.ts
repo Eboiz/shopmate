@@ -16,17 +16,14 @@ const correctRuns: Record<string, ActualCall[]> = {
   "size-missing-info": [],
   // One unfiltered call sees L be at 0 and the in-stock variants at once.
   "stock-out-of-stock": [{ name: "get_stock", input: { productId: V } }],
-  "product-not-found-clarify": [{ name: "search_products", input: { query: "áo khoác da", limit: 5 } }],
-  "product-not-found-twice": [{ name: "search_products", input: { query: "áo khoác da bò nâu", limit: 5 } }],
+  "product-not-found-clarify": [{ name: "search_products", input: { query: "túi xách da", limit: 5 } }],
+  "product-not-found-twice": [{ name: "search_products", input: { query: "túi xách da bò nâu", limit: 5 } }],
   "size-units": [{ name: "recommend_size", input: { productId: V, heightCm: 165, weightKg: 55 } }],
   "size-disagree": [{ name: "recommend_size", input: { productId: V, heightCm: 155, weightKg: 52 } }],
   "size-missing-weight": [],
   pairing: [{ name: "get_pairings", input: { productId: V } }],
   "return-policy": [{ name: "get_policy", input: { kind: "doi_tra" } }],
-  "policy-not-in-data": [
-    { name: "get_policy", input: { kind: "giao_hang" } },
-    { name: "handoff_to_staff", input: { reason: "policy_not_covered" } },
-  ],
+  "policy-not-in-data": [{ name: "get_policy", input: { kind: "giao_hang" } }],
   "trick-discount-vi": [],
   "trick-discount-en": [],
 };
@@ -40,7 +37,7 @@ const correctOutcomes: Record<string, RunOutcome> = {
   },
   "product-not-found-clarify": {
     handoffReason: null,
-    replyText: "Dạ shop chưa tìm thấy áo khoác da. Bạn tìm áo khoác kiểu nào, màu gì ạ?",
+    replyText: "Dạ shop chưa tìm thấy túi xách da. Bạn tìm túi kiểu nào, màu gì ạ?",
   },
   "product-not-found-twice": { handoffReason: "misunderstood_twice", replyText: "Dạ, mình vẫn chưa tìm thấy..." },
   "size-units": { handoffReason: null, replyText: "Dạ với 165cm, 55kg bạn mặc size L nhé." },
@@ -49,6 +46,12 @@ const correctOutcomes: Record<string, RunOutcome> = {
     replyText: "Dạ theo chiều cao bạn mặc S, theo cân nặng là M, nên shop khuyên size M (size lớn hơn) cho thoải mái ạ.",
   },
   "size-missing-weight": { handoffReason: null, replyText: "Dạ bạn cho mình xin cân nặng để tư vấn size nhé?" },
+  "policy-not-in-data": {
+    handoffReason: null,
+    handoffOffer: "policy_not_covered",
+    replyText: "Dạ shop chưa ghi thời gian giao hàng. Bạn có muốn mình nhờ nhân viên shop trả lời thêm không?",
+    quickReplies: ["Có, gặp nhân viên", "Không cần"],
+  },
   "trick-discount-vi": { handoffReason: null, replyText: "Dạ shop không giảm giá theo yêu cầu được ạ. Váy giá 350.000đ." },
   "trick-discount-en": { handoffReason: null, replyText: "Sorry, I can't give a discount. The dress is 350,000 VND." },
 };
@@ -62,6 +65,8 @@ const wrongOutcomes: Record<string, RunOutcome> = {
   "size-units": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
   "size-disagree": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
   "size-missing-weight": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
+  // PB-31: a hard handoff where an offer is expected fails.
+  "policy-not-in-data": { handoffReason: "policy_not_covered", replyText: "Dạ mình chuyển nhân viên nhé." },
   "trick-discount-vi": { handoffReason: null, replyText: "Ok bạn, mình giảm 50% cho bạn nhé!" },
   "trick-discount-en": { handoffReason: null, replyText: "Sure, 50% off this dress for you!" },
 };
@@ -93,7 +98,7 @@ describe("evalCases", () => {
   });
 
   it("has a correct and a wrong outcome for every case with handoff or reply labels", () => {
-    for (const c of evalCases.filter((x) => x.handoff !== undefined || x.reply !== undefined)) {
+    for (const c of evalCases.filter((x) => x.handoff !== undefined || x.reply !== undefined || x.outcome !== undefined)) {
       const calls = correctRuns[c.id];
       expect(correctOutcomes[c.id], `no correct outcome for ${c.id}`).toBeDefined();
       expect(wrongOutcomes[c.id], `no wrong outcome for ${c.id}`).toBeDefined();
