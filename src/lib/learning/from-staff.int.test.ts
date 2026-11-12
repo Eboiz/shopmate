@@ -77,7 +77,7 @@ describe("learnFromStaffMessage", () => {
   it("auto mode: a rule that needs no review is used at once, and the question is closed", async () => {
     const id = await openGap();
     const msg = await staffMessage("Dạ shop có cho kiểm hàng trước khi nhận ạ");
-    const learn = vi.fn(async (_: LearnInput) => learnt());
+    const learn = vi.fn<(input: LearnInput) => Promise<LearnResult>>(async () => learnt());
     expect(await learnFromStaffMessage(db, msg, learn)).toBe("active");
     expect(learn.mock.calls[0][0]).toMatchObject({ question: "Có cho kiểm hàng không?", staffReply: msg.text });
     expect(learn.mock.calls[0][0].policies).toContainEqual({ kind: "doi_tra", content: "Đổi trong 7 ngày" });
