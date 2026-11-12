@@ -268,11 +268,11 @@ describe("runEngine with Jev routing", () => {
       await result.turnLogged;
       expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("policy_not_covered");
       // PB-35a: the shopper's question is recorded on the offer turn.
-      expect(store.recordGap).toHaveBeenCalledWith(expect.objectContaining({ shopId: SHOP }), {
-        reason: "policy_not_covered",
-        question: "shop có chương trình khuyến mãi gì không",
-        productId: null,
-      });
+      expect(store.recordGap).toHaveBeenCalledWith(
+        expect.objectContaining({ shopId: SHOP }),
+        { reason: "policy_not_covered", question: "shop có chương trình khuyến mãi gì không", productId: null },
+        "turn-1",
+      );
     });
 
     it("PB-35a: 'Không cần' marks the recorded question declined; 'Có' records nothing new", async () => {
@@ -282,11 +282,12 @@ describe("runEngine with Jev routing", () => {
           conversation: { shopId: SHOP, mode: "ai" },
           product: { id: VAY, name: "Váy suông linen" },
           previousHandoffOffer: "policy_not_covered",
+          previousTurnId: "turn-0",
         } as never);
         const result = await run(input(text));
         await result.turnLogged;
         expect(store.recordGap).not.toHaveBeenCalled();
-        expect(store.declineGap).toHaveBeenCalledTimes(declined ? 1 : 0);
+        expect(store.declineGap.mock.calls).toEqual(declined ? [[expect.objectContaining({ shopId: SHOP }), "turn-0"]] : []);
       }
     });
 

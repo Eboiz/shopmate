@@ -27,6 +27,9 @@ export type TurnContext = {
   // PB-31: the previous AI turn offered staff for this reason (soft handoff) and
   // did not hand off. A "yes" now hands off with it. Missing means no offer.
   previousHandoffOffer?: HandoffReason | null;
+  // PB-35a: the previous customer turn's ai_turns id, so "Không cần" marks the gap
+  // that turn recorded and no other.
+  previousTurnId?: string | null;
 };
 
 export type EngineStore = {
@@ -45,8 +48,8 @@ export type EngineStore = {
   insertTurn(row: TablesInsert<"ai_turns">): Promise<string>;
   // PB-35a: a question the AI couldn't answer (data_gaps), and "Không cần" to the
   // offer of staff that followed it. Optional: fakes in tests may leave them out.
-  recordGap?(ctx: ToolContext, gap: Gap): Promise<void>;
-  declineGap?(ctx: ToolContext): Promise<void>;
+  recordGap?(ctx: ToolContext, gap: Gap, turnId: string): Promise<void>;
+  declineGap?(ctx: ToolContext, offerTurnId: string): Promise<void>;
   // PB-10: every product of the shop with its colors and sizes, for the Jev
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
@@ -58,22 +61,19 @@ const MAX_CARDS = 10;
 export function createSupabaseStore(db: Db): EngineStore {
   async function product(shopId: string, productId: string | null) {
     if (productId === null) return null;
-    const { data, error } = await db
-      .from("products")
-      .select("id, name, description")
-      .eq("id", productId)
-      .eq("shop_id", shopId)
-      .maybeSingle();
+    const [{ data, error }, facts] = await Promise.all([
+      db.from("products").select("id, name, description").eq("id", productId).eq("shop_id", shopId).maybeSingle(),
+      activeProductFacts(db, shopId, [productId]),
+    ]);
     if (error) throw new Error(`products: ${error.message}`);
     if (!data) return null;
-    const facts = await activeProductFacts(db, shopId, [data.id]);
     return { ...data, description: withFacts(data.description, facts.get(data.id) ?? []) };
   }
 
   async function previousTurnState(shopId: string, conversationId: string) {
     const { data, error } = await db
       .from("ai_turns")
-      .select("tool_calls, handoff_reason, handoff_offer")
+      .select("id, tool_calls, handoff_reason, handoff_offer")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
@@ -81,12 +81,13 @@ export function createSupabaseStore(db: Db): EngineStore {
       .limit(1)
       .maybeSingle();
     if (error) throw new Error(`ai_turns: ${error.message}`);
-    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
+    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null, previousTurnId: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
     return {
       previousTurnMissedProduct: logs.success && searchMissed(logs.data),
       previousQuote: logs.success ? latestQuote(logs.data) : null,
       previousHandoffOffer: data.handoff_offer,
+      previousTurnId: data.id,
     };
   }
 
@@ -165,11 +166,12 @@ export function createSupabaseStore(db: Db): EngineStore {
       return data.id;
     },
 
-    async recordGap(ctx, gap) {
+    async recordGap(ctx, gap, turnId) {
       if (ctx.conversationId === null) return;
       const { error } = await db.from("data_gaps").insert({
         shop_id: ctx.shopId,
         conversation_id: ctx.conversationId,
+        ai_turn_id: turnId,
         reason: gap.reason,
         question: gap.question,
         product_id: gap.productId,
@@ -177,22 +179,9 @@ export function createSupabaseStore(db: Db): EngineStore {
       if (error) throw new Error(`data_gaps: ${error.message}`);
     },
 
-    // The newest open gap of the conversation is the one the offer was made for.
-    async declineGap(ctx) {
-      if (ctx.conversationId === null) return;
-      const { data, error } = await db
-        .from("data_gaps")
-        .select("id")
-        .eq("shop_id", ctx.shopId)
-        .eq("conversation_id", ctx.conversationId)
-        .eq("status", "open")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    async declineGap(ctx, offerTurnId) {
+      const { error } = await db.from("data_gaps").update({ soft_declined: true }).eq("ai_turn_id", offerTurnId).eq("shop_id", ctx.shopId);
       if (error) throw new Error(`data_gaps: ${error.message}`);
-      if (!data) return;
-      const { error: updateError } = await db.from("data_gaps").update({ soft_declined: true }).eq("id", data.id).eq("shop_id", ctx.shopId);
-      if (updateError) throw new Error(`data_gaps: ${updateError.message}`);
     },
   };
 }

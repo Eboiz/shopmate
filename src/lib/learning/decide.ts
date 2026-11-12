@@ -1,4 +1,4 @@
-import { hasBlank, type PolicyKind } from "@/contract";
+import { hasBlank, type Enums, type PolicyKind } from "@/contract";
 import type { Db } from "@/lib/engine/types";
 
 // PB-35a: what the owner decides on the "AI đã học" page. The server actions pass
@@ -23,35 +23,34 @@ async function exec(what: string, run: Result<unknown>): Promise<void> {
   if (error) throw new Error(`${what}: ${error.message}`);
 }
 
-// "Gỡ" (an active fact) or "Bỏ" (a pending one): the AI stops using it at once,
-// and every question it answered goes back to "Chưa ai trả lời".
-export async function removeFact(db: Db, { shopId, factId, userId }: Who & { factId: string }): Promise<boolean> {
+// One owner decision on a fact in one of the allowed statuses; false when nothing
+// matched (another shop's id, or already decided).
+async function updateFact(
+  db: Db,
+  { shopId, factId, userId }: Who & { factId: string },
+  patch: { status?: "active" | "removed"; text?: string },
+  from: ("active" | "pending")[],
+): Promise<boolean> {
   const rows = await must(
     "learned_facts",
-    db.from("learned_facts").update({ status: "removed", ...decided(userId) }).eq("id", factId).eq("shop_id", shopId).in("status", ["active", "pending"]).select("id"),
+    db.from("learned_facts").update({ ...patch, ...decided(userId) }).eq("id", factId).eq("shop_id", shopId).in("status", from).select("id"),
   );
-  if (rows.length === 0) return false;
-  await exec("data_gaps", db.from("data_gaps").update({ status: "open", learned_fact_id: null }).eq("learned_fact_id", factId).eq("shop_id", shopId));
+  return rows.length > 0;
+}
+
+// "Gỡ" (an active fact) or "Bỏ" (a pending one): the AI stops using it at once,
+// and every question it answered goes back to "Chưa ai trả lời".
+export async function removeFact(db: Db, args: Who & { factId: string }): Promise<boolean> {
+  if (!(await updateFact(db, args, { status: "removed" }, ["active", "pending"]))) return false;
+  await exec("data_gaps", db.from("data_gaps").update({ status: "open", learned_fact_id: null }).eq("learned_fact_id", args.factId).eq("shop_id", args.shopId));
   return true;
 }
 
-export async function approveFact(db: Db, { shopId, factId, userId }: Who & { factId: string }): Promise<boolean> {
-  const rows = await must(
-    "learned_facts",
-    db.from("learned_facts").update({ status: "active", ...decided(userId) }).eq("id", factId).eq("shop_id", shopId).eq("status", "pending").select("id"),
-  );
-  return rows.length > 0;
-}
+export const approveFact = (db: Db, args: Who & { factId: string }) => updateFact(db, args, { status: "active" }, ["pending"]);
 
-export async function editFact(db: Db, { shopId, factId, userId, text }: Who & { factId: string; text: string }): Promise<boolean> {
-  const rows = await must(
-    "learned_facts",
-    db.from("learned_facts").update({ text, ...decided(userId) }).eq("id", factId).eq("shop_id", shopId).in("status", ["active", "pending"]).select("id"),
-  );
-  return rows.length > 0;
-}
+export const editFact = (db: Db, { text, ...args }: Who & { factId: string; text: string }) => updateFact(db, args, { text }, ["active", "pending"]);
 
-export async function setLearningMode(db: Db, shopId: string, mode: "auto" | "review"): Promise<boolean> {
+export async function setLearningMode(db: Db, shopId: string, mode: Enums<"learning_mode">): Promise<boolean> {
   const rows = await must("shops", db.from("shops").update({ learning_mode: mode }).eq("id", shopId).select("id"));
   return rows.length > 0;
 }

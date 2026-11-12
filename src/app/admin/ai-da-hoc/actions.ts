@@ -4,14 +4,14 @@ import { refresh } from "next/cache";
 import { z } from "zod";
 import { idSchema, policyKindSchema, type PolicyKind } from "@/contract";
 import { requireStaff, type StaffProfile } from "@/lib/auth";
-import { NOT_FOUND, SAVE_FAILED } from "@/lib/catalog-write-errors";
+import { NOT_ALLOWED, NOT_FOUND, SAVE_FAILED } from "@/lib/catalog-write-errors";
 import { createDefaultModel } from "@/lib/engine/anthropic-model";
 import { analyzeGaps } from "@/lib/learning";
 import * as decide from "@/lib/learning/decide";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { FormState } from "../products/form-state";
-import { gapWindowStart } from "./data";
+import { gapWindowStart, LEARNABLE_GAP_REASONS } from "@/lib/engine/data-gap";
 
 // Server actions for /admin/ai-da-hoc (PB-35a). They can be called with a direct
 // POST, so each one reads the session again and uses its shop and user, never
@@ -19,7 +19,6 @@ import { gapWindowStart } from "./data";
 // clear message without a round trip. approveTopic inserts with the secret key
 // and draftTopics writes nothing, so for those two the role check is the guard.
 
-const OWNER_ONLY = "Chỉ chủ shop được thay đổi mục này.";
 const DRAFT_FAILED = "Chưa soạn được, thử lại";
 const BLANK_LEFT = "Còn chỗ trống trong ngoặc vuông. Thay bằng câu trả lời thật của shop rồi duyệt.";
 
@@ -46,7 +45,7 @@ async function ownerDecide<S extends z.ZodType>(
   if (!parsed.success) return fail(parsed.error.issues[0].message);
 
   const who = await requireStaff();
-  if (who.role !== "owner") return fail(OWNER_ONLY);
+  if (who.role !== "owner") return fail(NOT_ALLOWED);
 
   try {
     const error = await run(parsed.data, who);
@@ -120,14 +119,14 @@ export type DraftResult = { ok: true; topics: DraftTopic[] } | { ok: false; erro
 // the shop answered. Topics are not stored.
 export async function draftTopics(): Promise<DraftResult> {
   const { shopId, role } = await requireStaff();
-  if (role !== "owner") return { ok: false, error: OWNER_ONLY };
+  if (role !== "owner") return { ok: false, error: NOT_ALLOWED };
 
   try {
     const { data, error } = await (await createClient())
       .from("data_gaps")
       .select("id, conversation_id, reason, question, status")
       .eq("shop_id", shopId)
-      .in("reason", ["policy_not_covered", "not_covered_by_data"])
+      .in("reason", LEARNABLE_GAP_REASONS)
       .in("status", ["open", "learned"])
       .gte("created_at", gapWindowStart())
       .order("created_at", { ascending: false });

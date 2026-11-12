@@ -4,7 +4,7 @@ import { Icon } from "@/components/ui/icon";
 import { signOut } from "../login/actions";
 import { AdminNav } from "./admin-nav";
 
-export function AdminShell({ children, email, previewPath, showNav = true, badges }: { children: ReactNode; email?: string; previewPath?: string; showNav?: boolean; badges?: Record<string, number> }) {
+export function AdminShell({ children, email, previewPath, showNav = true, pendingFacts }: { children: ReactNode; email?: string; previewPath?: string; showNav?: boolean; pendingFacts?: Promise<number> }) {
   return (
     <div className="flex min-h-dvh flex-1 flex-col bg-[#f5f3ef]">
       <header className="sticky top-0 z-30 flex min-h-18 items-center justify-between gap-4 border-b border-[#e3dfd8] bg-white/95 px-4 py-3 backdrop-blur-xl sm:px-7 lg:px-9">
@@ -21,7 +21,7 @@ export function AdminShell({ children, email, previewPath, showNav = true, badge
         )}
       </header>
       <div className="mx-auto flex w-full max-w-[1700px] flex-1">
-        {showNav && <AdminNav previewPath={previewPath} badges={badges} />}
+        {showNav && <AdminNav previewPath={previewPath} pendingFacts={pendingFacts} />}
         <main className="min-w-0 flex-1 px-4 py-8 pb-28 sm:px-7 lg:px-10 lg:py-10">{children}</main>
       </div>
     </div>

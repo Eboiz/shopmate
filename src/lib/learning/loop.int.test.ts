@@ -92,4 +92,27 @@ describe("PB-35a closed loop", () => {
     const { data: reopened } = await db.from("data_gaps").select("status, learned_fact_id").eq("id", gaps![0].id).single();
     expect(reopened).toEqual({ status: "open", learned_fact_id: null });
   });
+
+  it("'Không cần' marks the question of the offer turn, never an older open one", async () => {
+    const { data: older } = await db
+      .from("data_gaps")
+      .insert({ shop_id: A, conversation_id: FX.a.conversation, reason: "policy_not_covered", question: "Câu cũ chưa ai trả lời" })
+      .select("id")
+      .single();
+    // An off-topic offer reads no data, so it records no question.
+    const offTopic = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text: "Bạn tên gì?" }] },
+      { model: scriptedModel([finalJson({ text: `Dạ mình chỉ hỗ trợ về sản phẩm của shop. ${OFFER_QUESTION}`, productIds: [], quickReplies: [] })]), db, store, onMetrics: () => {} },
+    );
+    await offTopic.turnLogged;
+    const { data: offerTurn } = await db.from("ai_turns").select("handoff_offer").eq("conversation_id", FX.a.conversation).order("created_at", { ascending: false }).limit(1).single();
+    expect(offerTurn?.handoff_offer).not.toBeNull();
+    const decline = await runEngine(
+      { mode: "customer", conversationId: FX.a.conversation, history: [{ sender: "shopper", text: "Bạn tên gì?" }, { sender: "ai", text: OFFER_QUESTION }, { sender: "shopper", text: "Không cần" }] },
+      { model: scriptedModel([]), db, store, onMetrics: () => {} },
+    );
+    await decline.turnLogged;
+    const { data: gaps } = await db.from("data_gaps").select("id, question, soft_declined").eq("shop_id", A).order("created_at");
+    expect(gaps).toEqual([{ id: older!.id, question: "Câu cũ chưa ai trả lời", soft_declined: false }]);
+  });
 });

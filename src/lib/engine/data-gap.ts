@@ -1,4 +1,4 @@
-import type { EngineMode, HandoffReason, ToolCallLog } from "@/contract";
+import type { EngineMode, GapReason, HandoffReason, ToolCallLog } from "@/contract";
 import type { OfferAnswer, OfferReason } from "./handoff-offer";
 
 // PB-35a: which customer turns record a question the AI couldn't answer
@@ -26,9 +26,15 @@ export type GapTurn = {
   intent: string | null;
 };
 
-export type Gap = { reason: "policy_not_covered" | "not_covered_by_data" | "product_not_found"; question: string; productId: string | null };
+export type Gap = { reason: GapReason; question: string; productId: string | null };
 
-const QUESTION_MAX = 500;
+const QUESTION_MAX = 500; // gapQuestionSchema.question
+
+// Shared by the page, "Soạn câu trả lời" and learning from staff, so all three see
+// the same questions: the last 7 days, and only reasons the AI can learn.
+export const GAP_WINDOW_DAYS = 7;
+export const gapWindowStart = () => new Date(Date.now() - GAP_WINDOW_DAYS * 86_400_000).toISOString();
+export const LEARNABLE_GAP_REASONS = ["policy_not_covered", "not_covered_by_data"] as const satisfies readonly GapReason[];
 
 export function gapOfTurn(turn: GapTurn): Gap | null {
   const question = turn.question.trim().slice(0, QUESTION_MAX);
@@ -46,7 +52,10 @@ export function gapOfTurn(turn: GapTurn): Gap | null {
   const aboutProductOnScreen = turn.intent === "product_detail" && turn.productId !== null;
   if (turn.offerMade === "not_covered_by_data" && !readPolicy && found.length === 0 && !aboutProductOnScreen) return null;
 
-  const productId = readPolicy ? null : aboutProductOnScreen ? turn.productId : found.length === 1 ? found[0] : (turn.productId ?? null);
+  // A policy question is about no product; otherwise the product on screen, or the
+  // one product a search found.
+  let productId: string | null = null;
+  if (!readPolicy) productId = !aboutProductOnScreen && found.length === 1 ? found[0] : turn.productId;
   return { reason: turn.offerMade, question, productId };
 }
 

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GapTopicProposal } from "@/contract";
+import { NOT_ALLOWED } from "@/lib/catalog-write-errors";
 
 const SHOP = "a0000000-0000-4000-8000-000000000001";
 const OWNER = "a0000000-0000-4000-8000-000000000070";
@@ -90,14 +91,14 @@ beforeEach(() => {
 describe("staff (PB-35a)", () => {
   it.each(writes)("%s is refused without touching the database", async (_name, action, values) => {
     const state = await action(NONE, form(values));
-    expect(state.error).toBe("Chỉ chủ shop được thay đổi mục này.");
+    expect(state.error).toBe(NOT_ALLOWED);
     expect(createClient).not.toHaveBeenCalled();
     for (const fn of Object.values(decide)) expect(fn).not.toHaveBeenCalled();
     expect(refresh).not.toHaveBeenCalled();
   });
 
   it("can't run Soạn câu trả lời, and the model is never called", async () => {
-    expect(await actions.draftTopics()).toEqual({ ok: false, error: "Chỉ chủ shop được thay đổi mục này." });
+    expect(await actions.draftTopics()).toEqual({ ok: false, error: NOT_ALLOWED });
     expect(createClient).not.toHaveBeenCalled();
     expect(analyzeGaps).not.toHaveBeenCalled();
   });

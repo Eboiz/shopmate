@@ -1,5 +1,7 @@
 import type { LearnInput, LearnResult } from "@/contract";
 import { createDefaultModel } from "@/lib/engine/anthropic-model";
+import { gapWindowStart, LEARNABLE_GAP_REASONS } from "@/lib/engine/data-gap";
+import { withFacts } from "@/lib/engine/learned-facts";
 import type { Db } from "@/lib/engine/types";
 import { learnFromStaffReply } from "./learn";
 
@@ -14,23 +16,21 @@ import { learnFromStaffReply } from "./learn";
 // policy fact. Stored as the contract says: learn + no review + shop in auto
 // mode -> active, other learn -> pending, skip or error -> nothing, question reopened.
 
-export type LearnOutcome = "active" | "pending" | "skipped" | "no_gap";
-export type StaffMessage = { shopId: string; conversationId: string; messageId: string; text: string };
+type StaffLearnOutcome = "active" | "pending" | "skipped" | "no_gap";
+type StaffMessage = { shopId: string; conversationId: string; messageId: string; text: string };
 type Learn = (input: LearnInput) => Promise<LearnResult>;
 
-const GAP_DAYS = 7;
 const defaultLearn: Learn = (input) => learnFromStaffReply(input, { model: createDefaultModel() });
 
-export async function learnFromStaffMessage(db: Db, msg: StaffMessage, learn: Learn = defaultLearn): Promise<LearnOutcome> {
-  const since = new Date(Date.now() - GAP_DAYS * 24 * 3600 * 1000).toISOString();
+export async function learnFromStaffMessage(db: Db, msg: StaffMessage, learn: Learn = defaultLearn): Promise<StaffLearnOutcome> {
   const { data: open, error } = await db
     .from("data_gaps")
     .select("id")
     .eq("shop_id", msg.shopId)
     .eq("conversation_id", msg.conversationId)
     .eq("status", "open")
-    .in("reason", ["policy_not_covered", "not_covered_by_data"])
-    .gte("created_at", since)
+    .in("reason", LEARNABLE_GAP_REASONS)
+    .gte("created_at", gapWindowStart())
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -49,17 +49,25 @@ export async function learnFromStaffMessage(db: Db, msg: StaffMessage, learn: Le
 
   const reopen = () => db.from("data_gaps").update({ status: "open" }).eq("id", gap.id);
   try {
-    const [policies, shop] = await Promise.all([
+    // The policies as get_policy returns them (learned facts included), so the
+    // learner sees a conflict with something it learned before.
+    const [policies, facts, shop] = await Promise.all([
       db.from("policies").select("kind, content").eq("shop_id", msg.shopId),
+      db.from("learned_facts").select("policy_kind, text").eq("shop_id", msg.shopId).eq("status", "active").not("policy_kind", "is", null).order("created_at"),
       db.from("shops").select("learning_mode").eq("id", msg.shopId).single(),
     ]);
     if (policies.error) throw new Error(`policies: ${policies.error.message}`);
+    if (facts.error) throw new Error(`learned_facts: ${facts.error.message}`);
     if (shop.error) throw new Error(`shops: ${shop.error.message}`);
+    const kinds = [...new Set([...policies.data.map((p) => p.kind), ...facts.data.flatMap((f) => (f.policy_kind ? [f.policy_kind] : []))])];
 
     const result = await learn({
       question: gap.question,
       staffReply: msg.text,
-      policies: policies.data.map((p) => ({ kind: p.kind, content: p.content.trim() ? p.content : null })),
+      policies: kinds.map((kind) => ({
+        kind,
+        content: withFacts(policies.data.find((p) => p.kind === kind)?.content, facts.data.filter((f) => f.policy_kind === kind).map((f) => f.text)),
+      })),
     });
     if (result.status === "skip") {
       await reopen();

@@ -49,7 +49,9 @@ create table public.data_gaps (
   question text not null check (btrim(question) <> '' and char_length(question) <= 500),
   -- The product the shopper was asking about, when the turn had one (for product facts).
   product_id uuid,
-  -- The shopper answered "Không cần" to the offer of staff (PB-31).
+  -- The turn that offered staff for this question; "Không cần" on the next turn
+  -- marks exactly this gap soft_declined (PB-31).
+  ai_turn_id uuid references public.ai_turns (id) on delete set null,
   soft_declined boolean not null default false,
   status public.gap_status not null default 'open',
   -- Set while status = learned. Removing the fact reopens every gap pointing at it.

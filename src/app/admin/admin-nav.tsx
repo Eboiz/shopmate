@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense, use } from "react";
 import { usePathname } from "next/navigation";
 import { ADMIN_NAV, isNavItemActive } from "@/lib/admin-nav";
 import { Icon } from "@/components/ui/icon";
 
 const NAV_ICONS = { "/admin": "grid", "/admin/inbox": "chat", "/admin/orders": "box", "/admin/products": "hanger", "/admin/reply-assistant": "spark", "/admin/ai-da-hoc": "book" } as const;
 
-// badges: a count shown on a nav item (pending facts on "AI đã học").
-export function AdminNav({ previewPath, badges = {} }: { previewPath?: string; badges?: Record<string, number> } = {}) {
+// pendingFacts: the count on "AI đã học" (PB-35a). A promise, so no page waits for it.
+export function AdminNav({ previewPath, pendingFacts }: { previewPath?: string; pendingFacts?: Promise<number> } = {}) {
   const pathname = usePathname();
 
   return (
@@ -19,7 +20,6 @@ export function AdminNav({ previewPath, badges = {} }: { previewPath?: string; b
       <p className="mb-2 hidden px-4 text-[10px] font-bold uppercase tracking-[.2em] text-[#99958e] lg:block">Điều hướng</p>
       {ADMIN_NAV.map(({ href, label }) => {
         const active = isNavItemActive(previewPath ?? pathname, href);
-        const badge = badges[href] ?? 0;
         return (
           <Link
             key={href}
@@ -31,15 +31,25 @@ export function AdminNav({ previewPath, badges = {} }: { previewPath?: string; b
           >
             <Icon name={NAV_ICONS[href]} className="size-5 shrink-0" />
             <span>{label}</span>
-            {badge > 0 && (
-              <span className={`absolute left-[calc(50%+4px)] top-2 min-w-4 rounded-full bg-[#c2412b] px-1 text-[10px] font-bold leading-4 text-white lg:static lg:ml-auto lg:min-w-5 lg:text-xs lg:leading-5 ${active ? "lg:bg-white lg:text-[#c2412b]" : ""}`}>
-                {badge}
-                <span className="sr-only"> mục chờ duyệt</span>
-              </span>
+            {href === "/admin/ai-da-hoc" && pendingFacts && (
+              <Suspense fallback={null}>
+                <PendingBadge count={pendingFacts} active={active} />
+              </Suspense>
             )}
           </Link>
         );
       })}
     </nav>
+  );
+}
+
+function PendingBadge({ count, active }: { count: Promise<number>; active: boolean }) {
+  const n = use(count);
+  if (n <= 0) return null;
+  return (
+    <span className={`absolute left-[calc(50%+4px)] top-2 min-w-4 rounded-full bg-[#c2412b] px-1 text-[10px] font-bold leading-4 text-white lg:static lg:ml-auto lg:min-w-5 lg:text-xs lg:leading-5 ${active ? "lg:bg-white lg:text-[#c2412b]" : ""}`}>
+      {n}
+      <span className="sr-only"> mục chờ duyệt</span>
+    </span>
   );
 }

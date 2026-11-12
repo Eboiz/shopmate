@@ -894,24 +894,24 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     console.error("engine: metrics sink failed", e);
   }
 
-  // PB-35a: a question the AI couldn't answer from the shop's data is recorded so
-  // staff's answer can be learned; "Không cần" marks it declined. Never fails the turn.
-  async function recordGap() {
-    if (ctx.conversationId === null) return;
+  // PB-35a: a question the AI couldn't answer from the shop's data is recorded with
+  // this turn's id; "Không cần" marks the gap the previous (offer) turn recorded.
+  // Never fails the turn.
+  async function recordGap(turnId: string) {
     try {
       const gap = gapOfTurn({
         mode,
         question: lastText,
         handoff,
-        offerMade: handoff ? null : (offerMade as OfferReason | null),
+        offerMade: offerMade as OfferReason | null,
         offerAnswer: answer,
         productMissedTwice,
         logs,
         productId: tc.product?.id ?? null,
         intent: route.path === "router" ? (route.intent ?? null) : null,
       });
-      if (gap) await deps.store.recordGap?.(ctx, gap);
-      if (answer === "no") await deps.store.declineGap?.(ctx);
+      if (gap) await deps.store.recordGap?.(ctx, gap, turnId);
+      if (answer === "no" && tc.previousTurnId) await deps.store.declineGap?.(ctx, tc.previousTurnId);
     } catch (e) {
       console.error("engine: failed to write data_gaps", e);
     }
@@ -919,7 +919,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   const turnLogged = (async () => {
     try {
-      const [row] = await Promise.all([deps.store.insertTurn({
+      const turn = deps.store.insertTurn({
         shop_id: ctx.shopId,
         conversation_id: ctx.conversationId,
         mode,
@@ -933,8 +933,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         model_calls: modelCalls.length,
         model: deps.modelName,
         prompt_version: PROMPT_VERSION,
-      }), sinkDone]);
-      await recordGap();
+      });
+      const [row] = await Promise.all([turn, sinkDone, turn.then(recordGap, () => {})]);
       return row;
     } catch (e) {
       console.error("engine: failed to write ai_turns", e);

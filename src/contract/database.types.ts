@@ -93,17 +93,23 @@ isOneToOne: false
                   ]
                 },"data_gaps": {
                   Row: {
-                    "conversation_id": string,"created_at": string,"id": string,"learned_fact_id": string | null,"product_id": string | null,"question": string,"reason": Database["public"]['Enums']["gap_reason"],"shop_id": string,"soft_declined": boolean,"status": Database["public"]['Enums']["gap_status"]
+                    "ai_turn_id": string | null,"conversation_id": string,"created_at": string,"id": string,"learned_fact_id": string | null,"product_id": string | null,"question": string,"reason": Database["public"]['Enums']["gap_reason"],"shop_id": string,"soft_declined": boolean,"status": Database["public"]['Enums']["gap_status"]
                   }
                   ComputedFields: never
                   Insert: {
-                    "conversation_id": string,"created_at"?: string,"id"?: string,"learned_fact_id"?: string | null,"product_id"?: string | null,"question": string,"reason": Database["public"]['Enums']["gap_reason"],"shop_id": string,"soft_declined"?: boolean,"status"?: Database["public"]['Enums']["gap_status"]
+                    "ai_turn_id"?: string | null,"conversation_id": string,"created_at"?: string,"id"?: string,"learned_fact_id"?: string | null,"product_id"?: string | null,"question": string,"reason": Database["public"]['Enums']["gap_reason"],"shop_id": string,"soft_declined"?: boolean,"status"?: Database["public"]['Enums']["gap_status"]
                   }
                   Update: {
-                    "conversation_id"?: string,"created_at"?: string,"id"?: string,"learned_fact_id"?: string | null,"product_id"?: string | null,"question"?: string,"reason"?: Database["public"]['Enums']["gap_reason"],"shop_id"?: string,"soft_declined"?: boolean,"status"?: Database["public"]['Enums']["gap_status"]
+                    "ai_turn_id"?: string | null,"conversation_id"?: string,"created_at"?: string,"id"?: string,"learned_fact_id"?: string | null,"product_id"?: string | null,"question"?: string,"reason"?: Database["public"]['Enums']["gap_reason"],"shop_id"?: string,"soft_declined"?: boolean,"status"?: Database["public"]['Enums']["gap_status"]
                   }
                   Relationships: [
                     {
+      foreignKeyName: "data_gaps_ai_turn_id_fkey"
+      columns: ["ai_turn_id"]
+isOneToOne: false
+      referencedRelation: "ai_turns"
+      referencedColumns: ["id"]
+    },{
       foreignKeyName: "data_gaps_conversation_id_shop_id_fkey"
       columns: ["conversation_id","shop_id"]
 isOneToOne: false

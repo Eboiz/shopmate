@@ -1,5 +1,6 @@
 import "server-only";
-import type { Database } from "@/contract";
+import type { Database, Tables } from "@/contract";
+import { gapWindowStart } from "@/lib/engine/data-gap";
 import { POLICY_LABELS } from "@/lib/shop-data-validation";
 import { createClient } from "@/lib/supabase/server";
 
@@ -7,9 +8,6 @@ import { createClient } from "@/lib/supabase/server";
 // owner and staff can both read; RLS keeps them to their own shop.
 
 type LearningMode = Database["public"]["Enums"]["learning_mode"];
-
-const GAP_DAYS = 7;
-export const gapWindowStart = () => new Date(Date.now() - GAP_DAYS * 86_400_000).toISOString();
 
 const REVIEW_REASONS: Record<string, string> = {
   discount: "Có nhắc giảm giá",
@@ -20,10 +18,10 @@ const REVIEW_REASONS: Record<string, string> = {
 };
 const PRODUCT_REVIEW = "Thông tin sản phẩm, cần chủ shop duyệt";
 
-const GAP_REASONS: Record<string, string> = {
+// Shown only on "Chưa ai trả lời"; product_not_found rows go to "Món chưa có".
+const GAP_REASONS: Partial<Record<Database["public"]["Enums"]["gap_reason"], string>> = {
   policy_not_covered: "Chính sách chưa nói tới",
   not_covered_by_data: "Dữ liệu shop chưa có",
-  product_not_found: "Shop chưa có món này",
 };
 
 const vnTime = new Intl.DateTimeFormat("vi-VN", {
@@ -71,7 +69,8 @@ export async function getLearningPage(shopId: string): Promise<LearningPageData>
       .select("id, text, status, policy_kind, review_reasons, created_at, products(name), messages(text, conversation_id), data_gaps(conversation_id, question)")
       .eq("shop_id", shopId)
       .in("status", ["active", "pending"])
-      .order("created_at", { ascending: false }),
+      .order("created_at", { ascending: false })
+      .limit(1, { referencedTable: "data_gaps" }),
     db
       .from("data_gaps")
       .select("id, conversation_id, reason, question, soft_declined, created_at")
@@ -84,42 +83,35 @@ export async function getLearningPage(shopId: string): Promise<LearningPageData>
   if (facts.error) throw new Error(`learned_facts: ${facts.error.message}`);
   if (gaps.error) throw new Error(`data_gaps: ${gaps.error.message}`);
 
-  const factViews = facts.data.map((f) => {
+  const toFact = (f: (typeof facts.data)[number]): FactView => {
     const gap = f.data_gaps[0];
     const reasons = f.review_reasons.map((r) => REVIEW_REASONS[r] ?? r);
     if (f.products) reasons.push(PRODUCT_REVIEW);
     return {
-      status: f.status,
-      view: {
-        id: f.id,
-        text: f.text,
-        label: f.products ? `Sản phẩm · ${f.products.name}` : `Chính sách · ${f.policy_kind ? POLICY_LABELS[f.policy_kind] : ""}`,
-        reasons,
-        staffText: f.messages?.text ?? null,
-        question: gap?.question ?? null,
-        conversationId: f.messages?.conversation_id ?? gap?.conversation_id ?? null,
-        time: vnTime.format(new Date(f.created_at)),
-      } satisfies FactView,
+      id: f.id,
+      text: f.text,
+      label: f.products ? `Sản phẩm · ${f.products.name}` : `Chính sách · ${f.policy_kind ? POLICY_LABELS[f.policy_kind] : ""}`,
+      reasons,
+      staffText: f.messages?.text ?? null,
+      question: gap?.question ?? null,
+      conversationId: f.messages?.conversation_id ?? gap?.conversation_id ?? null,
+      time: vnTime.format(new Date(f.created_at)),
     };
+  };
+  const toGap = (g: Pick<Tables<"data_gaps">, "id" | "question" | "reason" | "soft_declined" | "conversation_id" | "created_at">): GapView => ({
+    id: g.id,
+    question: g.question,
+    reasonLabel: GAP_REASONS[g.reason] ?? "",
+    softDeclined: g.soft_declined,
+    conversationId: g.conversation_id,
+    time: vnTime.format(new Date(g.created_at)),
   });
-
-  const gapViews = gaps.data.map((g) => ({
-    reason: g.reason,
-    view: {
-      id: g.id,
-      question: g.question,
-      reasonLabel: GAP_REASONS[g.reason],
-      softDeclined: g.soft_declined,
-      conversationId: g.conversation_id,
-      time: vnTime.format(new Date(g.created_at)),
-    } satisfies GapView,
-  }));
 
   return {
     mode: shop.data.learning_mode,
-    pending: factViews.filter((f) => f.status === "pending").map((f) => f.view),
-    learned: factViews.filter((f) => f.status === "active").map((f) => f.view),
-    questions: gapViews.filter((g) => g.reason !== "product_not_found").map((g) => g.view),
-    requests: gapViews.filter((g) => g.reason === "product_not_found").map((g) => g.view),
+    pending: facts.data.filter((f) => f.status === "pending").map(toFact),
+    learned: facts.data.filter((f) => f.status === "active").map(toFact),
+    questions: gaps.data.filter((g) => g.reason !== "product_not_found").map(toGap),
+    requests: gaps.data.filter((g) => g.reason === "product_not_found").map(toGap),
   };
 }
