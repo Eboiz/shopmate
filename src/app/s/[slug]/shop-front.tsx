@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -11,7 +12,7 @@ import { ProductCard } from "@/components/ui/product-card";
 import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { compareSizes } from "@/lib/size-order";
-import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
+import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, readShopFilters, searchFromQuery, shopFilterQuery, type ProductGroup, type ShopFilters, type ShopSort } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
 import { cartCount, cartMessage, useCart, type CartItem } from "./cart";
 import { cartItemFor, onlyChoice, productOptions, QuickAdd } from "./quick-add";
@@ -31,11 +32,12 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [catalogNotFound, setCatalogNotFound] = useState(false);
   const [catalogRetry, setCatalogRetry] = useState(0);
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("group");
-  const [group, setGroup] = useState<ProductGroup | "">("");
-  const [sizeFilter, setSizeFilter] = useState("");
-  const [shown, setShown] = useState(PAGE_SIZE);
+  // Filters live in the URL. The search box keeps its own state: Next updates
+  // useSearchParams inside a transition, which would drop keystrokes.
+  const searchParams = useSearchParams();
+  const [search, setSearch] = useState(() => searchFromQuery(searchParams));
+  // How many products "Xem thêm" has revealed, for one set of filters.
+  const [more, setMore] = useState({ key: "", count: PAGE_SIZE });
   const [cartOpen, setCartOpen] = useState(false);
   const cart = useCart(slug);
   // The order message the cart put in the chat; the cart empties once it is sent.
@@ -72,6 +74,15 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   useEffect(() => {
     if (detailProductId && !catalogLoading) window.scrollTo({ top: 0, behavior: "instant" });
   }, [detailProductId, catalogLoading]);
+
+  // The search box takes the URL's search on back/forward, and when a link
+  // brings back this page, which Next keeps alive (Activity) with its old state.
+  useLayoutEffect(() => {
+    const syncSearch = () => setSearch(searchFromQuery(new URLSearchParams(window.location.search)));
+    syncSearch();
+    window.addEventListener("popstate", syncSearch);
+    return () => window.removeEventListener("popstate", syncSearch);
+  }, []);
 
   useEffect(() => {
     if (previewCatalog) return;
@@ -368,6 +379,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   for (const item of grouped) groupCounts.set(item.group, (groupCounts.get(item.group) ?? 0) + 1);
   const groupChips = ([...PRODUCT_GROUPS, OTHER_GROUP] as ProductGroup[]).filter((name) => groupCounts.has(name));
   const allSizes = [...new Set(products.flatMap((product) => product.sizesInStock))].sort(compareSizes);
+  const { group, size: sizeFilter, sort } = readShopFilters(searchParams, { groups: groupChips, sizes: allSizes });
   const filtered = grouped
     .filter((item) => !group || item.group === group)
     .filter((item) => !sizeFilter || item.product.sizesInStock.includes(sizeFilter))
@@ -378,20 +390,21 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       return groupRank(a.group) - groupRank(b.group) || a.index - b.index;
     })
     .map((item) => item.product);
+  // Any filter change starts the list again from the first page.
+  const filterKey = [group, sizeFilter, sort, search].join("|");
+  const shown = more.key === filterKey ? more.count : PAGE_SIZE;
   const visibleProducts = filtered.slice(0, shown);
   const filtering = group !== "" || sizeFilter !== "" || search.trim() !== "";
-  // Any filter change starts the list again from the first page.
-  const filterBy = <T,>(set: (value: T) => void) => (value: T) => { set(value); setShown(PAGE_SIZE); };
-  const chooseGroup = filterBy(setGroup);
-  const chooseSize = filterBy(setSizeFilter);
-  const chooseSearch = filterBy(setSearch);
-  const chooseSort = filterBy(setSort);
-  function clearFilters() {
-    setGroup("");
-    setSizeFilter("");
-    setSearch("");
-    setShown(PAGE_SIZE);
+  // A choice adds a history entry (back undoes it); typing in the search box replaces it.
+  function setFilters(change: Partial<ShopFilters>, history: "push" | "replace" = "push") {
+    const next = { group, size: sizeFilter, sort, search, ...change };
+    const { pathname, search: query, hash } = window.location;
+    const url = `${pathname}${shopFilterQuery(next, new URLSearchParams(query))}${hash}`;
+    // Choosing the filter already shown adds no history entry.
+    if (url !== `${pathname}${query}${hash}`) window.history[history === "push" ? "pushState" : "replaceState"](null, "", url);
+    if (change.search !== undefined) setSearch(change.search);
   }
+  const clearFilters = () => setFilters({ group: "", size: "", search: "" });
   const groupLinks: GroupLink[] = groupChips.map((name) => ({
     name,
     count: groupCounts.get(name) ?? 0,
@@ -399,15 +412,12 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   }));
   // Menus, tiles and the footer pick a group and bring the grid into view.
   function showGroup(name: string) {
-    chooseGroup(name as ProductGroup);
-    setSearch("");
+    setFilters({ group: name as ProductGroup, search: "" });
     document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
   }
   // The header search shows all its matches in the grid, across every group.
   function searchProducts(query: string) {
-    setGroup("");
-    setSizeFilter("");
-    chooseSearch(query);
+    setFilters({ group: "", size: "", search: query });
     document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
   }
   const inStock = products.filter((product) => product.sizesInStock.length > 0);
@@ -476,17 +486,17 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
               {groupTabs.length > 2 && (
                 <div role="group" aria-label="Nhóm sản phẩm" className="-mx-4 flex gap-6 overflow-x-auto border-b border-[#e3dfd8] px-4 [scrollbar-width:none] sm:mx-0 sm:px-0">
                   {groupTabs.map((tab) => (
-                    <button key={tab.label} type="button" aria-pressed={group === tab.name} onClick={() => chooseGroup(tab.name)} className={`-mb-px inline-flex min-h-12 shrink-0 items-center gap-1.5 border-b-2 text-xs font-extrabold uppercase tracking-[.12em] transition-colors ${group === tab.name ? "border-[#171717] text-[#171717]" : "border-transparent text-[#706d67] hover:text-[#171717]"}`}>
+                    <button key={tab.label} type="button" aria-pressed={group === tab.name} onClick={() => setFilters({ group: tab.name })} className={`-mb-px inline-flex min-h-12 shrink-0 items-center gap-1.5 border-b-2 text-xs font-extrabold uppercase tracking-[.12em] transition-colors ${group === tab.name ? "border-[#171717] text-[#171717]" : "border-transparent text-[#706d67] hover:text-[#171717]"}`}>
                       {tab.label} <span className="font-semibold tabular-nums tracking-normal">{tab.count}</span>
                     </button>
                   ))}
                 </div>
               )}
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-80"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => chooseSearch(event.target.value)} placeholder="Tìm theo tên, nhóm, màu..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label>
+                <label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-80"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => setFilters({ search: event.target.value }, "replace")} placeholder="Tìm theo tên, nhóm, màu..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label>
                 <div className="flex flex-wrap gap-3">
-                  {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => chooseSize(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
-                  <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => chooseSort(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="group">Theo nhóm</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label>
+                  {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => setFilters({ size: event.target.value })} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
+                  <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => setFilters({ sort: event.target.value as ShopSort })} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="group">Theo nhóm</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label>
                 </div>
               </div>
             </div>
@@ -528,7 +538,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
               </div>
               {filtered.length > visibleProducts.length && (
                 <div className="mt-10 flex flex-col items-center gap-2">
-                  <button type="button" onClick={() => setShown((value) => value + PAGE_SIZE)} className="inline-flex min-h-12 items-center border-[1.5px] border-[#171717] px-6 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
+                  <button type="button" onClick={() => setMore({ key: filterKey, count: shown + PAGE_SIZE })} className="inline-flex min-h-12 items-center border-[1.5px] border-[#171717] px-6 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
                   <p className="text-xs tabular-nums text-[#706d67]">Đang xem {visibleProducts.length} / {filtered.length}</p>
                 </div>
               )}

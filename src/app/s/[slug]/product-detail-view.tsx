@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
 import { compareSizes } from "@/lib/size-order";
-import { displayColor, firstSentence, productGroup } from "@/lib/shop/catalog-view";
+import { displayColor, firstSentence, productGroup, shopFilterQuery } from "@/lib/shop/catalog-view";
 import type { ShopCatalog, ShopProduct } from "@/lib/shop/types";
 import type { CartItem } from "./cart";
 import { SizeGuide } from "./size-guide";
@@ -103,7 +103,7 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
       <div className="mx-auto max-w-[1400px] px-4 pb-20 pt-6 sm:px-6 lg:px-10">
         <nav aria-label="Đường dẫn trang" className="mb-6 flex flex-wrap items-center gap-2 text-xs text-[#706d67]">
           <Link href={shopHref} className="hover:text-[#c2412b]">Cửa hàng</Link><span aria-hidden="true">/</span>
-          <Link href={`${shopHref}#san-pham`} className="hover:text-[#c2412b]">{group}</Link><span aria-hidden="true">/</span>
+          <Link href={`${shopHref}${shopFilterQuery({ group, search: "", size: "", sort: "group" }, new URLSearchParams())}#san-pham`} className="hover:text-[#c2412b]">{group}</Link><span aria-hidden="true">/</span>
           <span aria-current="page" className="font-semibold text-[#171717]">{product.name}</span>
         </nav>
 
