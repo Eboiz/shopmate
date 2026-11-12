@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { countByMode, emptyFilter, filterConversations, foldSearch, formatListTime, initialOf } from "./inbox-filter";
+import {
+  avatarInitial, countByMode, customerLabel, emptyFilter, filterConversations, foldSearch, formatListTime, initialOf,
+} from "./inbox-filter";
 import type { InboxConversation } from "./inbox-live";
 
 function conversation(overrides: Partial<InboxConversation>): InboxConversation {
@@ -61,5 +63,24 @@ describe("initialOf", () => {
     expect(initialOf("Nguyễn Lân Ánh")).toBe("Á");
     expect(initialOf("Lê Bình (demo 013)")).toBe("B");
     expect(initialOf("  ")).toBe("?");
+  });
+});
+
+describe("customerLabel", () => {
+  it("keeps the name the shopper gave", () => {
+    expect(customerLabel("  Lan Anh ", "web", "3f2a9c")).toBe("Lan Anh");
+  });
+
+  it("tells unnamed shoppers apart by channel and conversation", () => {
+    expect(customerLabel(null, "messenger", "3f2a9c")).toBe("Khách Messenger #3F2A");
+    expect(customerLabel("   ", "web", "b81d00")).toBe("Khách Web chat #B81D");
+  });
+});
+
+describe("avatarInitial", () => {
+  it("uses the given name, or the channel when the shopper has no name", () => {
+    expect(avatarInitial({ customerName: "Nguyễn Thảo", channel: "web" })).toBe("T");
+    expect(avatarInitial({ customerName: "Khách Telegram #AB12", channel: "telegram", unnamed: true })).toBe("T");
+    expect(avatarInitial({ customerName: "Khách Web chat #AB12", channel: "messenger", unnamed: true })).toBe("M");
   });
 });

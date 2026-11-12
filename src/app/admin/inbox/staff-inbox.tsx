@@ -1,28 +1,20 @@
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import type { Channel, ConversationMode, MessageSender } from "@/contract";
+import type { ConversationMode, MessageSender } from "@/contract";
 import { Button } from "@/components/ui/button";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { Icon } from "@/components/ui/icon";
 import { ChatSkeleton, LoadingRegion, Skeleton } from "@/components/ui/skeleton";
 import {
-  historyLimit, listInboxMessages, listLiveConversations, setLiveInboxMode, subscribeInbox,
+  historyLimit, listInboxMessages, listLiveConversations, listTeamNames, setLiveInboxMode, subscribeInbox,
   type InboxConversation, type InboxMessage,
 } from "./inbox-live";
 import {
-  countByMode, emptyFilter, filterConversations, formatListTime, initialOf,
+  avatarInitial, channelLabels, countByMode, emptyFilter, filterConversations, formatListTime,
   type ChannelFilter, type InboxFilter, type ModeFilter,
 } from "./inbox-filter";
 import { formatWaiting, overdueAfterMs, waitingMs } from "./waiting";
-
-const channelLabels: Record<Channel, string> = {
-  web: "Web chat",
-  messenger: "Messenger",
-  instagram: "Instagram",
-  telegram: "Telegram",
-  whatsapp: "WhatsApp",
-};
 
 const modeLabels: Record<ConversationMode, string> = {
   ai: "AI đang trả lời",
@@ -50,6 +42,13 @@ const bubbleStyles: Record<Exclude<MessageSender, "system">, string> = {
   staff: "rounded-br-sm bg-[#171717] text-white",
 };
 
+// The time inside a bubble, readable on each bubble's background.
+const timeStyles: Record<Exclude<MessageSender, "system">, string> = {
+  shopper: "text-[#706d67]",
+  ai: "text-[#6b5c55]",
+  staff: "text-[#c9c5bd]",
+};
+
 const avatarColors = ["bg-[#fde3d9] text-[#9a3412]", "bg-[#e0ecdf] text-[#2f5a32]", "bg-[#e3e7f5] text-[#2f3f7a]", "bg-[#f3e6c8] text-[#6b4d0f]", "bg-[#ece2f0] text-[#5b3168]"];
 
 const inboxDate = new Intl.DateTimeFormat("vi-VN", {
@@ -74,26 +73,33 @@ type SendMessageAction = (conversationId: string, text: string, requestId: strin
   { ok: true } | { ok: false; messageId: string | null }
 >;
 
-function ModeBadge({ mode }: { mode: ConversationMode }) {
+// `label` replaces the generic text, e.g. "Bạn đang trả lời" in the open conversation.
+function ModeBadge({ mode, label }: { mode: ConversationMode; label?: string }) {
   const color = mode === "needs_human" ? "bg-[#fff0eb] text-[#b2382a]" : "bg-[#efebe4] text-[#171717]";
-  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${color}`}>{modeLabels[mode]}</span>;
+  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${color}`}>{label ?? modeLabels[mode]}</span>;
 }
 
 function Avatar({ conversation, size = "size-11" }: { conversation: InboxConversation; size?: string }) {
   const color = avatarColors[[...conversation.id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % avatarColors.length];
   return (
     <span aria-hidden="true" className={`relative flex shrink-0 items-center justify-center rounded-full text-base font-bold ${size} ${color}`}>
-      {initialOf(conversation.customerName)}
+      {avatarInitial(conversation)}
       {conversation.mode === "needs_human" && <span className="absolute right-0 top-0 size-3 rounded-full border-2 border-white bg-[#e9573f]" />}
     </span>
   );
 }
 
-export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMessageAction }) {
+export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId }: {
+  sendMessageAction?: SendMessageAction;
+  // From ?c= in the URL: links from orders and the dashboard open one conversation.
+  initialSelectedId?: string;
+  currentUserId?: string;
+}) {
   const [state, setState] = useState<InboxState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId ?? null);
+  const [teamNames, setTeamNames] = useState<Record<string, string>>({});
   const [historyVersion, setHistoryVersion] = useState(0);
   // Clock for "waiting since" labels: set when data arrives, then once a minute,
   // so render never reads the clock itself.
@@ -152,6 +158,22 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
     return () => clearInterval(tick);
   }, []);
 
+  // Names only make the badge friendlier; without them it says "Nhân viên".
+  useEffect(() => {
+    let active = true;
+    void listTeamNames().then((names) => { if (active) setTeamNames(names); }, () => {});
+    return () => { active = false; };
+  }, []);
+
+  // Keep the open conversation in the URL (?c=) so a reload returns to it.
+  function select(id: string | null) {
+    setSelectedId(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("c", id);
+    else url.searchParams.delete("c");
+    window.history.replaceState(null, "", url);
+  }
+
   function reload() {
     if (state.status === "error") setState({ status: "loading" });
     else setRefreshing(true);
@@ -177,7 +199,9 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
       conversations={state.conversations}
       now={now}
       selected={state.conversations.find(({ id }) => id === selectedId)}
-      onSelect={setSelectedId}
+      onSelect={select}
+      teamNames={teamNames}
+      currentUserId={currentUserId}
       historyVersion={historyVersion}
       refreshing={refreshing}
       reload={reload}
@@ -196,11 +220,13 @@ function WaitingBadge({ since, now }: { since: string; now: number }) {
   );
 }
 
-function InboxConversations({ conversations, now, selected, onSelect, historyVersion, refreshing, reload, sendMessageAction }: {
+function InboxConversations({ conversations, now, selected, onSelect, teamNames, currentUserId, historyVersion, refreshing, reload, sendMessageAction }: {
   conversations: InboxConversation[];
   now: number | null;
   selected?: InboxConversation;
   onSelect: (id: string | null) => void;
+  teamNames: Record<string, string>;
+  currentUserId?: string;
   historyVersion: number;
   refreshing: boolean;
   reload: () => void;
@@ -245,7 +271,7 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
                 value={filter.query}
                 onChange={(event) => setFilter((current) => ({ ...current, query: event.target.value }))}
                 onKeyDown={(event) => { if (event.key === "Escape") setFilter((current) => ({ ...current, query: "" })); }}
-                className="h-10 w-full rounded-full border border-transparent bg-[#f0ede8] pl-9 pr-3 text-sm! outline-none transition-colors placeholder:text-[#7a766f] focus:border-[#171717] focus:bg-white"
+                className="h-10 w-full rounded-full border border-transparent bg-[#f0ede8] pl-9 pr-3 text-sm! outline-none transition-colors placeholder:text-[#66635d] focus:border-[#171717] focus:bg-white"
               />
             </div>
             {channels.length > 1 && (
@@ -286,8 +312,8 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
                   <li key={conversation.id}>
                     <button
                       type="button"
-                      aria-pressed={selected?.id === conversation.id}
-                      className="flex w-full min-w-0 items-center gap-3 rounded-xl p-2.5 text-left transition-colors hover:bg-[#f5f3ef] aria-pressed:bg-[#fff0eb]"
+                      aria-current={selected?.id === conversation.id ? "true" : undefined}
+                      className="flex w-full min-w-0 items-center gap-3 rounded-xl p-2.5 text-left transition-colors hover:bg-[#f5f3ef] aria-[current=true]:bg-[#fff0eb]"
                       onClick={() => onSelect(conversation.id)}
                     >
                       <Avatar conversation={conversation} />
@@ -329,6 +355,8 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
         <ConversationPanel
           key={selected.id}
           conversation={selected}
+          teamNames={teamNames}
+          currentUserId={currentUserId}
           historyVersion={historyVersion}
           reload={reload}
           sendMessageAction={sendMessageAction}
@@ -345,8 +373,10 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
   );
 }
 
-function ConversationPanel({ conversation, historyVersion, reload, onBack, sendMessageAction }: {
+function ConversationPanel({ conversation, teamNames, currentUserId, historyVersion, reload, onBack, sendMessageAction }: {
   conversation: InboxConversation;
+  teamNames: Record<string, string>;
+  currentUserId?: string;
   historyVersion: number;
   reload: () => void;
   onBack: () => void;
@@ -357,11 +387,26 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
   const [error, setError] = useState<string>();
   const [messages, setMessages] = useState<InboxMessage[] | null>(null);
   const [historyError, setHistoryError] = useState(false);
+  const [notice, setNotice] = useState<string>();
+  // Set when this staff member takes over here, until they hand back.
+  const [tookOver, setTookOver] = useState(false);
   const sendAttempt = useRef<{ text: string; id: string } | null>(null);
   const messageLog = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const newestMessageId = messages?.at(-1)?.id;
   const conversationId = conversation.id;
   const isStaff = conversation.mode === "staff";
+  // Who is replying: the author of the newest staff message, else whoever took over here.
+  const lastStaffId = messages?.findLast((message) => message.sender === "staff")?.staff_id;
+  const replier = !isStaff ? undefined
+    : (lastStaffId ? lastStaffId === currentUserId : tookOver) ? "Bạn đang trả lời"
+    : lastStaffId && teamNames[lastStaffId] ? `${teamNames[lastStaffId]} đang trả lời`
+    : undefined;
+
+  // After a takeover the composer appears once the list reloads; put the cursor in it.
+  useEffect(() => {
+    if (isStaff && tookOver) composer.current?.focus();
+  }, [isStaff, tookOver]);
 
   useEffect(() => {
     let active = true;
@@ -393,10 +438,13 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
   }
 
   async function changeMode() {
+    setNotice(undefined);
     if (!await setLiveInboxMode(conversationId, isStaff ? "ai" : "staff")) {
       setError("Không đổi được trạng thái hội thoại.");
       return;
     }
+    setTookOver(!isStaff);
+    setNotice(isStaff ? "Đã trả lại cho AI. AI trả lời từ tin tiếp theo của khách." : "Bạn đã tiếp quản. AI ngừng trả lời cuộc này cho đến khi bạn trả lại.");
     reload();
   }
 
@@ -432,7 +480,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[#706d67]">
             {channelLabels[conversation.channel]}
             <span aria-hidden="true">·</span>
-            <ModeBadge mode={conversation.mode} />
+            <ModeBadge mode={conversation.mode} label={replier} />
           </div>
         </div>
         <Button variant={isStaff ? "secondary" : "primary"} className="shrink-0" disabled={pending !== null}
@@ -452,7 +500,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
                 <p className="max-w-[90%] rounded-full bg-[#e9e5de] px-3 py-1 text-center text-xs text-[#5c5954]">
                   <span className="sr-only">{senderLabels.system}: </span>
                   {message.text || "Tin nhắn không có nội dung văn bản"}
-                  <time className="ml-2 opacity-70" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
+                  <time className="ml-2" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
                 </p>
               </li>
             ) : (
@@ -461,7 +509,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
                 <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm md:max-w-[70%] ${bubbleStyles[message.sender]}`}>
                   <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs">
                     <strong>{senderLabels[message.sender]}</strong>
-                    <time className="opacity-70" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
+                    <time className={timeStyles[message.sender]} dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
                   </p>
                   <p className="whitespace-pre-wrap wrap-anywhere">{message.text || "Tin nhắn không có nội dung văn bản"}</p>
                 </div>
@@ -475,9 +523,11 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
 
       <footer className="space-y-2 border-t border-[#e3dfd8] bg-white p-3">
         {error && <ErrorMessage>{error}</ErrorMessage>}
+        <div role="status">{notice && <p className="text-center text-sm font-medium text-[#2f6b3a]">{notice}</p>}</div>
         {isStaff && sendMessageAction && (
           <form className="flex items-end gap-2" onSubmit={(event) => { event.preventDefault(); submitReply(); }}>
             <textarea
+              ref={composer}
               aria-label="Tin nhắn cho khách"
               placeholder="Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng)"
               rows={1}
@@ -504,7 +554,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
         )}
         {!isStaff && (
           <p className="text-center text-sm text-[#706d67]">
-            {conversation.mode === "needs_human" ? "AI đang chờ nhân viên tiếp quản. Bấm Tiếp quản để trả lời khách." : "AI đang xử lý hội thoại. Bấm Tiếp quản nếu muốn tự trả lời."}
+            {conversation.mode === "needs_human" ? "Khách đang chờ người thật." : "AI đang trả lời cuộc này."} Bấm Tiếp quản để tự trả lời: AI sẽ ngừng trả lời cho đến khi bạn trả lại.
           </p>
         )}
       </footer>

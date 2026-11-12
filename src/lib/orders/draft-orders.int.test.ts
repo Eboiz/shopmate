@@ -127,6 +127,7 @@ describe("listDraftOrders", () => {
     const orders = await listDraftOrders(sessions.staffA, SHOP_A);
     expect(orders.map((o) => o.id)).toEqual([ORDER_NEW, ORDER_OLD, ORDER_CANCEL]);
     expect(orders[1]).toMatchObject({
+      conversationId: CONVERSATION,
       customer: { name: "Thảo", phone: "0912345678", address: "12 Lê Lợi, Q1" },
       total: 950000,
       items: [

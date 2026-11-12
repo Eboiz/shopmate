@@ -15,9 +15,8 @@ import {
 import {
   addPairingSchema,
   deletePairingSchema,
+  saveProductSchema,
   updatePolicySchema,
-  updatePriceSchema,
-  updateStockSchema,
 } from "@/lib/shop-data-validation";
 import { saveSizeChartSchema } from "@/lib/size-chart-validation";
 import { createClient } from "@/lib/supabase/server";
@@ -57,16 +56,21 @@ async function ownerWrite<S extends z.ZodType>(
   return { error: null };
 }
 
-export async function updatePrice(_prev: FormState, formData: FormData) {
-  return ownerWrite(updatePriceSchema, formData, ({ productId, price }) => (db, shopId) =>
-    db.from("products").update({ price }).eq("id", productId).eq("shop_id", shopId).select("id"),
-  );
-}
-
-export async function updateStock(_prev: FormState, formData: FormData) {
-  return ownerWrite(updateStockSchema, formData, ({ variantId, stock }) => (db, shopId) =>
-    db.from("variants").update({ stock }).eq("id", variantId).eq("shop_id", shopId).select("id"),
-  );
+// One product: its price and the stock rows the owner changed. Only changed rows
+// are sent, so confirming an order (which lowers stock) while the page is open
+// is not undone by saving the price. The writes are separate statements; if one
+// fails the owner sees the error, and the page after refresh shows what was saved.
+export async function saveProduct(_prev: FormState, formData: FormData) {
+  return ownerWrite(saveProductSchema, formData, ({ productId, price, stocks }) => async (db, shopId) => {
+    const product = await db.from("products").update({ price }).eq("id", productId).eq("shop_id", shopId).select("id");
+    if (product.error || product.data.length === 0) return product;
+    const rows = await Promise.all(
+      stocks.map(({ variantId, stock }) =>
+        db.from("variants").update({ stock }).eq("id", variantId).eq("product_id", productId).eq("shop_id", shopId).select("id"),
+      ),
+    );
+    return rows.find((row) => row.error || row.data.length === 0) ?? product;
+  });
 }
 
 export async function updatePolicy(_prev: FormState, formData: FormData) {
