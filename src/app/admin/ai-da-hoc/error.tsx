@@ -1,0 +1,20 @@
+"use client";
+
+import { Button } from "@/components/ui/button";
+import { ErrorMessage } from "@/components/ui/error-message";
+
+// Shown when the page data can't be read (database down, network), instead of
+// Next's default error page. The menu and top bar stay usable.
+export default function LearningError({ retry }: { error: Error & { digest?: string }; retry: () => void }) {
+  return (
+    <>
+      <h1 className="ui-page-title mb-6">AI đã học</h1>
+      <div className="ui-card flex flex-col items-start gap-4 p-6">
+        <ErrorMessage>Không tải được dữ liệu AI đã học. Hãy kiểm tra mạng rồi thử lại.</ErrorMessage>
+        <Button variant="secondary" onClick={() => retry()}>
+          Thử lại
+        </Button>
+      </div>
+    </>
+  );
+}

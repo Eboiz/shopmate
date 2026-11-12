@@ -89,11 +89,11 @@ function Avatar({ conversation, size = "size-11" }: { conversation: InboxConvers
   );
 }
 
-export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMessageAction }) {
+export function StaffInbox({ sendMessageAction, initialSelectedId }: { sendMessageAction?: SendMessageAction; initialSelectedId?: string }) {
   const [state, setState] = useState<InboxState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId ?? null);
   const [historyVersion, setHistoryVersion] = useState(0);
   // Clock for "waiting since" labels: set when data arrives, then once a minute,
   // so render never reads the clock itself.

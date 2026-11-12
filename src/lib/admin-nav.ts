@@ -4,6 +4,7 @@ export const ADMIN_NAV = [
   { href: "/admin/orders", label: "Đơn hàng" },
   { href: "/admin/products", label: "Sản phẩm" },
   { href: "/admin/reply-assistant", label: "Trợ lý" },
+  { href: "/admin/ai-da-hoc", label: "AI đã học" },
 ] as const;
 
 export function isNavItemActive(pathname: string, href: string): boolean {

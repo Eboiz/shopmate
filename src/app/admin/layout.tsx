@@ -1,5 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 import { findStaffProfile, requireUser } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 import { LoadingRegion, PageHeaderSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { AdminShell } from "./admin-shell";
 
@@ -18,7 +19,19 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
 async function AdminGate({ children }: { children: ReactNode }) {
   const user = await requireUser();
   const staff = await findStaffProfile();
-  return <AdminShell email={user.email ?? ""} showNav={Boolean(staff)}>{staff ? children : <NoShopNotice />}</AdminShell>;
+  const badges = staff ? { "/admin/ai-da-hoc": await countPendingFacts(staff.shopId) } : undefined;
+  return <AdminShell email={user.email ?? ""} showNav={Boolean(staff)} badges={badges}>{staff ? children : <NoShopNotice />}</AdminShell>;
+}
+
+// PB-35a: the nav badge. A failed count shows no badge rather than breaking every page.
+async function countPendingFacts(shopId: string): Promise<number> {
+  const supabase = await createClient();
+  const { count } = await supabase
+    .from("learned_facts")
+    .select("id", { count: "exact", head: true })
+    .eq("shop_id", shopId)
+    .eq("status", "pending");
+  return count ?? 0;
 }
 
 // A signed-in account with no profiles row belongs to no shop: every admin page
