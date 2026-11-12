@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
+import { findUnbackedDiscount, mentionsOffer, policyTextsFrom } from "./discount-guard";
 
 // The demo shop's real policies (supabase/seed/demo/policies.csv); it has no promotion.
 const DOI_TRA =
@@ -139,5 +139,14 @@ describe("policyTextsFrom", () => {
         { name: "search_products", input: { query: "váy" }, output: { content: "not a policy" } },
       ]),
     ).toEqual(["Đổi trong 7 ngày"]);
+  });
+});
+
+describe("mentionsOffer", () => {
+  it.each(["Khách mới được tặng quà", "Shop freeship toàn quốc", "Nhập mã HELLO giảm 10%"])("offer: %s", (t) => {
+    expect(mentionsOffer(t)).toBe(true);
+  });
+  it.each(["Shop không giảm giá", "Áo free size", "Đổi trong 7 ngày"])("no offer: %s", (t) => {
+    expect(mentionsOffer(t)).toBe(false);
   });
 });

@@ -103,6 +103,12 @@ function offersIn(text: string, strict: boolean): Offer[] {
     });
 }
 
+// PB-35b: true when the text makes any offer (discount, gift, free service, code),
+// read strictly like a reply: a learned rule that does must wait for the owner.
+export function mentionsOffer(text: string): boolean {
+  return offersIn(text, true).length > 0;
+}
+
 // The first clause of the reply (folded) that offers a discount, gift or free
 // service the policy texts don't offer, or null. An offer is backed when, for
 // each kind it names, a policy sentence makes that kind of offer and the reply's
