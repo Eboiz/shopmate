@@ -27,12 +27,15 @@ export const tools = {
   search_products: {
     writes: false,
     description:
-      "Find the shop's products by name or type. Works with or without Vietnamese diacritics.",
+      "Find the shop's products by name or type, with their description (material, fit, care…). Works with or without Vietnamese diacritics and with common other names (đầm = váy, quần bò = quần jean). match is exact when every word matched, close when only similar products were found.",
     input: z.strictObject({
       query: z.string().trim().min(1).max(100),
       limit: z.int().min(1).max(10).default(5),
     }),
+    // PB-31: match "close" means none has every word of the query; the products
+    // are the most similar ones, for "Ý bạn là A hay B?".
     output: z.object({
+      match: z.enum(["exact", "close", "none"]),
       products: z.array(
         z.object({
           productId: idSchema,
@@ -40,6 +43,8 @@ export const tools = {
           category: z.string().nullable(),
           price: vndSchema,
           imageUrl: z.string().nullable(),
+          // The shop's own text; the only source for material, fit, care questions.
+          description: z.string().nullable(),
           colors: z.array(z.string()),
           sizes,
         }),
@@ -81,7 +86,19 @@ export const tools = {
         sizeByHeight: z.string(),
         sizeByWeight: z.string(),
       }),
-      z.object({ status: z.literal("out_of_range") }),
+      // PB-31: the chart's end size on the shopper's side (largest when above the
+      // chart, smallest when below) and how many whole cm / kg the measurements are
+      // past the chart's overall range (0 when inside it). The reply may say the
+      // nearest size and that it could be tight; it never picks a size.
+      // belowChart: true when a measurement is under the chart, where the end size
+      // would be loose, not tight (absent otherwise).
+      z.object({
+        status: z.literal("out_of_range"),
+        nearestSize: z.string(),
+        offCm: z.int().nonnegative(),
+        offKg: z.int().nonnegative(),
+        belowChart: z.literal(true).optional(),
+      }),
       z.object({ status: z.literal("no_chart") }),
     ]),
   },

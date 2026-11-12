@@ -121,9 +121,9 @@ describe("tools", () => {
   });
 
   it("recommend_size can say the shopper is out of the chart", () => {
-    expect(tools.recommend_size.output.parse({ status: "out_of_range" })).toEqual({
-      status: "out_of_range",
-    });
+    const out = { status: "out_of_range", nearestSize: "XL", offCm: 8, offKg: 15 };
+    expect(tools.recommend_size.output.parse(out)).toEqual(out);
+    expect(tools.recommend_size.output.safeParse({ status: "out_of_range" }).success).toBe(false);
   });
 
   it("handoff_to_staff reasons exclude the server-only ones", () => {

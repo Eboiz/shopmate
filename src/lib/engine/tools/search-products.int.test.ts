@@ -30,7 +30,7 @@ describe("search_products", () => {
   });
 
   it("returns empty for no match", async () => {
-    expect(await searchProducts({ query: "giày cao gót", limit: 5 }, ctxA, db)).toEqual({ products: [] });
+    expect(await searchProducts({ query: "giày cao gót", limit: 5 }, ctxA, db)).toEqual({ match: "none", products: [] });
   });
 
   it("respects limit", async () => {
@@ -43,6 +43,20 @@ describe("search_products", () => {
     expect(products).toHaveLength(1);
     expect(products[0].colors).toEqual([]);
     expect(products[0].sizes).toEqual([]);
+  });
+
+  it("PB-31: a synonym finds the shop's own name (đầm = váy), with the description", async () => {
+    const result = await searchProducts({ query: "đầm suông linen", limit: 5 }, ctxA, db);
+    expect(result.match).toBe("exact");
+    expect(result.products.map((p) => p.productId)).toEqual([FX.a.vay01]);
+    expect(result.products[0]).toHaveProperty("description");
+  });
+
+  it("PB-31: no exact match gives close products from this shop only", async () => {
+    const result = await searchProducts({ query: "váy linen dài", limit: 5 }, ctxA, db);
+    expect(result.match).toBe("close");
+    expect(result.products.map((p) => p.productId)).toContain(FX.a.vay01);
+    expect(result.products.map((p) => p.productId)).not.toContain(FX.b.vay01);
   });
 
   it("shop B sees its own price", async () => {
