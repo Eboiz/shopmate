@@ -32,6 +32,9 @@ export type EvalCase = {
   // When set, the reply's quick replies must pass this check.
   quickReplies?: { label: string; ok: (quickReplies: string[]) => boolean };
   history: HistoryMessage[]; // the last message is the shopper's
+  // staff_draft: the reply assistant (PB-20), run for shop A without a
+  // conversation. Default customer.
+  mode?: "customer" | "staff_draft";
   productId?: string; // the product the shopper is looking at (an id in FX.a)
   expected: ExpectedCall[]; // [] means NO tool is needed
   // The conversation's previous AI turn (its ai_turns.tool_calls), seeded before

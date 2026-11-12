@@ -33,10 +33,11 @@ import { pb06Cases } from "./cases-pb06";
 import { pb09Cases } from "./cases-pb09";
 import { pb14Cases } from "./cases-pb14";
 import { pb31Cases } from "./cases-pb31";
+import { pb08Cases, pb11Cases, pb20Cases } from "./cases-ai02-04";
 import { aggregate, scoreRun, type ActualCall, type Decision, type RunOutcome, type RunScore } from "./score";
 
 const RUNS = Number(process.env.EVAL_RUNS ?? 3);
-const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases, ...pb09Cases, ...pb14Cases, ...pb31Cases];
+const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases, ...pb09Cases, ...pb14Cases, ...pb31Cases, ...pb08Cases, ...pb11Cases, ...pb20Cases];
 const group = process.env.EVAL_GROUP;
 const cases = allCases.filter(
   (c) => (!process.env.EVAL_CASE || c.id === process.env.EVAL_CASE) && (!group || c.id.startsWith(group)),
@@ -102,10 +103,13 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
             return store.insertTurn(r);
           },
         };
-        const result = await runEngine(
-          { mode: "customer", conversationId: FX.a.conversation, history: c.history, productId: c.productId ?? null },
-          { model, db, store: capturing, onMetrics: (m) => void (metrics = m) },
-        );
+        const deps = { model, db, store: capturing, onMetrics: (m: TurnMetrics) => void (metrics = m) };
+        const result = c.mode === "staff_draft"
+          ? await runEngine({ mode: "staff_draft", history: c.history, productId: c.productId ?? null }, { ...deps, staffShopId: FX.a.shop })
+          : await runEngine(
+            { mode: "customer", conversationId: FX.a.conversation, history: c.history, productId: c.productId ?? null },
+            deps,
+          );
         await result.turnLogged;
         const turn = row as TablesInsert<"ai_turns"> | null;
         if (!turn) throw new Error(`${c.id}: no ai_turns row`);
