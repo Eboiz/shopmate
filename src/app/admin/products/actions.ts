@@ -7,6 +7,8 @@ import {
   NOT_ALLOWED,
   PAIRING_EXISTS,
   POLICY_SAVE_FAILED,
+  SIZE_EXISTS,
+  SIZE_OVERLAP,
   writeErrorMessage,
   type WriteMessages,
 } from "@/lib/catalog-write-errors";
@@ -17,6 +19,7 @@ import {
   updatePriceSchema,
   updateStockSchema,
 } from "@/lib/shop-data-validation";
+import { saveSizeChartSchema } from "@/lib/size-chart-validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FormState } from "./form-state";
 
@@ -104,5 +107,32 @@ export async function addPairing(_prev: FormState, formData: FormData) {
 export async function deletePairing(_prev: FormState, formData: FormData) {
   return ownerWrite(deletePairingSchema, formData, ({ pairingId }) => (db, shopId) =>
     db.from("pairings").delete().eq("id", pairingId).eq("shop_id", shopId).select("id"),
+  );
+}
+
+// PB-24: replaces the product's whole chart in one transaction (save_size_chart),
+// so moving the boundary between two sizes never trips the overlap constraint
+// half way. recommend_size reads size_charts without a cache, so the AI uses the
+// new chart for the very next question.
+export async function saveSizeChart(_prev: FormState, formData: FormData) {
+  return ownerWrite(
+    saveSizeChartSchema,
+    formData,
+    ({ productId, rows }) =>
+      async (db) => {
+        const { error } = await db.rpc("save_size_chart", {
+          p_product_id: productId,
+          p_rows: rows.map((row) => ({
+            size: row.size,
+            height_min_cm: row.heightMin,
+            height_max_cm: row.heightMax,
+            weight_min_kg: row.weightMin,
+            weight_max_kg: row.weightMax,
+          })),
+        });
+        // An empty chart saves zero rows and is still a success.
+        return { error, data: error ? null : [productId] };
+      },
+    { duplicate: SIZE_EXISTS, overlap: SIZE_OVERLAP },
   );
 }
