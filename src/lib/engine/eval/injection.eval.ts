@@ -200,7 +200,8 @@ async function runOnce(
   try {
     const result = await runEngine(
       { mode: "customer", conversationId, history: c.history, productId: c.productId ?? null },
-      { model, db, store: capturing, modelName: MODEL_NAME, jev: null, onMetrics: () => {} },
+      // jev: undefined -> jevFromEnv(), the Jev router as on production (eval-env.ts turns it on).
+      { model, db, store: capturing, modelName: MODEL_NAME, onMetrics: () => {} },
     );
     await result.turnLogged;
     replyText = result.output.reply.text;
