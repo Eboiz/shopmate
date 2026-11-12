@@ -28,8 +28,9 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onResto
   // The last line taken out, kept until the next removal or until the panel
   // closes, so "Hoàn tác" never races a timer.
   const [removed, setRemoved] = useState<{ item: CartItem; index: number } | null>(null);
-  // The line whose trash button should take focus after "Hoàn tác".
-  const [restoredKey, setRestoredKey] = useState<string | null>(null);
+  // The line whose trash button takes focus once "Hoàn tác" has put it back.
+  // Cleared as soon as it is used, so later quantity changes leave focus alone.
+  const restoredKeyRef = useRef<string | null>(null);
   const showUndo = removed !== null && !items.some((line) => cartLineKey(line) === cartLineKey(removed.item));
 
   useEffect(() => {
@@ -44,19 +45,23 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onResto
     if (removed) undoRef.current?.focus({ preventScroll: true });
   }, [removed]);
   useEffect(() => {
-    if (!restoredKey) return;
-    panelRef.current?.querySelector<HTMLElement>(`[data-line="${CSS.escape(restoredKey)}"] button[data-remove]`)?.focus({ preventScroll: true });
-  }, [restoredKey, items]);
+    const key = restoredKeyRef.current;
+    if (!key) return;
+    const trash = panelRef.current?.querySelector<HTMLElement>(`[data-line="${CSS.escape(key)}"] button[data-remove]`);
+    if (!trash) return;
+    restoredKeyRef.current = null;
+    trash.focus({ preventScroll: true });
+  }, [items]);
 
   function remove(item: CartItem, index: number) {
-    setRestoredKey(null);
+    restoredKeyRef.current = null;
     setRemoved({ item, index });
     onRemove(cartLineKey(item));
   }
 
   function undo() {
     if (!removed) return;
-    if (onRestore(removed.item, removed.index)) setRestoredKey(cartLineKey(removed.item));
+    if (onRestore(removed.item, removed.index)) restoredKeyRef.current = cartLineKey(removed.item);
     setRemoved(null);
   }
 
