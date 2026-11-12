@@ -20,7 +20,9 @@ const shared = {
 // create_draft_order and handoff_to_staff are not available in this mode (see
 // toolsForMode).
 export const engineInputSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("customer"), conversationId: idSchema, ...shared }),
+  // messageId: the stored shopper message this turn answers (receive.ts). With
+  // it, a resume from needs_human only happens while it is still the newest.
+  z.object({ mode: z.literal("customer"), conversationId: idSchema, messageId: idSchema.optional(), ...shared }),
   // strictObject: a shopId in the request body is a parse error, not a key the
   // server could ever accidentally read. The shop is verified server-side.
   z.strictObject({ mode: z.literal("staff_draft"), ...shared }),

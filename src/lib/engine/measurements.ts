@@ -108,6 +108,55 @@ export function shopperMeasurements(history: HistoryMessage[]): { heightCm: numb
   return { heightCm, weightKg };
 }
 
+// The model's tool-input value as a plain number ("160", 160, "45,0"), or null
+// when it is anything else: only a plain number can be an echo of the shopper.
+const modelInputNumber = (value: unknown): number | null => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && /^\d+(?:[.,]\d+)?$/.test(value.trim())) {
+    return Number(value.trim().replace(",", "."));
+  }
+  return null;
+};
+
+// An AI message asking for height or weight ("bạn cao bao nhiêu?", "cân nặng?").
+const ASKS_MEASURE = /\b(?:cao|nang|can nang|so do|ky|kg|cm)\b/;
+// A number written as money or a percentage ("58k", "58.000đ", "10%") is not a
+// measurement.
+const MONEY_AFTER = /^\s*(?:k\b|d\b|dong\b|vnd\b|%|ngan\b|nghin\b|tr\b|trieu\b)/;
+
+// True when `value` (the model's tool-input number) is a number the shopper
+// typed as a standalone token ("160 ạ", "50") since the AI started asking for
+// measurements: the shopper messages after the last AI message, extended back
+// over a run of AI height/weight questions so "160" -> "còn cân nặng?" -> "50"
+// keeps both answers. With no AI message, every shopper message counts.
+// extractMeasurements ignores bare numbers (a lone number could be a price or
+// a size), so recommend_size's guard uses this to accept a number the model
+// echoed from what the shopper typed, and nothing it could have invented.
+export function shopperTypedNumber(history: HistoryMessage[], value: unknown): boolean {
+  const n = modelInputNumber(value);
+  if (n === null) return false;
+  let start = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].sender !== "ai") continue;
+    start = i + 1;
+    // Keep walking back only past AI measurement questions.
+    if (!ASKS_MEASURE.test(fold(history[i].text))) break;
+    const prevAi = history.slice(0, i).findLastIndex(({ sender }) => sender === "ai");
+    if (prevAi < 0 || !ASKS_MEASURE.test(fold(history[prevAi].text))) break;
+  }
+  for (const { sender, text } of history.slice(start)) {
+    if (sender !== "shopper") continue;
+    const folded = fold(text);
+    for (const m of folded.matchAll(/(?<![\d.,])\d+(?:[.,]\d+)?(?![\d])/g)) {
+      if (MONEY_AFTER.test(folded.slice(m.index + m[0].length))) continue;
+      // "58.000" / "1,200,000" is a money amount, not 58 or 1.2.
+      if (/^\d{1,3}(?:[.,]\d{3})+$/.test(m[0]) || /^[.,]\d{3}/.test(folded.slice(m.index + m[0].length))) continue;
+      if (Number(m[0].replace(",", ".")) === n) return true;
+    }
+  }
+  return false;
+}
+
 // The input that reaches recommend_size: what the shopper wrote wins over the
 // model's numbers; otherwise the model's value is parsed ("1m65", 1.65, "58kg").
 // Anything unparseable is left as it is, so the tool's Zod schema rejects it.

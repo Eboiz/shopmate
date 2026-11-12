@@ -105,6 +105,15 @@ describe("runEngine with Jev routing", () => {
     expect(metrics[0].route).toMatchObject({ path: "router", intent: "stock", product: "viewing", jevModel: "typesafe/jev-1.13" });
   });
 
+  it("router write: a quick reply promising a discount is dropped (PB-07 guards apply to quick replies)", async () => {
+    const { run } = setup(jevSaying({}), [
+      finalJson({ text: "Dạ còn ạ", productIds: [], quickReplies: ["Giảm 50% nhé", "Xem váy"] }),
+    ]);
+    const result = await run(input("váy này còn không"));
+    expect(result.output.reply.text).toBe("Dạ còn ạ");
+    expect(result.output.reply.quickReplies).toEqual(["Xem váy"]);
+  });
+
   it("complaint: hands off without any model call", async () => {
     const { model, handlers, store, metrics, run } = setup(jevSaying({ intent: { type: "choice", choice: "complaint", confidence: 0.99 } }), []);
     const result = await run(input("đồ giao bị rách"));

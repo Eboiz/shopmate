@@ -155,6 +155,7 @@ export async function receiveChannelMessage(
     ({ reply } = await runEngine({
       mode: "customer",
       conversationId: conversation.id,
+      messageId: storedMessage.id,
       history,
       productId: incoming.productId ?? null,
     }));

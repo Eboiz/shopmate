@@ -162,7 +162,9 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       if (!r.ok) return { kind: "fallback", reason: "tool_error" };
       const policy = r.output as ToolOutput<"get_policy">;
       if (policy.content === null) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_NO_POLICY_TEXT);
-      const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 1) : 1;
+      // A failing coverage check counts as "not covered": the safe answer is
+      // staff, not a reply built on a policy that may not say it.
+      const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 0) : 1;
       if (covers < POLICY_COVERS_THRESHOLD) return customer ? handoff(input, "policy_not_covered") : fixed(STAFF_POLICY_SILENT_TEXT);
       return {
         kind: "write",

@@ -202,9 +202,17 @@ describe("routeTurn", () => {
       kind: "fixed",
       reply: { text: STAFF_POLICY_SILENT_TEXT, products: [], quickReplies: [] },
     });
-    // a failing check never blocks the answer
+    // a failing check is treated as "not covered": customer goes to staff,
+    // staff_draft gets the fixed text
     const failing = async () => Promise.reject(new Error("jev down"));
-    expect(await setup(shipping).run({ decision: decision({ intent: "policy" }), policyCovers: failing })).toMatchObject({ kind: "write" });
+    expect(await setup(shipping).run({ decision: decision({ intent: "policy" }), policyCovers: failing })).toMatchObject({
+      kind: "handoff",
+      reason: "policy_not_covered",
+    });
+    expect(await setup(shipping).run({ mode: "staff_draft", decision: decision({ intent: "policy" }), policyCovers: failing })).toEqual({
+      kind: "fixed",
+      reply: { text: STAFF_POLICY_SILENT_TEXT, products: [], quickReplies: [] },
+    });
   });
 
   it("discount trick: only the promotion text is looked up, whatever else was asked", async () => {

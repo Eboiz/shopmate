@@ -34,8 +34,40 @@ export function amountsIn(text: string): string[] {
   return [...new Set(out)];
 }
 
-const numbersIn = (value: unknown): Set<string> =>
-  new Set((prepare(JSON.stringify(value ?? null)).match(/\d+/g) ?? []).map((n) => String(Number(n))));
+// Only price-like fields of the tool outputs, and the money amounts and
+// percentages in shop policies (get_policy `content`), can back a shopper amount. Stock counts,
+// sizes, ids and quantities must not: otherwise a get_stock with stock=1 makes
+// a "giá 1đ" echo look backed. Walk the JSON keeping the key name.
+const PRICE_KEYS = new Set(["price", "unitPrice", "lineTotal", "total"]);
+
+const numbersIn = (outputs: unknown[]): Set<string> => {
+  const out = new Set<string>();
+  const walk = (value: unknown, key: string | null): void => {
+    if (typeof value === "number") {
+      if (key !== null && PRICE_KEYS.has(key)) out.add(String(value));
+      return;
+    }
+    if (typeof value === "string") {
+      // A policy backs only the money amounts and percentages it states:
+      // "đổi hàng trong 7 ngày" must not back a "giá 7đ" echo.
+      // Percentages stay "7%": they back a percentage, never a "7đ" price.
+      if (key === "content") for (const a of amountsIn(value)) out.add(a);
+      else if (key !== null && PRICE_KEYS.has(key)) {
+        for (const n of prepare(value).match(/\d+/g) ?? []) out.add(String(Number(n)));
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item, key);
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const [k, item] of Object.entries(value)) walk(item, k);
+    }
+  };
+  for (const output of outputs) walk(output, null);
+  return out;
+};
 
 // The latest shopper messages: what this turn answers.
 const RECENT_SHOPPER = 3;
@@ -52,7 +84,7 @@ export function echoedShopperAmounts(reply: string, history: HistoryMessage[], t
   );
   if (shopper.size === 0) return [];
   const backed = numbersIn(toolOutputs);
-  return amountsIn(reply).filter((a) => shopper.has(a) && !backed.has(a.replace("%", "")));
+  return amountsIn(reply).filter((a) => shopper.has(a) && !backed.has(a));
 }
 
 // The shopper's latest message asks for a lower price, a discount, a gift, a

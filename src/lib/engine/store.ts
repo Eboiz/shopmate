@@ -15,7 +15,7 @@ export type TurnContextArgs = {
 };
 
 export type TurnContext = {
-  conversation: { shopId: string; mode: ConversationMode } | null; // always null in staff_draft
+  conversation: { shopId: string; mode: ConversationMode; lastMessageAt?: string } | null; // always null in staff_draft
   product: { id: string; name: string } | null;
   // customer only: the conversation's previous AI turn missed the product (its
   // ai_turns.postcheck.productMiss, or searchMissed for older rows) and did not
@@ -37,7 +37,15 @@ export type EngineStore = {
   // Separate from loadTurnContext: it depends on the productIds the model returns.
   productCards(shopId: string, productIds: string[]): Promise<ProductCard[]>;
   setNeedsHuman(ctx: ToolContext): Promise<void>;
-  setAiMode?(ctx: ToolContext): Promise<void>;
+  setAiMode?(ctx: ToolContext, lastMessageAt?: string): Promise<void>;
+  // #8: needs_human -> ai only while messageId is the shopper's newest message
+  // (one atomic UPDATE). Preferred over setAiMode when the turn has a messageId.
+  resumeAiIfLatest?(ctx: ToolContext, messageId: string): Promise<boolean>;
+  // The order already written from this confirmed quote (waits for a write of
+  // it still in flight), or null. supersede: also mark a quote with no order
+  // as replaced, so a later create of it writes nothing; set it right before a
+  // re-quote is shown (#1).
+  orderForQuote?(ctx: ToolContext, quoteKey: string, supersede: boolean): Promise<{ status: "created"; orderId: string; total: number } | null>;
   // Runs AFTER the reply is returned (see runEngine); returns the row id.
   insertTurn(row: TablesInsert<"ai_turns">): Promise<string>;
   // PB-10: every product of the shop with its colors and sizes, for the Jev
@@ -87,7 +95,7 @@ export function createSupabaseStore(db: Db): EngineStore {
   async function previousTurnState(shopId: string, conversationId: string) {
     const { data, error } = await db
       .from("ai_turns")
-      .select("tool_calls, handoff_reason, postcheck")
+      .select("id, tool_calls, handoff_reason, postcheck")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
@@ -104,13 +112,29 @@ export function createSupabaseStore(db: Db): EngineStore {
       postcheck.success && postcheck.data.productMiss !== undefined
         ? postcheck.data.productMiss
         : logs.success && searchMissed(logs.data);
+    // A create that succeeded in this row used the quote up: a late replay must
+    // not mint a new key from the confirm turn's own row.
+    const orderWritten = logs.success && logs.data.some((log) => log.name === "create_draft_order" && !log.error
+      && (log.output as { status?: string } | undefined)?.status === "created");
+    const quote = logs.success ? latestQuote(logs.data) : null;
     return {
       previousTurnMissedProduct: missedProduct,
-      previousQuote: logs.success ? latestQuote(logs.data) : null,
+      previousQuote: quote && !orderWritten ? { ...quote, quoteId: data.id } : null,
     };
   }
 
   return {
+    async orderForQuote(ctx, quoteKey, supersede) {
+      if (ctx.conversationId === null) return null;
+      const { data, error } = await db.rpc("engine_order_for_quote", {
+        p_shop_id: ctx.shopId,
+        p_conversation_id: ctx.conversationId,
+        p_quote_key: quoteKey,
+        p_supersede: supersede,
+      });
+      if (error) throw new Error(`engine_order_for_quote: ${error.message}`);
+      return (data ?? null) as { status: "created"; orderId: string; total: number } | null;
+    },
     async loadTurnContext({ conversationId, shopId, productId }) {
       if ((conversationId === null) === (shopId === null)) {
         throw new Error("loadTurnContext needs exactly one of conversationId and shopId");
@@ -120,7 +144,7 @@ export function createSupabaseStore(db: Db): EngineStore {
       // The product's shop is the conversation's, so the two reads run in order.
       const { data: conversation, error } = await db
         .from("conversations")
-        .select("shop_id, mode")
+        .select("shop_id, mode, last_message_at")
         .eq("id", conversationId!)
         .maybeSingle();
       if (error) throw new Error(`conversations: ${error.message}`);
@@ -130,7 +154,7 @@ export function createSupabaseStore(db: Db): EngineStore {
         previousTurnState(conversation.shop_id, conversationId!),
       ]);
       return {
-        conversation: { shopId: conversation.shop_id, mode: conversation.mode },
+        conversation: { shopId: conversation.shop_id, mode: conversation.mode, lastMessageAt: conversation.last_message_at },
         product: found,
         ...previous,
       };
@@ -160,7 +184,17 @@ export function createSupabaseStore(db: Db): EngineStore {
     catalog: (shopId) => (sharedCatalog ??= cachedCatalog((id) => loadCatalog(db, id)))(shopId),
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),
-    setAiMode: (ctx) => setAiMode(db, ctx),
+    setAiMode: (ctx, lastMessageAt) => setAiMode(db, ctx, lastMessageAt),
+    async resumeAiIfLatest(ctx, messageId) {
+      if (ctx.conversationId === null) return false;
+      const { data, error } = await db.rpc("engine_resume_ai", {
+        p_shop_id: ctx.shopId,
+        p_conversation_id: ctx.conversationId,
+        p_message_id: messageId,
+      });
+      if (error) throw new Error(`engine_resume_ai: ${error.message}`);
+      return data === true;
+    },
 
     async insertTurn(row) {
       const { data, error } = await db.from("ai_turns").insert(row).select("id").single();
