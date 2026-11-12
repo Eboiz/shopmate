@@ -27,10 +27,10 @@ async function shopProducts(db: Db, shopId: string, ids?: string[]): Promise<Pro
   return data;
 }
 
-// PB-30: the photo search decides exact vs similar (photo-search.ts); the model
-// never does. Hits of another shop or of a product deleted since indexing are
+// PB-30: a photo finds products of the same kind, never "this exact product"
+// (calibration 2026-11-12, photo-search.ts): the result is close or none. Hits of another shop or of a product deleted since indexing are
 // dropped here. When the service is off, slow or failing, the shopper still
-// gets an answer: text search on the model's description, never "exact".
+// gets an answer: text search on the model's description, also close.
 async function searchByShopperPhoto(n: number, query: string, shopId: string, photos: ToolContext["photos"] & {}, db: Db): Promise<Output> {
   const photo = photos[n - 1];
   if (!photo) throw new ToolError("photo_not_found");
@@ -47,9 +47,9 @@ async function searchByShopperPhoto(n: number, query: string, shopId: string, ph
   if (matches.length === 0) return { match: "none", products: [] };
   const rows = await shopProducts(db, shopId, matches.map((m) => m.productId));
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const kept = matches.flatMap((m) => (byId.has(m.productId) ? [{ row: byId.get(m.productId)!, match: m.match }] : []));
+  const kept = matches.flatMap((m) => (byId.has(m.productId) ? [{ row: byId.get(m.productId)! }] : []));
   if (kept.length === 0) return { match: "none", products: [] };
-  return withVariants(db, shopId, kept.some((k) => k.match === "exact") ? "exact" : "close", kept.map((k) => k.row));
+  return withVariants(db, shopId, "close", kept.map((k) => k.row));
 }
 
 async function withVariants(db: Db, shopId: string, match: Output["match"], products: ProductRow[]): Promise<Output> {

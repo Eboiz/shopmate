@@ -4,8 +4,8 @@ import type { PhotoInput } from "@/contract";
 
 // PB-30: client of POST {EMBEDDER_URL}/search (shopmate-gpu-services on Modal;
 // wire contract in the PB-34 spec, section 3.1). The service returns product
-// ids of one shop with a score; this module decides which hits count as the
-// exact product and which are only similar. The model never decides that.
+// ids of one shop with a score; this module decides which hits are close
+// enough to show. The model never decides that.
 
 // A cold Modal container needs a minute or more to load its models. The
 // shopper is not kept waiting that long: search_products falls back to text.
@@ -15,17 +15,19 @@ const TEXT_MAX = 200;
 
 // Scores are only comparable within one scale: the reranker's sigmoid score
 // (`reranked: true`) or EmbeddingGemma's cosine (`reranked: false`, reranker off
-// or failed). Reranker numbers: calibration of 2026-11-12 (shopmate-gpu-services
-// CALIBRATION.md). Cosine scores of the right product and of other products
-// overlapped (2026-11-10: positive min 0.672 <= negative max 0.687), so a cosine
-// score never makes a hit exact.
-export const PHOTO_THRESHOLDS = {
-  reranked: { exact: 0.8, similar: 0.3 },
-  cosine: { exact: null, similar: 0.55 },
-} as const satisfies Record<"reranked" | "cosine", { exact: number | null; similar: number }>;
+// or failed). Calibration of 2026-11-12 (shopmate-gpu-services CALIBRATION.md,
+// eval shop, reranker on): the shop's own photos 0.80-0.88 but top-1 right only
+// 48/60; other photos of the same kind of item 0.78-0.87; other kinds of item
+// 0.26-0.53; non-clothing photos 0.13-0.27. A score can't tell "this exact
+// product" from "the same kind of product", so no score is ever exact
+// (developer decision 2026-11-12): the AI shows up to 3 products and asks.
+// 0.65 sits in the gap between the same kind and other kinds. Cosine scores
+// overlapped too (2026-11-10: 0.672 vs 0.687); their floor is a guess.
+export const PHOTO_SIMILAR_MIN = { reranked: 0.65, cosine: 0.55 } as const;
 
 export type PhotoHit = { productId: string; score: number };
-export type PhotoMatch = PhotoHit & { match: "exact" | "similar" };
+// Always "similar": a photo never proves the exact product (see above).
+export type PhotoMatch = PhotoHit & { match: "similar" };
 export type PhotoSearchResult = { hits: PhotoHit[]; reranked: boolean };
 
 // Not configured, timeout, non-2xx or a body that is not the contract.
@@ -90,18 +92,12 @@ export async function searchByPhoto(
   return { hits: parsed.data.hits, reranked: parsed.data.reranked ?? false };
 }
 
-// Every hit at or above the exact threshold is exact (the same item can be in
-// the catalog twice). With none, up to PHOTO_SIMILAR_MAX hits above the similar
-// floor are similar. Hits keep the service's order (best first).
+// Up to PHOTO_SIMILAR_MAX hits at or above the scale's floor, in the
+// service's order (best first).
 export function classifyHits(result: PhotoSearchResult): PhotoMatch[] {
-  const t = result.reranked ? PHOTO_THRESHOLDS.reranked : PHOTO_THRESHOLDS.cosine;
-  const exactMin = t.exact;
-  if (exactMin !== null) {
-    const exact = result.hits.filter((h) => h.score >= exactMin);
-    if (exact.length > 0) return exact.map((h) => ({ ...h, match: "exact" }));
-  }
+  const min = result.reranked ? PHOTO_SIMILAR_MIN.reranked : PHOTO_SIMILAR_MIN.cosine;
   return result.hits
-    .filter((h) => h.score >= t.similar)
+    .filter((h) => h.score >= min)
     .slice(0, PHOTO_SIMILAR_MAX)
     .map((h) => ({ ...h, match: "similar" }));
 }

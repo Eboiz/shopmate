@@ -3,7 +3,7 @@ import {
   classifyHits,
   EMBEDDER_TIMEOUT_MS,
   PHOTO_SIMILAR_MAX,
-  PHOTO_THRESHOLDS,
+  PHOTO_SIMILAR_MIN,
   PhotoSearchUnavailable,
   searchByPhoto,
 } from "./photo-search";
@@ -13,8 +13,8 @@ const env = { EMBEDDER_URL: "https://gpu.test/", EMBEDDER_TOKEN: "tok" };
 const photo = { base64: "aGVsbG8=", mediaType: "image/jpeg" as const };
 const args = { shopId: SHOP, photo, text: "áo blazer trắng", limit: 10 };
 const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
-const R = PHOTO_THRESHOLDS.reranked;
-const C = PHOTO_THRESHOLDS.cosine;
+const R = PHOTO_SIMILAR_MIN.reranked;
+const C = PHOTO_SIMILAR_MIN.cosine;
 
 afterEach(() => vi.useRealTimers());
 
@@ -71,27 +71,18 @@ describe("searchByPhoto", () => {
 describe("classifyHits", () => {
   const hit = (productId: string, score: number) => ({ productId, score });
 
-  it("reranker scores: every hit at or above the exact threshold is exact, in order", () => {
-    const hits = [hit("a", R.exact + 0.05), hit("b", R.exact), hit("c", R.exact - 0.01)];
-    expect(classifyHits({ hits, reranked: true })).toEqual([
-      { ...hits[0], match: "exact" },
-      { ...hits[1], match: "exact" },
-    ]);
+  it("never says exact: up to 3 hits at or above the reranker floor are similar, in order", () => {
+    const hits = [0.99, 0.95, 0.9, 0.85].map((score, i) => hit(`s${i}`, score));
+    expect(classifyHits({ hits, reranked: true })).toEqual(hits.slice(0, PHOTO_SIMILAR_MAX).map((h) => ({ ...h, match: "similar" })));
   });
 
-  it("reranker scores: no exact hit gives up to 3 similar hits above the floor, none below it", () => {
-    const hits = [0.01, 0.02, 0.03, 0.04, 0.05].map((d, i) => hit(`s${i}`, R.exact - d));
-    expect(classifyHits({ hits, reranked: true })).toHaveLength(PHOTO_SIMILAR_MAX);
-    expect(classifyHits({ hits, reranked: true }).every((h) => h.match === "similar")).toBe(true);
-    expect(classifyHits({ hits: [hit("x", R.similar - 0.01)], reranked: true })).toEqual([]);
-    expect(classifyHits({ hits: [hit("x", R.similar)], reranked: true })).toEqual([{ productId: "x", score: R.similar, match: "similar" }]);
+  it("nothing below the floor (another kind of item, a non-clothing photo)", () => {
+    expect(classifyHits({ hits: [hit("x", R - 0.01)], reranked: true })).toEqual([]);
+    expect(classifyHits({ hits: [hit("x", R)], reranked: true })).toEqual([{ productId: "x", score: R, match: "similar" }]);
   });
 
-  it("cosine scores (reranker off or failed) are never exact", () => {
-    const hits = [hit("a", 0.99), hit("b", C.similar), hit("c", C.similar - 0.01)];
-    expect(classifyHits({ hits, reranked: false })).toEqual([
-      { ...hits[0], match: "similar" },
-      { ...hits[1], match: "similar" },
-    ]);
+  it("cosine scores use their own floor", () => {
+    const hits = [hit("a", C), hit("b", C - 0.01)];
+    expect(classifyHits({ hits, reranked: false })).toEqual([{ ...hits[0], match: "similar" }]);
   });
 });

@@ -5,7 +5,7 @@ import { ToolError } from "../types";
 
 // PB-30 photo branch of search_products, through the real photo-search client
 // with a fake fetch. The text branch is covered by search-products.int.test.ts.
-import { PHOTO_THRESHOLDS } from "../photo-search";
+import { PHOTO_SIMILAR_MIN } from "../photo-search";
 import { searchProducts } from "./search-products";
 
 type Answer = { hits: { productId: string; score: number }[]; reranked: boolean } | Error;
@@ -23,8 +23,7 @@ const products = [1, 2, 3, 4, 5].map((n) => ({
 }));
 const photo = { base64: "aGVsbG8=", mediaType: "image/jpeg" as const };
 const ctx: ToolContext = { shopId: SHOP, conversationId: "c", photos: [photo] };
-const EXACT = PHOTO_THRESHOLDS.reranked.exact;
-const SIMILAR = PHOTO_THRESHOLDS.reranked.similar;
+const SIMILAR = PHOTO_SIMILAR_MIN.reranked;
 
 function fakeDb() {
   const from = vi.fn((table: string) => {
@@ -63,11 +62,11 @@ afterEach(() => {
 });
 
 describe("search_products with a photo (PB-30)", () => {
-  it("searches the shop by the numbered photo with the query as text; exact hits keep the service's order", async () => {
-    searchByPhoto.mockResolvedValue({ hits: [{ productId: id(3), score: EXACT + 0.1 }, { productId: id(1), score: EXACT }], reranked: true });
+  it("searches the shop by the numbered photo with the query as text; a photo match is close, in the service's order", async () => {
+    searchByPhoto.mockResolvedValue({ hits: [{ productId: id(3), score: 0.9 }, { productId: id(1), score: 0.85 }], reranked: true });
     const out = await searchProducts({ query: "áo khoác đen", limit: 5, photo: 1 }, ctx, fakeDb().db);
     expect(calls).toEqual([{ shopId: SHOP, imageBase64: photo.base64, mediaType: "image/jpeg", text: "áo khoác đen", limit: 10 }]);
-    expect(out.match).toBe("exact");
+    expect(out.match).toBe("close");
     expect(out.products.map((p) => p.productId)).toEqual([id(3), id(1)]);
     expect(out.products[1]).toMatchObject({ name: "Áo khoác 1", colors: ["Đen"], sizes: ["M"] });
   });
@@ -85,12 +84,12 @@ describe("search_products with a photo (PB-30)", () => {
   });
 
   it("drops hit ids that are not products of ctx.shopId", async () => {
-    searchByPhoto.mockResolvedValue({ hits: [{ productId: "b0000000-0000-4000-8000-000000000099", score: EXACT + 0.1 }, { productId: id(2), score: EXACT }], reranked: true });
+    searchByPhoto.mockResolvedValue({ hits: [{ productId: "b0000000-0000-4000-8000-000000000099", score: 0.9 }, { productId: id(2), score: 0.85 }], reranked: true });
     const out = await searchProducts({ query: "áo", limit: 5, photo: 1 }, ctx, fakeDb().db);
     expect(out.products.map((p) => p.productId)).toEqual([id(2)]);
   });
 
-  it("falls back to text search when the photo search is unavailable, and never says exact", async () => {
+  it("falls back to text search when the photo search is unavailable, still close", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     searchByPhoto.mockResolvedValue(new Error("503"));
     const out = await searchProducts({ query: "Áo khoác 2", limit: 5, photo: 1 }, ctx, fakeDb().db);

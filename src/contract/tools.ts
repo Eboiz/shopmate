@@ -42,8 +42,8 @@ export const tools = {
         .optional()
         .describe("Number of the shopper's photo in their latest message (1 = first). Searches by that photo; query then describes the item in it (type, color, style)."),
     }),
-    // PB-30: a photo search is exact only when the server's photo match says
-    // so; similar products are "close" (at most 3).
+    // PB-30: a photo search is never exact (a photo can't prove the exact
+    // product): products of the same kind are "close" (at most 3), else "none".
     // PB-31: match "close" means none has every word of the query; the products
     // are the most similar ones, for "Ý bạn là A hay B?".
     output: z.object({
