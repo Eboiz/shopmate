@@ -62,7 +62,7 @@ export function SizeChartCard(props: SizeChartEditorProps) {
         ) : (
           <span className="shrink-0 text-xs text-[#706d67]">{product.sizeChart.length} size</span>
         )}
-        <span aria-hidden="true" className="shrink-0 text-[#706d67] transition-transform group-open:rotate-180">▾</span>
+        <Icon name="chevron" className="size-4 shrink-0 text-[#706d67] transition-transform group-open:rotate-180" />
       </summary>
       <div className="border-t border-[#e3dfd8] px-5 py-4 sm:px-6">
         {props.canEdit ? <SizeChartForm {...props} /> : <SizeChartTable rows={product.sizeChart} />}

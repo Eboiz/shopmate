@@ -22,6 +22,7 @@ export type CatalogProduct = {
   code: string;
   name: string;
   price: number;
+  imageUrl: string | null;
   variants: CatalogVariant[];
   sizeChart: CatalogSizeRow[];
 };
@@ -39,7 +40,7 @@ export async function getCatalog(shopId: string) {
     supabase
       .from("products")
       .select(
-        "id, code, name, price, variants(id, size, color, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)",
+        "id, code, name, price, image_url, variants(id, size, color, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)",
       )
       .eq("shop_id", shopId)
       .order("code"),
@@ -54,8 +55,9 @@ export async function getCatalog(shopId: string) {
     if (result.error) throw new Error(`Không đọc được dữ liệu shop: ${result.error.message}`);
   }
 
-  const productList: CatalogProduct[] = (products.data ?? []).map(({ size_charts, ...product }) => ({
+  const productList: CatalogProduct[] = (products.data ?? []).map(({ size_charts, image_url, ...product }) => ({
     ...product,
+    imageUrl: image_url,
     variants: product.variants.toSorted(
       (a, b) => a.color.localeCompare(b.color, "vi") || compareSizes(a.size, b.size),
     ),
