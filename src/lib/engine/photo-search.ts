@@ -7,9 +7,12 @@ import type { PhotoInput } from "@/contract";
 // ids of one shop with a score; this module decides which hits are close
 // enough to show. The model never decides that.
 
-// A cold Modal container needs a minute or more to load its models. The
-// shopper is not kept waiting that long: search_products falls back to text.
-export const EMBEDDER_TIMEOUT_MS = 15_000;
+// A warm search takes 11-13 s (the reranker scores 30 candidates; measured
+// 2026-11-12), the first one after a restart a bit more while it fetches the
+// product photos. A cold Modal container needs a minute or more to load its
+// models: the shopper is not kept waiting that long, search_products falls
+// back to text search.
+export const EMBEDDER_TIMEOUT_MS = 25_000;
 export const PHOTO_SIMILAR_MAX = 3;
 const TEXT_MAX = 200;
 
