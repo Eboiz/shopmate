@@ -1,4 +1,4 @@
-import { toolCallLogSchema, type ConversationMode, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
 import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
@@ -16,7 +16,8 @@ export type TurnContextArgs = {
 
 export type TurnContext = {
   conversation: { shopId: string; mode: ConversationMode; lastMessageAt?: string } | null; // always null in staff_draft
-  product: { id: string; name: string } | null;
+  // description (PB-31): the shop's text, for details questions on the tool loop.
+  product: { id: string; name: string; description?: string | null } | null;
   // customer only: the conversation's previous AI turn missed the product (its
   // ai_turns.postcheck.productMiss, or searchMissed for older rows) and did not
   // hand off. Missing means false.
@@ -24,6 +25,9 @@ export type TurnContext = {
   // Last customer turn's quote, used only after its summary was shown to the
   // shopper. The engine checks the next shopper message before allowing a write.
   previousQuote?: PendingQuote | null;
+  // PB-31: the previous AI turn offered staff for this reason (soft handoff) and
+  // did not hand off. A "yes" now hands off with it. Missing means no offer.
+  previousHandoffOffer?: HandoffReason | null;
 };
 
 export type EngineStore = {
@@ -62,7 +66,7 @@ let sharedCatalog: ((shopId: string) => Promise<CatalogItem[]>) | null = null;
 
 async function loadCatalog(db: Db, shopId: string): Promise<CatalogItem[]> {
   const [products, variants] = await Promise.all([
-    db.from("products").select("id, name, category").eq("shop_id", shopId).order("name"),
+    db.from("products").select("id, name, category, description").eq("shop_id", shopId).order("name"),
     db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
   ]);
   if (products.error) throw new Error(`products: ${products.error.message}`);
@@ -73,6 +77,7 @@ async function loadCatalog(db: Db, shopId: string): Promise<CatalogItem[]> {
       id: p.id,
       name: p.name,
       category: p.category,
+      description: p.description,
       colors: [...new Set(own.map((v) => v.color))],
       sizes: sortSizes(own.map((v) => v.size)),
     };
@@ -84,7 +89,7 @@ export function createSupabaseStore(db: Db): EngineStore {
     if (productId === null) return null;
     const { data, error } = await db
       .from("products")
-      .select("id, name")
+      .select("id, name, description")
       .eq("id", productId)
       .eq("shop_id", shopId)
       .maybeSingle();
@@ -95,7 +100,7 @@ export function createSupabaseStore(db: Db): EngineStore {
   async function previousTurnState(shopId: string, conversationId: string) {
     const { data, error } = await db
       .from("ai_turns")
-      .select("id, tool_calls, handoff_reason, postcheck")
+      .select("id, tool_calls, handoff_reason, postcheck, handoff_offer")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
@@ -103,7 +108,7 @@ export function createSupabaseStore(db: Db): EngineStore {
       .limit(1)
       .maybeSingle();
     if (error) throw new Error(`ai_turns: ${error.message}`);
-    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null };
+    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
     // Rows the current engine wrote carry the guard's verdict in postcheck
     // (PB-05 AC3); older rows have none and fall back to the tool_calls shape.
@@ -120,6 +125,7 @@ export function createSupabaseStore(db: Db): EngineStore {
     return {
       previousTurnMissedProduct: missedProduct,
       previousQuote: quote && !orderWritten ? { ...quote, quoteId: data.id } : null,
+      previousHandoffOffer: data.handoff_offer,
     };
   }
 

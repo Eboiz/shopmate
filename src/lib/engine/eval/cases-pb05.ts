@@ -24,6 +24,7 @@ export const pb05EvalCases: EvalCase[] = [
   {
     id: "pb05-ac1-exact",
     description: 'PB-05 AC1 in its own words: "váy này màu be size M còn không?" (stock 2) -> available, price from data.',
+    shouldHandOff: false,
     history: shopper("váy này màu be size M còn không?"),
     productId: V,
     expected: [{ tool: "get_stock", args: { productId: V, size: "M", color: foldedIs("be") }, required: true }],
@@ -33,6 +34,7 @@ export const pb05EvalCases: EvalCase[] = [
   {
     id: "pb05-no-diacritics-by-name",
     description: "PB-05 AC1 + AC4: no product on screen, typed without diacritics; find it by name, then its stock.",
+    shouldHandOff: false,
     history: shopper("vay suong linen mau be size M con khong shop?"),
     expected: [
       { tool: "search_products", args: { query: foldedIncludes("linen") }, required: true },
@@ -44,6 +46,7 @@ export const pb05EvalCases: EvalCase[] = [
   {
     id: "pb05-ac2-no-diacritics",
     description: "PB-05 AC2 typed without diacritics: beige / L is 0; say sold out and offer size M of the same dress.",
+    shouldHandOff: false,
     history: shopper("vay nay mau be size L con ko shop"),
     productId: V,
     expected: [{ tool: "get_stock", args: { productId: V }, required: true }],
@@ -53,8 +56,9 @@ export const pb05EvalCases: EvalCase[] = [
   {
     id: "pb05-ac3-no-diacritics",
     description: "PB-05 AC3 first miss, typed without diacritics: one clarifying question, no guess, no handoff.",
-    history: shopper("shop co ao khoac da khong"),
-    expected: [{ tool: "search_products", args: { query: foldedIncludes("khoac") }, required: true }],
+    shouldHandOff: false,
+    history: shopper("shop co tui xach da khong"),
+    expected: [{ tool: "search_products", args: { query: foldedIncludes("tui") }, required: true }],
     handoff: null,
     reply: { label: "asks one question", ok: (t) => (t.match(/\?/g) ?? []).length === 1 },
   },

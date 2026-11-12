@@ -15,6 +15,7 @@ export const pb14Cases: EvalCase[] = [
   {
     id: "pb14-complaint",
     description: "PB-14 AC1: shopper complains -> calls handoff_to_staff with reason complaint.",
+    shouldHandOff: true,
     history: shopper("Đồ giao bị rách rồi shop ơi, làm ăn kỳ vậy!"),
     expected: [{ tool: "handoff_to_staff", args: { reason: "complaint" }, required: true }],
     handoff: "complaint",
@@ -23,6 +24,7 @@ export const pb14Cases: EvalCase[] = [
   {
     id: "pb14-asked-for-human",
     description: "PB-14 AC1: shopper asks for a person -> calls handoff_to_staff with reason asked_for_human.",
+    shouldHandOff: true,
     history: shopper("Cho mình nói chuyện với nhân viên được không?"),
     expected: [{ tool: "handoff_to_staff", args: { reason: "asked_for_human" }, required: true }],
     handoff: "asked_for_human",
@@ -30,25 +32,36 @@ export const pb14Cases: EvalCase[] = [
   },
   {
     id: "pb14-fabric-stretch-not-covered",
-    description: "PB-14 AC2: question not covered by shop data (fabric stretch) -> calls handoff_to_staff with reason not_covered_by_data.",
+    description: "PB-14 AC2: question not covered by shop data (fabric stretch) -> offers staff (PB-31 soft handoff) for not_covered_by_data.",
+    shouldHandOff: true,
     history: shopper("Váy này vải có co giãn nhiều không shop?"),
     productId: V,
-    expected: [{ tool: "handoff_to_staff", args: { reason: "not_covered_by_data" }, required: true }],
-    handoff: "not_covered_by_data",
-    reply: { label: "mentions staff will reply", ok: saysStaffWillReply },
+    // The offer's handoff_to_staff call is not run, so it isn't logged.
+    expected: [
+      { tool: "handoff_to_staff", args: { reason: "not_covered_by_data" }, required: false },
+      { tool: "search_products", required: false },
+    ],
+    outcome: { decision: "offer", reason: "not_covered_by_data" },
+    reply: { label: "mentions staff", ok: saysStaffWillReply },
   },
   {
     id: "pb14-washing-not-covered",
-    description: "PB-14 AC2: question not covered by shop data (washing instructions) -> calls handoff_to_staff with reason not_covered_by_data.",
+    description: "PB-14 AC2: question not covered by shop data (washing instructions) -> offers staff (PB-31 soft handoff) for not_covered_by_data.",
+    shouldHandOff: true,
     history: shopper("Áo này giặt máy được không shop?"),
     productId: AO,
-    expected: [{ tool: "handoff_to_staff", args: { reason: "not_covered_by_data" }, required: true }],
-    handoff: "not_covered_by_data",
-    reply: { label: "mentions staff will reply", ok: saysStaffWillReply },
+    // The offer's handoff_to_staff call is not run, so it isn't logged.
+    expected: [
+      { tool: "handoff_to_staff", args: { reason: "not_covered_by_data" }, required: false },
+      { tool: "search_products", required: false },
+    ],
+    outcome: { decision: "offer", reason: "not_covered_by_data" },
+    reply: { label: "mentions staff", ok: saysStaffWillReply },
   },
   {
     id: "pb14-ununderstood-twice",
     description: "PB-14 AC4: shopper isn't understood for 2 turns in a row -> hands off with reason misunderstood_twice.",
+    shouldHandOff: true,
     history: [
       { sender: "shopper", text: "jdkfj sdf" },
       { sender: "ai", text: "Dạ shop chưa hiểu rõ ý bạn, bạn nói rõ hơn giúp mình nhé?" },

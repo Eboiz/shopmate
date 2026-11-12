@@ -2,7 +2,8 @@
 // on the reply text before it is sent; runEngine regenerates once, then hands off.
 // Pure: no IO.
 import type { ToolCallLog } from "@/contract";
-import { fold } from "./text";
+// With the extension: scripts/eval-live.ts runs this file under plain Node.
+import { fold } from "./text.ts";
 
 // Kinds of offer, on folded text (see prepare). A reply clause is backed only
 // when the shop's policy text makes an offer of the same kinds. Global: every

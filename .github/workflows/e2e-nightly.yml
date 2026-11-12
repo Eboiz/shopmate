@@ -252,8 +252,8 @@ jobs:
           fi
       - if: steps.changes.outputs.ran == 'true'
         uses: ./.github/actions/local-stack
-      - if: steps.changes.outputs.ran == 'true'
-        run: pnpm exec playwright install --with-deps chromium
+      # The eval needs no browser: it runs before the Playwright install, so a failed
+      # install (apt mirror down) still leaves the injection results.
       # 31 critical cases x 1 run, estimated ~356k tokens (pnpm eval:injection --plan).
       # The budget stops the run before it goes over; a 429 stops it at once.
       - name: Prompt injection, critical cases (real Claude)
@@ -269,8 +269,14 @@ jobs:
         run: |
           mkdir -p ai-out
           pnpm eval:injection --out ai-out/injection.html
-      - name: Main flow e2e (real Claude)
+      - name: Install Chromium for the main flow
+        id: browsers
         if: steps.changes.outputs.ran == 'true'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Main flow e2e (real Claude)
+        if: steps.changes.outputs.ran == 'true' && steps.browsers.outcome == 'success'
         continue-on-error: true
         timeout-minutes: 15
         env:
@@ -289,7 +295,9 @@ jobs:
         env:
           KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          files=$(find ai-out -type f 2>/dev/null)
+          # No ai-out/ (the eval failed before writing): nothing to check.
+          [ -d ai-out ] || exit 0
+          files=$(find ai-out -type f)
           [ -n "$files" ] || exit 0
           leak=false
           grep -qE '(sk-ant-|as_eyJ)[A-Za-z0-9_.-]{8,}' $files && leak=true
