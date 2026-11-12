@@ -1,4 +1,5 @@
-import { toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { toolCallLogSchema, type ConversationMode, type HandoffReason, type PhotoInput, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { loadPhotos } from "@/lib/chat/photo-store";
 import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
@@ -45,6 +46,8 @@ export type EngineStore = {
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
   catalog?(shopId: string): Promise<CatalogItem[]>;
+  // PB-30: the shopper's photos (chat-photos paths of this shop) as base64.
+  loadPhotos?(shopId: string, paths: string[]): Promise<PhotoInput[]>;
 };
 
 const MAX_CARDS = 10;
@@ -150,6 +153,7 @@ export function createSupabaseStore(db: Db): EngineStore {
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),
     setAiMode: (ctx) => setAiMode(db, ctx),
+    loadPhotos: (shopId, paths) => loadPhotos(db, shopId, paths),
 
     async insertTurn(row) {
       const { data, error } = await db.from("ai_turns").insert(row).select("id").single();

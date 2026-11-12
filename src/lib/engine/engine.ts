@@ -6,6 +6,7 @@ import {
   type EngineInput,
   type EngineOutput,
   type HandoffReason,
+  type PhotoInput,
   type Reply,
   type ToolCallLog,
   type ToolContext,
@@ -18,7 +19,7 @@ import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffer } from "./refusal-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
-import { toModelMessages } from "./messages";
+import { latestShopperPhotoPaths, toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
@@ -230,7 +231,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // toolsForMode(mode) inside executeTool. The two must match (see tools/index.ts).
   const system = buildSystemPrompt({ mode, product: tc.product });
   const toolList = toolDefinitions(mode);
-  const messages = toModelMessages(input.history);
+  // PB-30: the photos of the shopper's latest turn, read once: Claude sees them
+  // and search_products can search by them (ctx.photos). A photo that can't be
+  // read is left out; the turn still runs on the text.
+  const photoPaths = mode === "customer" ? latestShopperPhotoPaths(input.history) : [];
+  let photos: PhotoInput[] = [];
+  if (photoPaths.length > 0 && deps.store.loadPhotos) {
+    try {
+      photos = await deps.store.loadPhotos(ctx.shopId, photoPaths);
+    } catch (e) {
+      console.error("engine: shopper photos could not be loaded", e);
+    }
+  }
+  if (photos.length > 0) ctx = { ...ctx, photos };
+  const messages = toModelMessages(input.history, photos);
   const detail: TurnDetail = { system: system.map((b) => b.text).join("\n\n"), calls: [] };
 
   const logs: ToolCallLog[] = [];
@@ -337,7 +351,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   }
 
   if (deps.jev && orderInProgress) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
-  if (deps.jev && !orderInProgress && !routed) {
+  // PB-30: Jev reads text only; a turn with photos goes to the tool loop.
+  if (deps.jev && !orderInProgress && !routed && photoPaths.length > 0) route = { path: "llm_loop", fallbackReason: "photo" };
+  if (deps.jev && !orderInProgress && !routed && photoPaths.length === 0) {
     try {
       const catalog: CatalogItem[] = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
       const decision = await decideTurn(deps.jev, { history: input.history, viewing: tc.product, catalog, now });

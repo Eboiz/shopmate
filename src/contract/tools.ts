@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PhotoInput } from "./photos";
 import {
   handoffReasonSchema,
   idSchema,
@@ -13,6 +14,8 @@ export type ToolContext = {
   shopId: string;
   // null in staff_draft mode (PB-20 has no conversation).
   conversationId: string | null;
+  // PB-30: the photos of the shopper's latest turn, filled by the server.
+  photos?: PhotoInput[];
 };
 
 
@@ -31,7 +34,16 @@ export const tools = {
     input: z.strictObject({
       query: z.string().trim().min(1).max(100),
       limit: z.int().min(1).max(10).default(5),
+      // PB-30: search by the shopper's photo; query then describes the item.
+      photo: z
+        .int()
+        .min(1)
+        .max(4)
+        .optional()
+        .describe("Number of the shopper's photo in their latest message (1 = first). Searches by that photo; query then describes the item in it (type, color, style)."),
     }),
+    // PB-30: a photo search is exact only when the server's photo match says
+    // so; similar products are "close" (at most 3).
     // PB-31: match "close" means none has every word of the query; the products
     // are the most similar ones, for "Ý bạn là A hay B?".
     output: z.object({
