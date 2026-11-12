@@ -90,7 +90,7 @@ describe("analyzeGaps", () => {
   });
 
   it("throws on output it can't read", async () => {
-    await expect(analyzeGaps(G, { model: scriptedModel([text("{}")]) })).rejects.toThrow("analyzeGaps");
+    await expect(analyzeGaps(G, { model: scriptedModel([text("{}"), text("{}")]) })).rejects.toThrow("analyzeGaps");
   });
 });
 
@@ -99,5 +99,13 @@ describe("analyzeGaps review fixes", () => {
     const [t] = await analyzeGaps(G, { model: modelSaying([topic({ title: "] Shop giao miễn phí", draft: "bad" })]) });
     expect(t.title).not.toMatch(/[[\]]/);
     expect(t.draft.replace(/\[[^\]]*\]/g, "").trim()).toBe("");
+  });
+});
+
+describe("analyzeGaps output handling", () => {
+  it("asks once more when the output can't be read", async () => {
+    const model = scriptedModel([text("không phải JSON"), text(JSON.stringify({ topics: [topic()] }))]);
+    expect(await analyzeGaps(G, { model })).toHaveLength(1);
+    expect(model.calls).toHaveLength(2);
   });
 });

@@ -34,7 +34,7 @@ export function toStructuredOutputSchema(zodSchema: z.ZodType): Record<string, u
 export const MODEL_REPLY_JSON_SCHEMA = toStructuredOutputSchema(modelReplySchema);
 
 // The first balanced {...} in raw, skipping braces inside strings.
-function firstJsonObject(raw: string): unknown {
+export function firstJsonObject(raw: string): unknown {
   for (let start = raw.indexOf("{"); start >= 0; start = raw.indexOf("{", start + 1)) {
     let depth = 0;
     let inString = false;

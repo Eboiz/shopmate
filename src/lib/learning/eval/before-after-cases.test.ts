@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FALLBACK_TEXT } from "@/lib/engine/model-reply";
 import { learnInputSchema } from "@/contract";
 import { appendRule, beforeAfterTopics, judgeAfter } from "./before-after-cases";
 
@@ -47,5 +48,13 @@ describe("judgeAfter review fixes", () => {
     const q = beforeAfterTopics[0].questions[0];
     const run = { calledGetPolicy: true, handoffReason: null, reply: "Dạ shop không cho kiểm hàng ạ" };
     expect(judgeAfter(q, run, ["Shop cho kiểm hàng trước khi nhận."]).passed).toBe(false);
+  });
+});
+
+describe("judgeAfter fallback", () => {
+  it("fails the engine's fallback text even when a keyword matches", () => {
+    const q = beforeAfterTopics.find((t) => t.id === "hang-sale")!.questions[0];
+    const run = { calledGetPolicy: true, handoffReason: null, reply: FALLBACK_TEXT };
+    expect(judgeAfter(q, run, ["Hàng sale shop không nhận đổi trả."]).passed).toBe(false);
   });
 });

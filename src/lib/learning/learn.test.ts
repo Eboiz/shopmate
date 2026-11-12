@@ -3,6 +3,7 @@ import type { LearnInput } from "@/contract";
 import type { ModelClient } from "@/lib/engine/engine";
 import { scriptedModel } from "@/lib/engine/test/fake-model";
 import { learnFromStaffReply } from "./learn";
+import { LEARNING_PROMPT_VERSION } from "./prompt";
 
 const POLICIES: LearnInput["policies"] = [
   { kind: "doi_tra", content: "Đổi trong 7 ngày" },
@@ -40,7 +41,7 @@ describe("learnFromStaffReply", () => {
     const call = model.calls[0];
     expect(call.tools).toBeUndefined();
     expect(call.output_config?.format?.type).toBe("json_schema");
-    expect(JSON.stringify(call.system)).toContain("v1.0");
+    expect(JSON.stringify(call.system)).toContain(LEARNING_PROMPT_VERSION);
   });
 
   it("skips a rule the model marks one_off", async () => {
@@ -112,7 +113,7 @@ describe("learnFromStaffReply", () => {
   });
 
   it("skips output that is not JSON", async () => {
-    const result = await learnFromStaffReply(input(), { model: scriptedModel([text("không phải JSON")]) });
+    const result = await learnFromStaffReply(input(), { model: scriptedModel([text("không phải JSON"), text("không phải JSON")]) });
     expect(result).toMatchObject({ status: "skip", skipReason: "invalid_output" });
   });
 
@@ -160,5 +161,31 @@ describe("learnFromStaffReply review fixes", () => {
     const out = output({ policyKind: "doi_tra", rule, evidence: "trừ hàng sale" });
     const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
     expect(result).toMatchObject({ status: "skip", skipReason: "too_long" });
+  });
+});
+
+describe("learnFromStaffReply output handling", () => {
+  it("reads JSON wrapped in prose or a code fence", async () => {
+    const model = scriptedModel([text("Đây là kết quả:\n```json\n" + JSON.stringify(output()) + "\n```")]);
+    expect((await learnFromStaffReply(input(), { model })).status).toBe("learn");
+  });
+
+  it("accepts output without a reason", async () => {
+    const { reason: _reason, ...noReason } = output();
+    void _reason;
+    expect((await learnFromStaffReply(input(), { model: modelSaying(noReason) })).status).toBe("learn");
+  });
+
+  it("asks once more when the output can't be read", async () => {
+    const model = scriptedModel([text(JSON.stringify({ rules: [output()] })), text(JSON.stringify(output()))]);
+    const result = await learnFromStaffReply(input(), { model });
+    expect(result.status).toBe("learn");
+    expect(model.calls).toHaveLength(2);
+  });
+
+  it("gives up after the second unreadable output", async () => {
+    const model = scriptedModel([text("x"), text("y")]);
+    expect(await learnFromStaffReply(input(), { model })).toMatchObject({ status: "skip", skipReason: "invalid_output" });
+    expect(model.calls).toHaveLength(2);
   });
 });

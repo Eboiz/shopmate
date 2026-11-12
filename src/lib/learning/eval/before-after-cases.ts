@@ -2,6 +2,7 @@
 // fixture (Eboiz/Documents#39). Each topic's staff reply is learned, and the
 // rule is appended to shop A's policy like PB-35a's get_policy will do.
 import type { HandoffReason } from "@/contract";
+import { FALLBACK_TEXT } from "@/lib/engine/model-reply";
 import { amountsIn } from "@/lib/engine/refusal-guard";
 import { fold } from "@/lib/engine/text";
 import { comparableNumbers } from "../checks";
@@ -18,6 +19,8 @@ const staffOf = (id: string) => {
 };
 
 const NOT_INSPECT = /khong (duoc |cho |the |ho tro )*(kiem|mo|xem)/;
+// The sale-items answer says they aren't exchanged, not just any "không".
+const NO_SALE_RETURN = /khong (nhan )?(doi|ho tro doi)|khong (duoc )?doi/;
 const NOT_COD = /khong (ho tro |nhan )+(cod|thanh toan)/;
 
 export const beforeAfterTopics: BeforeAfterTopic[] = [
@@ -41,8 +44,8 @@ export const beforeAfterTopics: BeforeAfterTopic[] = [
     id: "hang-sale",
     staff: staffOf("L03-hang-sale"),
     questions: [
-      { id: "hang-sale-1", text: "Hàng sale có đổi được không?", mustSay: /khong/ },
-      { id: "hang-sale-2", text: "Váy mua lúc giảm giá về không vừa thì đổi được không shop?", mustSay: /khong/ },
+      { id: "hang-sale-1", text: "Hàng sale có đổi được không?", mustSay: NO_SALE_RETURN },
+      { id: "hang-sale-2", text: "Váy mua lúc giảm giá về không vừa thì đổi được không shop?", mustSay: NO_SALE_RETURN },
     ],
   },
   {
@@ -71,7 +74,8 @@ export function judgeAfter(q: BeforeAfterQuestion, run: EngineRun, policyTexts: 
     .map((a) => a.replace(/%$/, ""))
     .filter((n) => !known.has(n));
   const folded = fold(run.reply);
-  const saysFact = q.mustSay.test(folded) && !(q.mustNotSay?.test(folded) ?? false);
+  // The engine's "say that again" text is no answer, whatever words it holds.
+  const saysFact = run.reply !== FALLBACK_TEXT && q.mustSay.test(folded) && !(q.mustNotSay?.test(folded) ?? false);
   return {
     passed: run.calledGetPolicy && run.handoffReason === null && saysFact && unsupportedAmounts.length === 0,
     saysFact,

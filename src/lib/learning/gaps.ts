@@ -5,7 +5,7 @@ import { z } from "zod";
 import { gapTopicProposalSchema, policyKindSchema, type GapQuestion, type GapTopicProposal } from "@/contract";
 import { toStructuredOutputSchema } from "@/lib/engine/model-reply";
 import { draftIsBlankOnly } from "./checks";
-import { modelNameFrom, parseJson, textOf, type LearningDeps } from "./learn";
+import { createParsed, modelNameFrom, type LearningDeps } from "./learn";
 import { buildGapsSystemPrompt, buildGapsUserMessage } from "./prompt";
 
 export const gapsModelOutputSchema = z.object({
@@ -37,16 +37,19 @@ function cleanTitle(title: string): string {
 export async function analyzeGaps(questions: GapQuestion[], deps: LearningDeps): Promise<GapTopicProposal[]> {
   if (questions.length === 0) return [];
   const byRef = new Map(questions.map((q, i) => [`q${i + 1}`, q]));
-  const message = await deps.model.create({
-    model: modelNameFrom(deps),
-    max_tokens: 2048,
-    system: buildGapsSystemPrompt(),
-    messages: [
-      { role: "user", content: buildGapsUserMessage([...byRef].map(([ref, q]) => ({ ref, question: q.question }))) },
-    ],
-    output_config: { effort: "low", format: { type: "json_schema", schema: GAPS_JSON_SCHEMA } },
-  });
-  const out = parseJson(textOf(message), gapsModelOutputSchema);
+  const out = await createParsed(
+    deps,
+    {
+      model: modelNameFrom(deps),
+      max_tokens: 2048,
+      system: buildGapsSystemPrompt(),
+      messages: [
+        { role: "user", content: buildGapsUserMessage([...byRef].map(([ref, q]) => ({ ref, question: q.question }))) },
+      ],
+      output_config: { effort: "low", format: { type: "json_schema", schema: GAPS_JSON_SCHEMA } },
+    },
+    gapsModelOutputSchema,
+  );
   if (!out) throw new Error("analyzeGaps: invalid model output");
 
   const used = new Set<string>();

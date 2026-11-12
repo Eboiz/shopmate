@@ -7,6 +7,7 @@ import {
   hasVagueMarker,
   numbersBacked,
   redactPersonal,
+  ruleSupported,
 } from "./checks";
 
 describe("comparableNumbers", () => {
@@ -101,5 +102,15 @@ describe("draftIsBlankOnly", () => {
   });
   it("rejects an offer outside the blanks", () => {
     expect(draftIsBlankOnly("Shop giảm giá cho [đơn nào]")).toBe(false);
+  });
+});
+
+describe("ruleSupported", () => {
+  it("ignores function words when counting the staff's words", () => {
+    expect(ruleSupported("Shop giao hàng đi Hà Nội thường mất 3-4 ngày.", "đi Hà Nội thường mất 3-4 ngày", "Dạ đi Hà Nội thường mất 3-4 ngày ạ")).toBe(true);
+    expect(ruleSupported("Shop không nhận đổi trả hàng sale.", "hàng sale shop không nhận đổi trả", "Dạ hàng sale shop không nhận đổi trả chị nhé")).toBe(true);
+  });
+  it("rejects a rule mostly made of other words", () => {
+    expect(ruleSupported("Shop bán sỉ cho đại lý ở mọi tỉnh thành.", "có", "Dạ có ạ")).toBe(false);
   });
 });

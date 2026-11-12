@@ -86,14 +86,17 @@ export function draftIsBlankOnly(draft: string): boolean {
 
 const NEGATION = /\b(khong|chua|chang|ko|khg)\b/;
 const tokens = (text: string) => new Set(fold(text.normalize("NFC")).match(/[\p{L}\p{N}]+/gu) ?? []);
-// Share of the rule's words the staff reply must hold.
+// Words a rewrite adds without stating anything: the subject ("shop", "khách",
+// "hàng") and function words. Not counted.
+const NEUTRAL = new Set(["shop", "hang", "khach", "duoc", "se", "la", "va", "cho", "cua", "cac", "nhung", "thi", "voi", "khi", "nay", "deu", "co"]);
+// Share of the rule's other words the staff reply must hold.
 const MIN_COVERAGE = 0.75;
 
 // True when the rule keeps the evidence's negation (or its absence) and most of
 // its words come from the staff reply. A rewrite that fails needs the owner.
 export function ruleSupported(rule: string, evidence: string, staffReply: string): boolean {
   if (NEGATION.test(fold(rule)) !== NEGATION.test(fold(evidence))) return false;
-  const words = [...tokens(rule)];
+  const words = [...tokens(rule)].filter((w) => !NEUTRAL.has(w));
   if (words.length === 0) return false;
   const staff = tokens(staffReply);
   return words.filter((w) => staff.has(w)).length / words.length >= MIN_COVERAGE;

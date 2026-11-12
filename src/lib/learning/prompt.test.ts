@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildLearnSystemPrompt, buildLearnUserMessage, LEARNING_PROMPT_VERSION } from "./prompt";
 
 describe("learning prompt", () => {
-  it("is versioned v1.0", () => {
-    expect(LEARNING_PROMPT_VERSION).toBe("v1.0");
-    expect(buildLearnSystemPrompt()).toContain("v1.0");
+  it("is versioned v1.1", () => {
+    expect(LEARNING_PROMPT_VERSION).toBe("v1.1");
+    expect(buildLearnSystemPrompt()).toContain("v1.1");
   });
 
   it("marks a policy the shop has not written", () => {
