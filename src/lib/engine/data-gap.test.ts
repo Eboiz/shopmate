@@ -61,6 +61,15 @@ describe("gapOfTurn (PB-35a: which turns record a question the AI couldn't answe
     expect(gapOfTurn(turn({ offerMade: "not_covered_by_data", logs: [] }))).toBeNull();
   });
 
+  it("records a policy question even when the turn read no policy (or the read failed)", () => {
+    expect(gapOfTurn(turn({ question: "Shop có cho trả góp không?", offerMade: "policy_not_covered", logs: [] }))).toEqual({
+      reason: "policy_not_covered",
+      question: "Shop có cho trả góp không?",
+      productId: null,
+    });
+    expect(gapOfTurn(turn({ offerMade: "policy_not_covered", logs: [policy("db down")] }))?.productId).toBeNull();
+  });
+
   it("skips a failed get_policy call", () => {
     expect(gapOfTurn(turn({ offerMade: "not_covered_by_data", logs: [policy("db down")] }))).toBeNull();
   });
