@@ -126,4 +126,27 @@ describe("web chat on local Supabase", () => {
     expect(await loadHistory(FX.a.shop, shopperExternalId("someone-else"))).toEqual([]);
     expect(await loadHistory(FX.b.shop, shopper)).toEqual([]);
   });
+
+  it("stores a photo in the private bucket and shows it in the history as a signed URL (PB-30)", async () => {
+    const photoShopper = shopperExternalId(`token-${randomUUID()}`);
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(200).fill(9)]);
+    const status = await receiveChannelMessage(web, {
+      externalId: photoShopper,
+      messageId: randomUUID(),
+      text: "",
+      photos: [async () => jpeg],
+    });
+    expect(status).toBe("answered");
+    const [input] = engine.mock.calls.at(-1)!;
+    const path = input.history.at(-1)!.photoPaths![0];
+    expect(path).toMatch(new RegExp(`^${FX.a.shop}/[0-9a-f-]{36}/[0-9a-f-]{36}\\.jpg$`));
+
+    const history = await loadHistory(FX.a.shop, photoShopper);
+    const shown = history.find((m) => m.sender === "shopper")!;
+    expect(shown.photoUrls).toHaveLength(1);
+    const fetched = await fetch(shown.photoUrls[0]);
+    expect(fetched.status).toBe(200);
+    expect(new Uint8Array(await fetched.arrayBuffer())).toEqual(jpeg);
+    await db.storage.from("chat-photos").remove([path]);
+  });
 });

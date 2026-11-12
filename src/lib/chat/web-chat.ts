@@ -4,6 +4,7 @@ import { replySchema } from "@/contract";
 import { sortSizes } from "@/lib/engine/text";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ShopCatalog } from "@/lib/shop/types";
+import { signPhotoUrls } from "./photo-store";
 import type { ChatMessage } from "./types";
 
 // Server side of the customer shop page and web chat (PB-04).
@@ -152,12 +153,18 @@ export async function loadHistory(shopId: string, externalId: string): Promise<C
 
   const { data, error } = await db
     .from("messages")
-    .select("id, sender, text, reply, created_at")
+    .select("id, sender, text, reply, photo_paths, created_at")
     .eq("shop_id", shopId)
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .limit(HISTORY_SHOWN);
   if (error) throw new Error(`messages: ${error.message}`);
+
+  // PB-30: one signing call for every photo on screen.
+  const paths = data.flatMap((m) => m.photo_paths ?? []);
+  const signed = new Map(paths.map((p, i) => [p, i]));
+  const urls = await signPhotoUrls(db, paths);
+  const photoUrls = (m: { photo_paths: string[] | null }) => (m.photo_paths ?? []).map((p) => urls[signed.get(p)!] ?? "");
 
   return data.toReversed().map((message) => {
     const reply = message.reply === null ? null : replySchema.safeParse(message.reply);
@@ -166,6 +173,7 @@ export async function loadHistory(shopId: string, externalId: string): Promise<C
       sender: message.sender,
       text: message.text,
       reply: reply?.success ? reply.data : null,
+      photoUrls: photoUrls(message),
       createdAt: message.created_at,
     };
   });

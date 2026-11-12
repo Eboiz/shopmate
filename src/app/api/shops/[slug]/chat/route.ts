@@ -1,5 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { receiveChannelMessage } from "@/lib/channels/receive";
+import { MAX_PHOTO_BYTES } from "@/contract";
+import { checkPhoto, PHOTO_ERRORS } from "@/lib/chat/photo-rules";
 import { chatErrors, chatPostSchema, firstIssue, shopSlugSchema } from "@/lib/chat/request";
 import {
   SHOPPER_COOKIE,
@@ -48,20 +50,44 @@ export async function GET(request: NextRequest, ctx: Ctx) {
   }
 }
 
-// POST { text, productId, clientMessageId }: store the shopper's message and,
+// POST { text, productId, clientMessageId } as JSON, or as multipart/form-data
+// with an optional `photo` file (PB-30; text may then be empty): store the shopper's message and,
 // while the conversation is in `ai` mode, answer it before responding (the page
 // shows its typing indicator meanwhile). Same core as Messenger and Telegram:
 // dedupe (by clientMessageId), PB-17 rate limit, mode gate, engine, handoff.
 export async function POST(request: NextRequest, ctx: Ctx) {
   let body: unknown;
+  let photoFile: File | null = null;
   try {
-    body = await request.json();
+    if ((request.headers.get("content-type") ?? "").startsWith("multipart/form-data")) {
+      const form = await request.formData();
+      const photo = form.get("photo");
+      photoFile = photo instanceof File && photo.size > 0 ? photo : null;
+      const field = (name: string) => {
+        const value = form.get(name);
+        return typeof value === "string" ? value : undefined;
+      };
+      body = { text: field("text") ?? "", productId: field("productId") || null, clientMessageId: field("clientMessageId") };
+    } else {
+      body = await request.json();
+    }
   } catch {
     return fail(chatErrors.invalidBody, 400);
   }
   const parsed = chatPostSchema.safeParse(body);
   if (!parsed.success) return fail(firstIssue(parsed.error), 400);
   const { text, productId, clientMessageId } = parsed.data;
+
+  // PB-30: the size is checked before the file is read; the type by its bytes.
+  let photoBytes: Uint8Array | null = null;
+  if (photoFile) {
+    if (photoFile.size > MAX_PHOTO_BYTES) return fail(PHOTO_ERRORS.size, 400);
+    const bytes = new Uint8Array(await photoFile.arrayBuffer());
+    const check = checkPhoto(bytes);
+    if (!check.ok) return fail(PHOTO_ERRORS[check.error], 400);
+    photoBytes = bytes;
+  }
+  if (!text && !photoBytes) return fail(chatErrors.emptyMessage, 400);
 
   try {
     const shop = await shopFrom(ctx);
@@ -102,7 +128,13 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     try {
       const status = await receiveChannelMessage(
         { channel: "web", shopId: shop.id },
-        { externalId: shopperExternalId(token), messageId: clientMessageId, text, productId: productId ?? null },
+        {
+          externalId: shopperExternalId(token),
+          messageId: clientMessageId,
+          text,
+          productId: productId ?? null,
+          ...(photoBytes ? { photos: [async () => photoBytes] } : {}),
+        },
       );
       return withCookie(NextResponse.json({ status }, { headers: noStore }));
     } catch (error) {
