@@ -123,7 +123,9 @@ describe("POST /api/webhooks/messenger", () => {
       ]),
     );
     await runAfter();
-    expect(received.map((r) => r[1])).toEqual([{ externalId: "psid-1", messageId: "p1", imageUrls: ["https://x/1.jpg"] }]);
+    expect(received.map((r) => r[1])).toEqual([
+      { externalId: "psid-1", messageId: "p1", text: "", photos: [expect.any(Function)] },
+    ]);
     expect(info).toHaveBeenCalledWith("messenger: sticker from psid-1 ignored");
     info.mockRestore();
   });

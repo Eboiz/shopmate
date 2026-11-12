@@ -18,7 +18,8 @@ type Base = { updateId: string; chatId: string };
 export type TelegramEvent =
   | (Base & { type: "text"; text: string })
   | (Base & { type: "command"; command: string })
-  | (Base & { type: "image"; fileId: string })
+  // caption: the text sent with the photo, "" when none (PB-30).
+  | (Base & { type: "image"; fileId: string; caption: string })
   | (Base & { type: "sticker" });
 
 type Update = {
@@ -28,6 +29,7 @@ type Update = {
     chat?: { id?: number; type?: string };
     text?: string;
     photo?: { file_id: string }[];
+    caption?: string;
     sticker?: unknown;
   };
 };
@@ -46,7 +48,7 @@ export function parseTelegramUpdate(body: unknown): TelegramEvent | null {
   }
   if (message.text) return { ...base, type: "text", text: message.text };
   const photo = message.photo?.at(-1);
-  if (photo) return { ...base, type: "image", fileId: photo.file_id };
+  if (photo) return { ...base, type: "image", fileId: photo.file_id, caption: message.caption ?? "" };
   if (message.sticker) return { ...base, type: "sticker" };
   return null;
 }

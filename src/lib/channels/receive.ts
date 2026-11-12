@@ -1,8 +1,10 @@
 import "server-only";
-import type { Channel, HistoryMessage, Reply } from "@/contract";
+import { MAX_PHOTOS_PER_MESSAGE, type Channel, type HistoryMessage, type Reply } from "@/contract";
+import { PHOTO_BUCKET, storeShopperPhoto } from "@/lib/chat/photo-store";
 import { runEngine } from "@/lib/engine/run";
 import { replyIfRateLimited } from "@/lib/guard/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { PhotoSource } from "./photo-download";
 import { sendToConversation } from "./send";
 
 // The shop's account on a channel, already looked up by the webhook
@@ -20,7 +22,12 @@ export type IncomingMessage = {
   // The product the shopper tapped "Hỏi về món này" on (web chat), already
   // checked by the route to belong to the shop.
   productId?: string | null;
-} & ({ text: string } | { imageUrls: string[] });
+  // May be empty when the message is only photos (PB-30).
+  text: string;
+  // PB-30: the message's photos, fetched only once the message is known to be
+  // new; stored in the chat-photos bucket, never the channel's URL (A10).
+  photos?: PhotoSource[];
+};
 
 // Postgres unique_violation: web chat's (conversation_id, client_message_id) key.
 const UNIQUE_VIOLATION = "23505";
@@ -86,16 +93,36 @@ export async function receiveChannelMessage(
   );
   const initialMode = conversation.mode;
 
-  const text = "text" in incoming ? incoming.text : `[Khách gửi ảnh] ${incoming.imageUrls.join(" ")}`;
+  // PB-30: a photo that can't be fetched or isn't JPEG/PNG/WebP is skipped; the
+  // rest of the message still goes through.
+  const sentPhotos = incoming.photos ?? [];
+  const photoPaths: string[] = [];
+  for (const photo of sentPhotos.slice(0, MAX_PHOTOS_PER_MESSAGE)) {
+    try {
+      const path = await storeShopperPhoto(db, { shopId: shop_id, conversationId: conversation.id, bytes: await photo() });
+      if (path) photoPaths.push(path);
+      else console.warn("shopper photo skipped: not a JPEG, PNG or WebP photo");
+    } catch (error) {
+      console.warn("shopper photo skipped", error);
+    }
+  }
+
   const stored = await db.from("messages").insert({
     shop_id,
     conversation_id: conversation.id,
     sender: "shopper",
-    text,
+    text: incoming.text,
+    photo_paths: photoPaths,
     client_message_id: account.channel === "web" ? incoming.messageId : null,
   });
   // Web chat: the browser retried a message that is already stored.
-  if (account.channel === "web" && stored.error?.code === UNIQUE_VIOLATION) return "duplicate";
+  if (account.channel === "web" && stored.error?.code === UNIQUE_VIOLATION) {
+    if (photoPaths.length > 0) {
+      const removed = await db.storage.from(PHOTO_BUCKET).remove(photoPaths);
+      if (removed.error) console.warn("duplicate message: photos not removed", removed.error.message);
+    }
+    return "duplicate";
+  }
   must(stored, "message");
   // A new shopper message also moves the conversation to the top of the inbox, in every mode.
   must(
@@ -133,21 +160,25 @@ export async function receiveChannelMessage(
     return "handed_off" as const;
   };
 
-  // The AI reads text only: a photo goes to staff.
-  if (!("text" in incoming)) return handOff(notice(PHOTO_HANDOFF_TEXT));
+  // Nothing the AI can read: only photos, and none of them could be kept.
+  if (sentPhotos.length > 0 && photoPaths.length === 0 && incoming.text.trim() === "") {
+    return handOff(notice(PHOTO_HANDOFF_TEXT));
+  }
 
   const [, historyRead] = await Promise.all([
     onThinking?.().catch((error) => console.warn("typing indicator failed", error)),
     db
       .from("messages")
-      .select("sender, text")
+      .select("sender, text, photo_paths")
       .eq("shop_id", shop_id)
       .eq("conversation_id", conversation.id)
       .order("created_at", { ascending: false })
       .limit(HISTORY_LIMIT),
   ]);
   const recent = must(historyRead, "history");
-  const history: HistoryMessage[] = recent.reverse().map(({ sender, text }) => ({ sender, text }));
+  const history: HistoryMessage[] = recent
+    .reverse()
+    .map(({ sender, text, photo_paths }) => ({ sender, text, ...(photo_paths?.length ? { photoPaths: photo_paths } : {}) }));
 
   let reply: Reply;
   try {

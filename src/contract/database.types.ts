@@ -93,14 +93,14 @@ isOneToOne: false
                   ]
                 },"messages": {
                   Row: {
-                    "client_message_id": string | null,"conversation_id": string,"created_at": string,"id": string,"reply": Json | null,"sender": Database["public"]['Enums']["message_sender"],"shop_id": string,"staff_id": string | null,"text": string
+                    "client_message_id": string | null,"conversation_id": string,"created_at": string,"id": string,"photo_paths": (string)[],"reply": Json | null,"sender": Database["public"]['Enums']["message_sender"],"shop_id": string,"staff_id": string | null,"text": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "client_message_id"?: string | null,"conversation_id": string,"created_at"?: string,"id"?: string,"reply"?: Json | null,"sender": Database["public"]['Enums']["message_sender"],"shop_id": string,"staff_id"?: string | null,"text"?: string
+                    "client_message_id"?: string | null,"conversation_id": string,"created_at"?: string,"id"?: string,"photo_paths"?: (string)[],"reply"?: Json | null,"sender": Database["public"]['Enums']["message_sender"],"shop_id": string,"staff_id"?: string | null,"text"?: string
                   }
                   Update: {
-                    "client_message_id"?: string | null,"conversation_id"?: string,"created_at"?: string,"id"?: string,"reply"?: Json | null,"sender"?: Database["public"]['Enums']["message_sender"],"shop_id"?: string,"staff_id"?: string | null,"text"?: string
+                    "client_message_id"?: string | null,"conversation_id"?: string,"created_at"?: string,"id"?: string,"photo_paths"?: (string)[],"reply"?: Json | null,"sender"?: Database["public"]['Enums']["message_sender"],"shop_id"?: string,"staff_id"?: string | null,"text"?: string
                   }
                   Relationships: [
                     {

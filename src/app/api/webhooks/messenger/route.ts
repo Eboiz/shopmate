@@ -1,5 +1,6 @@
 import { after, type NextRequest } from "next/server";
 import { parseMessengerEvents, sendTypingOn, verifyMessengerSignature, type MessengerEvent } from "@/lib/channels/messenger";
+import { messengerPhoto } from "@/lib/channels/photo-download";
 import { receiveChannelMessage } from "@/lib/channels/receive";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -67,7 +68,7 @@ async function handleEvents(events: MessengerEvent[]) {
     const incoming = {
       externalId: event.senderId,
       messageId: event.mid,
-      ...(event.type === "text" ? { text: event.text } : { imageUrls: event.imageUrls }),
+      ...(event.type === "text" ? { text: event.text } : { text: "", photos: event.imageUrls.map((url) => messengerPhoto(url)) }),
     };
     try {
       await receiveChannelMessage(
