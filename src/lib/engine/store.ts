@@ -1,4 +1,5 @@
 import { toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import type { Gap } from "./data-gap";
 import type { CatalogItem } from "./jev";
 import { activeProductFacts, withFacts } from "./learned-facts";
 import { searchMissed } from "./misunderstood";
@@ -42,6 +43,10 @@ export type EngineStore = {
   setAiMode?(ctx: ToolContext): Promise<void>;
   // Runs AFTER the reply is returned (see runEngine); returns the row id.
   insertTurn(row: TablesInsert<"ai_turns">): Promise<string>;
+  // PB-35a: a question the AI couldn't answer (data_gaps), and "Không cần" to the
+  // offer of staff that followed it. Optional: fakes in tests may leave them out.
+  recordGap?(ctx: ToolContext, gap: Gap): Promise<void>;
+  declineGap?(ctx: ToolContext): Promise<void>;
   // PB-10: every product of the shop with its colors and sizes, for the Jev
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
@@ -158,6 +163,36 @@ export function createSupabaseStore(db: Db): EngineStore {
       const { data, error } = await db.from("ai_turns").insert(row).select("id").single();
       if (error) throw new Error(`ai_turns: ${error.message}`);
       return data.id;
+    },
+
+    async recordGap(ctx, gap) {
+      if (ctx.conversationId === null) return;
+      const { error } = await db.from("data_gaps").insert({
+        shop_id: ctx.shopId,
+        conversation_id: ctx.conversationId,
+        reason: gap.reason,
+        question: gap.question,
+        product_id: gap.productId,
+      });
+      if (error) throw new Error(`data_gaps: ${error.message}`);
+    },
+
+    // The newest open gap of the conversation is the one the offer was made for.
+    async declineGap(ctx) {
+      if (ctx.conversationId === null) return;
+      const { data, error } = await db
+        .from("data_gaps")
+        .select("id")
+        .eq("shop_id", ctx.shopId)
+        .eq("conversation_id", ctx.conversationId)
+        .eq("status", "open")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new Error(`data_gaps: ${error.message}`);
+      if (!data) return;
+      const { error: updateError } = await db.from("data_gaps").update({ soft_declined: true }).eq("id", data.id).eq("shop_id", ctx.shopId);
+      if (updateError) throw new Error(`data_gaps: ${updateError.message}`);
     },
   };
 }

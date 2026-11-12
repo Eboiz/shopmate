@@ -15,6 +15,7 @@ import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
+import { gapOfTurn } from "./data-gap";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffer } from "./refusal-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
@@ -893,6 +894,29 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     console.error("engine: metrics sink failed", e);
   }
 
+  // PB-35a: a question the AI couldn't answer from the shop's data is recorded so
+  // staff's answer can be learned; "Không cần" marks it declined. Never fails the turn.
+  async function recordGap() {
+    if (ctx.conversationId === null) return;
+    try {
+      const gap = gapOfTurn({
+        mode,
+        question: lastText,
+        handoff,
+        offerMade: handoff ? null : (offerMade as OfferReason | null),
+        offerAnswer: answer,
+        productMissedTwice,
+        logs,
+        productId: tc.product?.id ?? null,
+        intent: route.path === "router" ? (route.intent ?? null) : null,
+      });
+      if (gap) await deps.store.recordGap?.(ctx, gap);
+      if (answer === "no") await deps.store.declineGap?.(ctx);
+    } catch (e) {
+      console.error("engine: failed to write data_gaps", e);
+    }
+  }
+
   const turnLogged = (async () => {
     try {
       const [row] = await Promise.all([deps.store.insertTurn({
@@ -910,6 +934,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         model: deps.modelName,
         prompt_version: PROMPT_VERSION,
       }), sinkDone]);
+      await recordGap();
       return row;
     } catch (e) {
       console.error("engine: failed to write ai_turns", e);

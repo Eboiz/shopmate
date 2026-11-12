@@ -46,6 +46,8 @@ function setup(jev: JevClient | null, responses: Parameters<typeof scriptedModel
     ),
     setNeedsHuman: vi.fn<EngineStore["setNeedsHuman"]>(async () => {}),
     insertTurn: vi.fn<EngineStore["insertTurn"]>(async () => "turn-1"),
+    recordGap: vi.fn<NonNullable<EngineStore["recordGap"]>>(async () => {}),
+    declineGap: vi.fn<NonNullable<EngineStore["declineGap"]>>(async () => {}),
     catalog: vi.fn(async () => [
       { id: VAY, name: "Váy suông linen", category: "Váy", colors: ["Be", "Trắng"], sizes: ["S", "M"] },
     ]),
@@ -244,6 +246,8 @@ describe("runEngine with Jev routing", () => {
       expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
       await result.turnLogged;
       expect(store.insertTurn.mock.calls[0][0]).toMatchObject({ handoff_reason: null, handoff_offer: "not_covered_by_data" });
+      // PB-35a: off-topic reads no data, so nothing to learn.
+      expect(store.recordGap).not.toHaveBeenCalled();
     });
 
     it("(d) 'mặc không vừa thì đổi được không' is answered from doi_tra even when Jev says product_detail", async () => {
@@ -263,6 +267,27 @@ describe("runEngine with Jev routing", () => {
       expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
       await result.turnLogged;
       expect(store.insertTurn.mock.calls[0][0].handoff_offer).toBe("policy_not_covered");
+      // PB-35a: the shopper's question is recorded on the offer turn.
+      expect(store.recordGap).toHaveBeenCalledWith(expect.objectContaining({ shopId: SHOP }), {
+        reason: "policy_not_covered",
+        question: "shop có chương trình khuyến mãi gì không",
+        productId: null,
+      });
+    });
+
+    it("PB-35a: 'Không cần' marks the recorded question declined; 'Có' records nothing new", async () => {
+      for (const [text, declined] of [["Không cần", true], ["Có, gặp nhân viên", false]] as const) {
+        const { store, run } = setup(intent("policy"), []);
+        store.loadTurnContext.mockResolvedValueOnce({
+          conversation: { shopId: SHOP, mode: "ai" },
+          product: { id: VAY, name: "Váy suông linen" },
+          previousHandoffOffer: "policy_not_covered",
+        } as never);
+        const result = await run(input(text));
+        await result.turnLogged;
+        expect(store.recordGap).not.toHaveBeenCalled();
+        expect(store.declineGap).toHaveBeenCalledTimes(declined ? 1 : 0);
+      }
     });
 
     it("'bớt 50k' is refused, never handed off", async () => {
