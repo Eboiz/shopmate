@@ -46,6 +46,7 @@ function setup(jev: JevClient | null, responses: Parameters<typeof scriptedModel
     ),
     setNeedsHuman: vi.fn<EngineStore["setNeedsHuman"]>(async () => {}),
     insertTurn: vi.fn<EngineStore["insertTurn"]>(async () => "turn-1"),
+    pairedProductNames: vi.fn<NonNullable<EngineStore["pairedProductNames"]>>(async () => ["Áo sơ mi trắng", "Chân váy chữ A"]),
     catalog: vi.fn(async () => [
       { id: VAY, name: "Váy suông linen", category: "Váy", colors: ["Be", "Trắng"], sizes: ["S", "M"] },
     ]),
@@ -292,5 +293,18 @@ describe("runEngine with Jev routing", () => {
     await run(input("ok"));
     expect(jev.decide).not.toHaveBeenCalled();
     expect(metrics[0].route).toEqual({ path: "llm_loop", fallbackReason: "order_in_progress" });
+  });
+
+  it("PB-31 AC12: 'phối cùng sản phẩm nào?' offers the shop's paired products as buttons, on both paths", async () => {
+    const pairing = jevSaying({ intent: { type: "choice", choice: "pairing", confidence: 0.95 }, product: { type: "choice", choice: "none" } });
+    const router = setup(pairing, []);
+    const viaRouter = await router.run(input("mặc với gì đẹp", { productId: null }));
+    expect(viaRouter.output.reply.quickReplies).toEqual(["Áo sơ mi trắng", "Chân váy chữ A"]);
+    expect(router.store.pairedProductNames).toHaveBeenCalledWith(SHOP);
+
+    const loop = setup(null, [finalJson({ text: "Dạ bạn muốn phối với món nào ạ?", productIds: [], quickReplies: [] })]);
+    loop.store.loadTurnContext.mockResolvedValueOnce({ conversation: { shopId: SHOP, mode: "ai" }, product: null } as never);
+    const viaLoop = await loop.run(input("phối đồ gì đẹp", { productId: null }));
+    expect(viaLoop.output.reply.quickReplies).toEqual(["Áo sơ mi trắng", "Chân váy chữ A"]);
   });
 });

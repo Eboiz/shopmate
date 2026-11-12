@@ -27,7 +27,7 @@ import { createLangfuseSink } from "./langfuse";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
-import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
+import { ASK_PAIRING_PRODUCT_TEXT, isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
 import { isCatalogQuestion } from "./product-match";
 import { catalogOverview, groupListing, isGroupName, routeTurn, type RouteOutcome, type ToolRunner } from "./route";
@@ -833,7 +833,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       ? []
       : await deps.store.productCards(ctx.shopId, pairingState.items.map((pairing) => pairing.productId));
     reply = pairingState.needsProduct
-      ? { text: "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.", products: [], quickReplies: [] }
+      ? { text: ASK_PAIRING_PRODUCT_TEXT, products: [], quickReplies: [] }
       : pairingState.failed && pairingState.items.length === 0
         ? { text: "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.", products: [], quickReplies: [] }
         : matchingReply(pairingState.items, cards);
@@ -864,6 +864,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // A complaint the word list catches returned early above (PB-20); one only Jev
   // caught sets personalReplyNeeded here.
+  // PB-31 AC12: the pairing question comes with the shop's paired products as
+  // buttons (both paths end here). Without them the shopper types the name.
+  if (mode === "customer" && reply?.text === ASK_PAIRING_PRODUCT_TEXT && reply.quickReplies.length === 0 && deps.store.pairedProductNames) {
+    const names = await deps.store.pairedProductNames(ctx.shopId).catch(() => []);
+    reply = { ...reply, quickReplies: names };
+  }
   const output = engineOutputSchema.parse({ reply: reply!, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 

@@ -188,6 +188,20 @@ describe("routeTurn", () => {
     expect((out as { reply: { text: string } }).reply.text).toContain("Hợp màu");
   });
 
+  it("PB-31 AC12: a product tapped after 'phối cùng sản phẩm nào?' is a pairing question, whatever Jev says", async () => {
+    const { run, runTool } = setup({
+      get_pairings: { ok: true, output: { pairings: [{ productId: AO, name: "Áo khoác jean", price: 1, imageUrl: null, reason: "Hợp màu", sizesInStock: ["M"] }] } },
+    });
+    const history: HistoryMessage[] = [
+      { sender: "shopper", text: "phối đồ gì đẹp" },
+      { sender: "ai", text: ASK_PAIRING_PRODUCT_TEXT },
+      { sender: "shopper", text: "Váy suông linen" },
+    ];
+    const out = await run({ viewing: null, history, decision: decision({ intent: "stock", product: { kind: "none" } }) });
+    expect(runTool).toHaveBeenCalledWith("get_pairings", { productId: VAY });
+    expect((out as { reply: { text: string } }).reply.text).toContain("Hợp màu");
+  });
+
   it("pairing without a product asks which one", async () => {
     const { run } = setup();
     const out = await run({ viewing: null, decision: decision({ intent: "pairing", product: { kind: "none" } }) });

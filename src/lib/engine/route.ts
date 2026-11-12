@@ -12,7 +12,7 @@ import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
 import { answersOrderConfirm, isOrderMessage, ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
 import { isReturnsQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
-import { knownShopperSize, matchingReply } from "./pairing-suggestions";
+import { answersPairingQuestion, ASK_PAIRING_PRODUCT_TEXT, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
 import { fold } from "./text";
 
@@ -28,7 +28,7 @@ export const POLICY_COVERS_THRESHOLD = 0.57;
 export const DESCRIPTION_COVERS_THRESHOLD = 0.57;
 export const STAFF_BUTTON = "Gặp nhân viên";
 
-export const ASK_PAIRING_PRODUCT_TEXT = "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.";
+export { ASK_PAIRING_PRODUCT_TEXT } from "./pairing-suggestions";
 export const PAIRING_FAILED_TEXT = "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.";
 // staff_draft notes: the reply assistant shows them to staff instead of a draft.
 export const STAFF_NO_DATA_TEXT = "Dữ liệu shop chưa có thông tin này. Bạn kiểm tra sản phẩm và tự trả lời khách nhé.";
@@ -216,7 +216,11 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   const { mode } = input;
   const customer = mode === "customer";
   const last = lastShopperText(input.history);
-  const d = settledDecision(input.decision, last);
+  let d = settledDecision(input.decision, last);
+  // PB-31 AC12: a product named right after "phối cùng sản phẩm nào?" asks for its matches.
+  if (customer && d.intent !== "pairing" && answersPairingQuestion(input.history) && productCoveringMessage(last, input.catalog)) {
+    d = { ...d, intent: "pairing" };
+  }
 
   // PB-31: a yes to the order read-back goes on with the order (tool loop).
   if (customer && answersOrderConfirm(input.history)) return { kind: "fallback", reason: "order" };
