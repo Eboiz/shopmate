@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 import { EmptyState } from "@/components/ui/empty-state";
 import { requireStaff } from "@/lib/auth";
 import { getLearningPage } from "./data";
@@ -18,6 +19,7 @@ type TabId = (typeof TABS)[number]["id"];
 export default async function LearningPage({ searchParams }: PageProps<"/admin/ai-da-hoc">) {
   const requested = (await searchParams).tab;
   const { shopId, role } = await requireStaff();
+  await connection(); // the 7-day window reads the clock: render per request
   const data = await getLearningPage(shopId);
   const canEdit = role === "owner";
   const counts: Record<TabId, number> = {
