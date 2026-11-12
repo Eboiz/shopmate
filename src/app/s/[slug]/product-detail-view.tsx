@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
 import { compareSizes } from "@/lib/size-order";
 import { displayColor, firstSentence, productGroup } from "@/lib/shop/catalog-view";
@@ -93,7 +94,7 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
             <span className="truncate text-lg font-black uppercase tracking-[-.04em] sm:text-xl">{shopName}<span className="text-[#e9573f]">.</span></span>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={onOpenCart} className="inline-flex min-h-11 items-center rounded-lg border border-[#8f8a82] px-4 text-sm font-bold transition-colors hover:border-[#171717]">Giỏ ({cartCount})</button>
+            <button type="button" onClick={onOpenCart} aria-label={`Giỏ đặt hàng, ${cartCount} món`} title="Giỏ đặt hàng" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#8f8a82] px-4 text-sm font-bold tabular-nums transition-colors hover:border-[#171717]"><Icon name="cart" className="size-5" />{cartCount}</button>
             <button type="button" aria-label="Chat với shop" onClick={() => onAsk(product)} className="inline-flex min-h-11 items-center rounded-lg border border-[#171717] px-4 text-sm font-bold transition-colors hover:bg-[#171717] hover:text-white">Chat</button>
           </div>
         </div>
