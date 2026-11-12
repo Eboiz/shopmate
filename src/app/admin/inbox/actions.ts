@@ -1,9 +1,12 @@
 "use server";
 
+import { after } from "next/server";
 import { z } from "zod";
 import { idSchema } from "@/contract";
 import { requireStaff } from "@/lib/auth";
 import { sendToConversation } from "@/lib/channels/send";
+import { learnFromStaffMessage } from "@/lib/learning/from-staff";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 // PB-13: a staff reply from the inbox. A server action is reachable with a
@@ -48,7 +51,19 @@ export async function sendStaffMessage(
     { text: parsed.data.text, products: [], quickReplies: [] },
     { from: "staff", staffId: staff.userId, clientMessageId: parsed.data.requestId },
   );
-  if (result.ok) return { ok: true };
+  if (result.ok) {
+    // PB-35a: learn from the reply once it was sent (never from a failed one), after
+    // the response; a failure only leaves the question open.
+    const sent = { shopId: staff.shopId, conversationId: conversation.id, messageId: result.messageId, text: parsed.data.text };
+    after(async () => {
+      try {
+        await learnFromStaffMessage(createAdminClient(), sent);
+      } catch (e) {
+        console.error("PB-35a learning failed", e);
+      }
+    });
+    return { ok: true };
+  }
   console.error("PB-13 staff reply not confirmed", result.error);
   return { ok: false, messageId: result.messageId };
 }
