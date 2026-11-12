@@ -59,7 +59,8 @@ export type TurnMetrics = {
     // "offer_answer" (PB-31): the shopper answered a staff offer with yes/no.
     // "catalog" (PB-31): "shop có gì", answered from the catalog by the server.
     // "complaint" (PB-14): a complaint the server recognized, handed off with no model call.
-    path: "router" | "llm_loop" | "offer_answer" | "catalog" | "complaint";
+    // "guard": the input guard (input-guard.ts) refused the message, no model call.
+    path: "router" | "llm_loop" | "offer_answer" | "catalog" | "complaint" | "guard";
     fallbackReason?: string;
     jevModel?: string;
     jevMs?: number;
@@ -69,6 +70,11 @@ export type TurnMetrics = {
     product?: string;
     discountTrick?: number;
   };
+  // Input guard (input-guard.ts), customer turns with Jev: the scores and the
+  // refused category, or the error when the call failed (the turn then ran as usual).
+  guard?:
+    | { scores: Record<"injection" | "leak" | "abuse" | "harmful", number>; blocked: string | null; ms: number; cost: number | null }
+    | { error: string };
 };
 
 export function toolOutcome(run: ToolRun): ToolOutcome {
