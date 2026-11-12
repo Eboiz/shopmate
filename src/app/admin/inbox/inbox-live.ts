@@ -1,7 +1,12 @@
 import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { createClient } from "@/lib/supabase/client";
 
-export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string };
+// photoUrls (PB-30): the shopper's photos, signed for an hour from the private
+// bucket (staff may read only their shop's folder); photoError when signing failed.
+export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string; photoUrls: string[]; photoError?: true };
+export const PHOTO_PREVIEW = "[Ảnh]";
+const preview = (m: { text: string; photo_paths: string[] } | undefined) =>
+  m ? m.text || (m.photo_paths.length > 0 ? PHOTO_PREVIEW : "") : undefined;
 export type InboxConversation = {
   id: string;
   customerName: string;
@@ -21,7 +26,7 @@ export const historyLimit = 50;
 export async function listLiveConversations(): Promise<InboxConversation[]> {
   const db = createClient();
   const query = () => db.from("conversations")
-    .select("id, mode, last_message_at, shoppers!inner(channel, display_name), messages(text), customer_message:messages(text, created_at)")
+    .select("id, mode, last_message_at, shoppers!inner(channel, display_name), messages(text, photo_paths), customer_message:messages(text, photo_paths, created_at)")
     .eq("customer_message.sender", "shopper")
     .order("last_message_at", { ascending: false })
     .order("id")
@@ -46,22 +51,35 @@ export async function listLiveConversations(): Promise<InboxConversation[]> {
     channel: conversation.shoppers.channel,
     mode: conversation.mode,
     lastMessageAt: conversation.last_message_at,
-    latestMessage: conversation.messages[0]?.text,
-    customerMessage: conversation.customer_message[0]?.text || undefined,
+    latestMessage: preview(conversation.messages[0]),
+    customerMessage: preview(conversation.customer_message[0]) || undefined,
     customerMessageAt: conversation.customer_message[0]?.created_at,
   }));
 }
 
 export async function listInboxMessages(conversationId: string): Promise<InboxMessage[]> {
-  const { data, error } = await createClient().from("messages")
-    .select("id, sender, text, created_at")
+  const db = createClient();
+  const { data, error } = await db.from("messages")
+    .select("id, sender, text, created_at, photo_paths")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(historyLimit);
 
   if (error) throw error;
-  return data.reverse();
+  // One signing call for every photo in the history.
+  const paths = data.flatMap((m) => m.photo_paths);
+  let signed = new Map<string, string>();
+  let signError = false;
+  if (paths.length > 0) {
+    const result = await db.storage.from("chat-photos").createSignedUrls(paths, 3600);
+    if (result.error || !result.data) signError = true;
+    else signed = new Map(result.data.flatMap((d) => (d.path && d.signedUrl ? [[d.path, d.signedUrl] as const] : [])));
+  }
+  return data.reverse().map(({ photo_paths, ...message }) => {
+    const photoUrls = photo_paths.flatMap((p) => (signed.has(p) ? [signed.get(p)!] : []));
+    return { ...message, photoUrls, ...(photo_paths.length > photoUrls.length || (signError && photo_paths.length > 0) ? { photoError: true as const } : {}) };
+  });
 }
 
 export async function setLiveInboxMode(conversationId: string, mode: "ai" | "staff") {

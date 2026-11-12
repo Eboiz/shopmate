@@ -463,7 +463,22 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
                     <strong>{senderLabels[message.sender]}</strong>
                     <time className="opacity-70" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
                   </p>
-                  <p className="whitespace-pre-wrap wrap-anywhere">{message.text || "Tin nhắn không có nội dung văn bản"}</p>
+                  {message.photoUrls.length > 0 && (
+                    <div className="mb-1 flex flex-wrap gap-1">
+                      {message.photoUrls.map((url, i) => (
+                        <a key={url} href={url} target="_blank" rel="noopener noreferrer" aria-label={`Mở ảnh ${i + 1} của khách`}>
+                          {/* Signed URLs expire after an hour: not for next/image's cache. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt={`Ảnh khách gửi ${i + 1}`} className="max-h-48 max-w-[200px] rounded-lg object-cover" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {message.photoError && <p className="text-xs opacity-80">Không tải được ảnh.</p>}
+                  {(message.text || message.photoUrls.length === 0) && !message.photoError && (
+                    <p className="whitespace-pre-wrap wrap-anywhere">{message.text || "Tin nhắn không có nội dung văn bản"}</p>
+                  )}
+                  {message.text && message.photoError && <p className="whitespace-pre-wrap wrap-anywhere">{message.text}</p>}
                 </div>
               </li>
             ))}
