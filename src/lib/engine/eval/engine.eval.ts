@@ -3,11 +3,18 @@
 //
 //   EVAL_RUNS=3 (default)   runs per case
 //   EVAL_CASE=<id>          run one case only
+//   EVAL_GROUP=<prefix>     run the cases whose id starts with it (replay-, near-, pb14-…)
 //   EVAL_LABEL=<name>       name of the saved run (default: the engine path)
 //
 // Every run is saved to eval-runs/<date>-<label>.json (PB-10: runs can be
 // compared at Sprint Review): the summary table, each run's score, route and
 // tool calls, and every failure with the reply.
+//
+// PB-31 adds two quality numbers per row: "handoff rate" (share of runs that
+// handed the conversation to staff), "offer rate" (share that offered staff,
+// soft handoff) and "correct decision" (share whose answer / offer / handoff
+// matches the case's label), so the handoff rate can't drop by the AI answering
+// what it should not.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import type { TablesInsert } from "@/contract";
@@ -25,11 +32,17 @@ import { pb05EvalCases } from "./cases-pb05";
 import { pb06Cases } from "./cases-pb06";
 import { pb09Cases } from "./cases-pb09";
 import { pb14Cases } from "./cases-pb14";
-import { aggregate, scoreRun, type ActualCall, type RunScore } from "./score";
+import { pb31Cases } from "./cases-pb31";
+import { aggregate, scoreRun, type ActualCall, type Decision, type RunOutcome, type RunScore } from "./score";
 
 const RUNS = Number(process.env.EVAL_RUNS ?? 3);
-const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases, ...pb09Cases, ...pb14Cases];
-const cases = process.env.EVAL_CASE ? allCases.filter((c) => c.id === process.env.EVAL_CASE) : allCases;
+const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases, ...pb09Cases, ...pb14Cases, ...pb31Cases];
+const group = process.env.EVAL_GROUP;
+const cases = allCases.filter(
+  (c) => (!process.env.EVAL_CASE || c.id === process.env.EVAL_CASE) && (!group || c.id.startsWith(group)),
+);
+// Extra summary rows for the PB-31 groups (only when some of their cases ran).
+const GROUP_ROWS: Record<string, string> = { "GROUP replay": "replay-", "GROUP near matches": "near-" };
 
 type Run = {
   score: RunScore;
@@ -41,6 +54,9 @@ type Run = {
   route: TurnMetrics["route"] | null;
   calls: ActualCall[];
   handoffReason: string | null;
+  handoffOffer: string | null;
+  decision: Decision | null;
+  shouldHandOff: boolean;
   replyText: string;
 };
 const results = new Map<string, Run[]>();
@@ -93,13 +109,21 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
         await result.turnLogged;
         const turn = row as TablesInsert<"ai_turns"> | null;
         if (!turn) throw new Error(`${c.id}: no ai_turns row`);
-        const calls: ActualCall[] = ((turn.tool_calls ?? []) as { name: string; input: unknown }[]).map((t) => ({
-          name: t.name,
-          input: t.input,
-        }));
-        const outcome = { handoffReason: result.handoffReason, replyText: result.output.reply.text };
+        const calls: ActualCall[] = ((turn.tool_calls ?? []) as { name: string; input: unknown; output?: unknown }[]).map(
+          (t) => ({ name: t.name, input: t.input, output: t.output }),
+        );
+        const outcome: RunOutcome = {
+          handoffReason: result.handoffReason,
+          replyText: result.output.reply.text,
+          // PB-31 soft handoff: the reason staff was offered for, and the buttons.
+          handoffOffer: (turn.handoff_offer ?? null) as RunOutcome["handoffOffer"],
+          quickReplies: result.output.reply.quickReplies,
+        };
         const score = scoreRun(c, calls, outcome);
-        if (!score.passed) console.info(`${c.id} failed:`, JSON.stringify({ calls, ...outcome, score }));
+        if (!score.passed) {
+          const shown = calls.map(({ name, input }) => ({ name, input }));
+          console.info(`${c.id} failed:`, JSON.stringify({ calls: shown, ...outcome, score }));
+        }
         runs.push({
           score,
           latencyMs: turn.latency_ms,
@@ -110,6 +134,9 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
           route: (metrics as TurnMetrics | null)?.route ?? null,
           calls,
           handoffReason: result.handoffReason,
+          handoffOffer: outcome.handoffOffer ?? null,
+          decision: score.decision,
+          shouldHandOff: c.shouldHandOff,
           replyText: result.output.reply.text,
         });
       }
@@ -135,10 +162,17 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
         "tool calls avg": fmt(avg((r) => r.toolCalls)),
         "model calls avg": fmt(avg((r) => r.modelCalls)),
         "jev routed": runs.filter((r) => r.route?.path === "router").length,
+        "handoff rate": fmt(a.handoffRate),
+        "offer rate": fmt(a.offerRate),
+        "correct decision": fmt(a.correctDecision),
       };
     };
     const table: Record<string, ReturnType<typeof row>> = {};
     for (const [id, runs] of results) table[id] = row(runs);
+    for (const [name, prefix] of Object.entries(GROUP_ROWS)) {
+      const runs = [...results].filter(([id]) => id.startsWith(prefix)).flatMap(([, r]) => r);
+      if (runs.length > 0) table[name] = row(runs);
+    }
     table.TOTAL = row([...results.values()].flat());
     console.table(table);
 
@@ -156,6 +190,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
           promptVersion: PROMPT_VERSION,
           model: process.env.ANTHROPIC_MODEL ?? null,
           runsPerCase: RUNS,
+          group: group ?? null,
           summary: table,
           cases: Object.fromEntries(results),
         },
