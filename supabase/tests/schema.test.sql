@@ -12,7 +12,9 @@ select set_eq(
         'channel_accounts', 'shoppers', 'conversations', 'messages', 'channel_events',
         'orders', 'order_items', 'ai_turns',
         -- PB-04: web chat limit per client IP and shop (server only).
-        'web_chat_hits'],
+        'web_chat_hits',
+        -- PB-35a: questions the AI couldn't answer, and what it learned.
+        'data_gaps', 'learned_facts'],
   'the contract has exactly these tables'
 );
 
