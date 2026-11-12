@@ -1,5 +1,6 @@
 import { toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
 import type { CatalogItem } from "./jev";
+import { activeProductFacts, withFacts } from "./learned-facts";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
 import { sortSizes } from "./text";
@@ -59,7 +60,9 @@ export function createSupabaseStore(db: Db): EngineStore {
       .eq("shop_id", shopId)
       .maybeSingle();
     if (error) throw new Error(`products: ${error.message}`);
-    return data;
+    if (!data) return null;
+    const facts = await activeProductFacts(db, shopId, [data.id]);
+    return { ...data, description: withFacts(data.description, facts.get(data.id) ?? []) };
   }
 
   async function previousTurnState(shopId: string, conversationId: string) {
