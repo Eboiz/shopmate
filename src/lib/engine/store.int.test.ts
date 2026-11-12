@@ -135,6 +135,14 @@ describe("createSupabaseStore", () => {
     });
   });
 
+  describe("pairedProductNames (PB-31 AC12)", () => {
+    it("names the shop's paired products only, sorted, as quick replies", async () => {
+      expect(await store.pairedProductNames!(FX.a.shop)).toEqual(["Áo sơ mi trắng", "Váy suông linen"]);
+      // Shop B declared no pairing: no button, and never shop A's products.
+      expect(await store.pairedProductNames!(FX.b.shop)).toEqual([]);
+    });
+  });
+
   describe("insertTurn", () => {
     it("writes the metrics columns", async () => {
       const id = await store.insertTurn({
