@@ -39,6 +39,11 @@ const correct: Record<string, { calls: ActualCall[]; outcome: RunOutcome }> = {
     calls: [{ name: "get_pairings", input: { productId: V } }],
     outcome: answer("Dạ váy này hợp với Áo sơ mi trắng, áo giá 250.000đ ạ."),
   },
+  // What the engine renders from get_pairings: no price in the text, the card has it.
+  "pb08-pairing-price-from-data-template": {
+    calls: [{ name: "get_pairings", input: { productId: V } }],
+    outcome: answer("Shop gợi ý phối cùng:\n• Áo sơ mi trắng: Áo trắng hợp váy be"),
+  },
   "pb08-pairing-none": {
     calls: [{ name: "get_pairings", input: { productId: QUAN } }],
     outcome: answer("Dạ shop chưa có gợi ý phối đồ cho quần này ạ."),
@@ -118,6 +123,8 @@ describe("AI-02/03/04 eval cases", () => {
       expect(run, `no correct run for ${c.id}`).toBeDefined();
       expect(scoreRun(c, run.calls, run.outcome).passed, c.id).toBe(true);
     }
+    const tpl = correct["pb08-pairing-price-from-data-template"];
+    expect(scoreRun(byId("pb08-pairing-price-from-data"), tpl.calls, tpl.outcome).passed).toBe(true);
   });
 
   it("AI-02: reject a missing get_pairings call or an invented suggestion", () => {

@@ -32,6 +32,9 @@ const saysPrice = (vnd: number) => (text: string) => {
   const t = fold(text).replace(/[.,\s]/g, "");
   return t.includes(String(vnd)) || t.includes(`${vnd / 1000}k`);
 };
+// Every price written in the text, in VND.
+const pricesIn = (text: string) =>
+  [...fold(text).matchAll(/(\d{1,3}(?:[.,]\d{3})+|\d{5,7})/g)].map((m) => Number(m[1].replace(/[.,]/g, ""))).filter((n) => n >= 10000);
 const saysAny = (words: string[]) => (text: string) => words.some((w) => fold(text).includes(w));
 const saysSoldOut = saysAny(["het hang", "da het", "het size", "het mau", "het roi", "tam het"]);
 // Products of shop A other than the dress and the shirt: a pairing answer that
@@ -47,7 +50,10 @@ export const pb08Cases: EvalCase[] = [
     shouldHandOff: false,
     history: shopper("Áo này phối với gì thì đẹp shop?"),
     productId: AO,
-    expected: [{ tool: "get_pairings", args: { productId: AO }, required: true }],
+    expected: [
+      { tool: "get_pairings", args: { productId: AO }, required: true },
+      { tool: "get_stock", required: false },
+    ],
     outcome: ANSWER,
     reply: { label: "suggests Váy suông linen", ok: saysAny(["vay suong linen", "vay linen"]) },
   },
@@ -66,7 +72,8 @@ export const pb08Cases: EvalCase[] = [
   },
   {
     id: "pb08-pairing-price-from-data",
-    description: "PB-08 + no price from the model: the suggested shirt's price is 250.000đ from get_pairings.",
+    description:
+      "PB-08 + no price from the model: names the shirt; any price in the text is its 250.000đ from get_pairings (the product card shows it too).",
     shouldHandOff: false,
     history: shopper("Váy này phối áo gì, áo đó giá bao nhiêu vậy?"),
     productId: V,
@@ -76,7 +83,7 @@ export const pb08Cases: EvalCase[] = [
       { tool: "get_stock", required: false },
     ],
     outcome: ANSWER,
-    reply: { label: "names the shirt at 250000", ok: (t) => saysAny(["so mi"])(t) && saysPrice(250000)(t) },
+    reply: { label: "names the shirt, no other price", ok: (t) => saysAny(["so mi"])(t) && pricesIn(t).every((p) => p === 250000) },
   },
   {
     id: "pb08-pairing-none",
@@ -86,7 +93,7 @@ export const pb08Cases: EvalCase[] = [
     productId: QUAN,
     expected: [
       { tool: "get_pairings", args: { productId: QUAN }, required: true },
-      { tool: "get_policy", required: false },
+      { tool: "search_products", required: false },
     ],
     handoff: null,
     reply: { label: "names no other product", ok: (t) => !OTHER_PRODUCTS.some((p) => fold(t).includes(p)) },
@@ -146,6 +153,7 @@ export const pb11Cases: EvalCase[] = [
       { tool: "get_stock", args: { productId: V }, required: false },
       { tool: "search_products", required: false },
       { tool: "quote_order", args: { items: (v: unknown) => JSON.stringify(v) === JSON.stringify(QUOTE_INPUT.items) }, required: false },
+      { tool: "get_policy", args: { kind: "giao_hang" }, required: false },
     ],
     outcome: ANSWER,
     reply: {
@@ -168,6 +176,8 @@ export const pb11Cases: EvalCase[] = [
       },
       // The engine re-reads the quote before writing (prices may have changed).
       { tool: "quote_order", required: false },
+      { tool: "get_stock", args: { productId: V }, required: false },
+      { tool: "get_policy", args: { kind: "giao_hang" }, required: false },
     ],
     handoff: null,
     reply: { label: "says the draft order is recorded", ok: recordsDraft },
@@ -209,6 +219,7 @@ export const pb11Cases: EvalCase[] = [
       { tool: "get_stock", args: { productId: V }, required: false },
       { tool: "search_products", required: false },
       { tool: "quote_order", required: false },
+      { tool: "get_policy", args: { kind: "giao_hang" }, required: false },
     ],
     outcome: ANSWER,
     reply: { label: "says 2 left, no order recorded", ok: (t) => /(^|\D)2(\D|$)/.test(t) && !recordsDraft(t) },
