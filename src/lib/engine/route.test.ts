@@ -348,6 +348,80 @@ describe("routeTurn", () => {
     expect(fits).toMatchObject({ kind: "write", productIds: [VAY] });
   });
 
+  describe("PB-40: suggestions keep to what the shopper ruled out", () => {
+    const office: CatalogItem[] = [
+      { id: "c1", name: "Chân váy bút chì", category: "chan_vay", price: 300000, description: "Chân váy công sở đi làm màu trắng", colors: ["trắng"], sizes: ["M"] },
+      { id: "c2", name: "Chân váy chữ A", category: "chan_vay", price: 260000, description: "Đi làm, màu trắng", colors: ["trắng"], sizes: ["M"] },
+      { id: "c3", name: "Đầm sơ mi thắt eo", category: "vay", price: 450000, description: "Đầm đi làm màu trắng", colors: ["trắng"], sizes: ["M"] },
+      { id: "c4", name: "Áo sơ mi lụa", category: "ao", price: 280000, description: "Áo đi làm màu trắng", colors: ["trắng"], sizes: ["M"] },
+      { id: "c5", name: "Quần tây ống đứng", category: "quan", price: 290000, description: "Quần đi làm", colors: ["đen"], sizes: ["M"] },
+      { id: "c6", name: "Áo blazer", category: "ao", price: 450000, description: "Blazer đi làm màu trắng", colors: ["trắng"], sizes: ["M"] },
+      { id: "c7", name: "Áo thun basic", category: "ao", price: 150000, description: "Áo đi làm màu trắng", colors: ["trắng"], sizes: ["M"] },
+    ];
+    const BOT_04 = "Tôi có 300 nghìn, muốn đồ đi làm màu trắng, không thích váy. Gợi ý 2 món phù hợp có giá dưới ngân sách";
+    const browse = decision({ intent: "browse", product: { kind: "none" } });
+
+    it("BOT-04 (staff_draft): at most 2 cards, no skirt or dress, none above the budget", async () => {
+      const out = await setup().run({ mode: "staff_draft", viewing: null, catalog: office, decision: browse, history: said(BOT_04) });
+      expect(out.kind).toBe("write");
+      if (out.kind !== "write") return;
+      expect(out.productIds).toHaveLength(2);
+      for (const id of out.productIds) {
+        const p = office.find((x) => x.id === id)!;
+        expect(["c4", "c5", "c7"]).toContain(p.id);
+      }
+      expect(out.facts).toMatchObject({ constraints: { maxPrice: 300000, count: 2 } });
+      expect((out.facts.suggested as { name: string }[]).every((s) => !/váy|đầm/i.test(s.name))).toBe(true);
+    });
+
+    it("nothing fits: no cards, and the task says so", async () => {
+      const out = await setup().run({
+        mode: "staff_draft",
+        viewing: null,
+        catalog: office.slice(0, 3),
+        decision: browse,
+        history: said(BOT_04),
+      });
+      expect(out).toMatchObject({ kind: "write", productIds: [] });
+      if (out.kind === "write") expect(out.task).toMatch(/không có món/i);
+    });
+
+    it("BOT-02: the advised size sold out in the asked color -> same size in another color first, buttons only for that size", async () => {
+      const { run } = setup({
+        get_stock: (input) =>
+          input.size
+            ? { ok: true, output: { productId: VAY, name: "Váy", price: 1, variants: [variant("M", "Trắng", 0)] } }
+            : {
+              ok: true,
+              output: {
+                productId: VAY,
+                name: "Váy",
+                price: 1,
+                variants: [variant("S", "Trắng", 2), variant("M", "Trắng", 0), variant("L", "Trắng", 4), variant("XL", "Trắng", 1), variant("M", "Xanh rêu", 5)],
+              },
+            },
+      });
+      const out = await run({ history: said("mình cao 160cm nặng 50kg", "màu trắng size M còn không?") });
+      expect(out).toMatchObject({
+        kind: "write",
+        facts: { available: false, otherOptionsInStock: [{ size: "M", color: "Xanh rêu", stock: 5 }] },
+        quickReplies: ["Size M Xanh rêu"],
+      });
+    });
+
+    it("BOT-02: the size sold out in every color -> no button pushes another size", async () => {
+      const { run } = setup({
+        get_stock: (input) =>
+          input.size
+            ? { ok: true, output: { productId: VAY, name: "Váy", price: 1, variants: [variant("M", "Trắng", 0)] } }
+            : { ok: true, output: { productId: VAY, name: "Váy", price: 1, variants: [variant("S", "Trắng", 2), variant("L", "Trắng", 4)] } },
+      });
+      const out = await run({ history: said("màu trắng size M còn không?") });
+      expect(out).toMatchObject({ kind: "write", quickReplies: [] });
+      if (out.kind === "write") expect(out.task).toMatch(/không gợi ý size khác/i);
+    });
+  });
+
   it("catalogGroups: the shop page's order, no 'Khác'", () => {
     expect(catalogGroups([...catalog, { id: "x", name: "Túi", category: "phu_kien", colors: [], sizes: [] }])).toEqual(["Áo khoác", "Váy & đầm"]);
   });

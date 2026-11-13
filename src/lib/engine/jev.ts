@@ -72,6 +72,8 @@ export type CatalogItem = {
   name: string;
   category: string | null;
   description?: string | null;
+  // PB-40: for the shopper's budget; missing = unknown.
+  price?: number | null;
   colors: string[];
   sizes: string[];
 };
