@@ -6,7 +6,7 @@ import { clientIp } from "@/lib/guard/web-chat-limit";
 import { EMBEDDER_MAX_LIMIT, EMBEDDER_TEXT_MAX } from "@/lib/search/embedder-contract";
 import { MAX_PHOTO_BYTES, PHOTO_ERRORS, checkPhoto, type PhotoInput } from "@/lib/search/pb30-shim";
 import { pickResults, scoreFloor } from "@/lib/search/rank";
-import { SEARCH_MIN_TEXT, searchErrors, type SearchResponse } from "@/lib/search/request";
+import { MAX_SEARCH_BODY_BYTES, SEARCH_MIN_TEXT, searchErrors, type SearchResponse } from "@/lib/search/request";
 import { SemanticSearchUnavailable, semanticSearchFromEnv } from "@/lib/search/semantic-search";
 import { loadSearchDocs } from "@/lib/search/shop-docs";
 
@@ -21,12 +21,42 @@ const noStore = { "Cache-Control": "no-store" };
 const fail = (error: string, status: number) => NextResponse.json({ error }, { status, headers: noStore });
 const answer = (payload: SearchResponse) => NextResponse.json(payload, { headers: noStore });
 
+// The body up to `limit` bytes, or null once it passes it: an oversized upload
+// is cut off while streaming, never buffered whole (Content-Length can lie or
+// be missing).
+async function readLimited(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Uint8Array<ArrayBuffer> | null> {
+  if (!body) return new Uint8Array();
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export async function POST(request: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
 
+  if (Number(request.headers.get("content-length")) > MAX_SEARCH_BODY_BYTES) return fail(PHOTO_ERRORS.size, 413);
+  const raw = await readLimited(request.body, MAX_SEARCH_BODY_BYTES);
+  if (!raw) return fail(PHOTO_ERRORS.size, 413);
   let form: FormData;
   try {
-    form = await request.formData();
+    form = await new Response(raw, { headers: { "content-type": request.headers.get("content-type") ?? "" } }).formData();
   } catch {
     form = new FormData();
   }

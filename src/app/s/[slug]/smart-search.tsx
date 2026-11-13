@@ -1,7 +1,6 @@
 "use client";
 
-import Image from "next/image";
-import { useRef, type ClipboardEvent, type FormEvent } from "react";
+import { useCallback, useRef, type ClipboardEvent, type FormEvent } from "react";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { Icon } from "@/components/ui/icon";
 import { EMBEDDER_TEXT_MAX } from "@/lib/search/embedder-contract";
@@ -13,7 +12,8 @@ type Props = {
   onChange: (value: string) => void;
   // Enter or the search button: the description search.
   onSubmit: () => void;
-  photoPreviewUrl: string | null;
+  // The photo being searched with, shown as a thumbnail.
+  photo: Blob | null;
   // A picked or pasted photo; the page shrinks it and searches at once (AC2).
   onPhoto: (file: File) => void;
   onRemovePhoto: () => void;
@@ -23,7 +23,24 @@ type Props = {
 
 // PB-34: the grid's search bar, by keyword as before, by description on Enter,
 // or by photo (button or Ctrl+V). Buttons are 44 px for touch (AC6).
-export function SmartSearch({ value, onChange, onSubmit, photoPreviewUrl, onPhoto, onRemovePhoto, busy, error }: Props) {
+// The thumbnail's object URL lives as long as the <img> is attached: React runs
+// the ref cleanup when a page Next keeps alive (Activity) is hidden and attaches
+// it again, with a fresh URL, when it is shown.
+function PhotoThumb({ photo }: { photo: Blob }) {
+  const attach = useCallback(
+    (img: HTMLImageElement | null) => {
+      if (!img) return;
+      const url = URL.createObjectURL(photo);
+      img.src = url;
+      return () => URL.revokeObjectURL(url);
+    },
+    [photo],
+  );
+  // eslint-disable-next-line @next/next/no-img-element -- a local blob, nothing for next/image to optimize
+  return <img ref={attach} alt="Ảnh đang tìm" className="size-full object-cover" />;
+}
+
+export function SmartSearch({ value, onChange, onSubmit, photo, onPhoto, onRemovePhoto, busy, error }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   function submit(event: FormEvent<HTMLFormElement>) {
@@ -43,12 +60,12 @@ export function SmartSearch({ value, onChange, onSubmit, photoPreviewUrl, onPhot
   return (
     <div className="min-w-0 sm:min-w-80">
       <form role="search" onSubmit={submit} className="flex min-h-11 items-center gap-1 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717]">
-        {photoPreviewUrl && (
+        {photo && (
           <span className="relative size-11 shrink-0 overflow-hidden bg-[#efebe4]">
-            <Image src={photoPreviewUrl} alt="Ảnh đang tìm" fill sizes="44px" unoptimized className="object-cover" />
+            <PhotoThumb photo={photo} />
           </span>
         )}
-        {photoPreviewUrl && (
+        {photo && (
           <button type="button" onClick={onRemovePhoto} aria-label="Xóa ảnh" className="inline-grid size-11 shrink-0 place-items-center text-[#706d67] hover:text-[#171717]">
             <Icon name="close" className="size-4" />
           </button>

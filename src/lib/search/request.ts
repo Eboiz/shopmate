@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { EMBEDDER_MAX_LIMIT } from "./embedder-contract";
+import { MAX_PHOTO_BYTES } from "./pb30-shim";
 
 // Wire shapes of POST /api/shops/[slug]/search, shared by the route and the
 // shop page (no server-only import: the browser parses responses with it).
 
 export const SEARCH_MIN_TEXT = 2;
+
+// Whole multipart body: the largest photo plus room for the text and the
+// multipart framing. The route stops reading past it.
+export const MAX_SEARCH_BODY_BYTES = MAX_PHOTO_BYTES + 64 * 1024;
 
 // Exact copy from the PB-34 spec (Global Constraints of the plan).
 export const searchErrors = {

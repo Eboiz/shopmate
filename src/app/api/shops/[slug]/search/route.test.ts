@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { chatErrors } from "@/lib/chat/request";
-import { PHOTO_ERRORS } from "@/lib/search/pb30-shim";
-import { searchErrors, searchResponseSchema } from "@/lib/search/request";
+import { MAX_PHOTO_BYTES, PHOTO_ERRORS } from "@/lib/search/pb30-shim";
+import { MAX_SEARCH_BODY_BYTES, searchErrors, searchResponseSchema } from "@/lib/search/request";
 
 const SHOP = { id: "shop-a", name: "Mây Boutique" };
 const P1 = "11111111-1111-4111-8111-111111111111";
@@ -37,12 +37,20 @@ const { SemanticSearchUnavailable } = await import("@/lib/search/semantic-search
 const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
 const GIF = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
 
-function post(fields: { q?: string; photo?: Blob }, slug = "may-boutique") {
+async function post(fields: { q?: string; photo?: Blob }, slug = "may-boutique") {
   const form = new FormData();
   if (fields.q !== undefined) form.set("q", fields.q);
   if (fields.photo) form.set("photo", fields.photo, "photo.jpg");
+  // Encoded up front, like a body arriving from the network (undici's own
+  // FormData stream keeps writing after the route stops reading a big body).
+  const encoded = new Response(form);
+  const bytes = new Uint8Array(await encoded.arrayBuffer());
   return POST(
-    new NextRequest(`https://shop.test/api/shops/${slug}/search`, { method: "POST", body: form }),
+    new NextRequest(`https://shop.test/api/shops/${slug}/search`, {
+      method: "POST",
+      body: bytes,
+      headers: { "content-type": encoded.headers.get("content-type") ?? "" },
+    }),
     { params: Promise.resolve({ slug }) },
   );
 }
@@ -133,7 +141,12 @@ describe("POST /api/shops/[slug]/search", () => {
     expect(gif.status).toBe(400);
     expect(await body(gif)).toEqual({ error: PHOTO_ERRORS.type });
 
-    const big = new Blob([new Uint8Array(6 * 1024 * 1024)], { type: "image/jpeg" });
+    const tooBig = await post({ photo: new Blob([new Uint8Array(6 * 1024 * 1024)], { type: "image/jpeg" }) });
+    expect(tooBig.status).toBe(413);
+    expect(await body(tooBig)).toEqual({ error: PHOTO_ERRORS.size });
+
+    // Just over 5 MB still fits the body limit: refused from its size, bytes unread.
+    const big = new Blob([new Uint8Array(MAX_PHOTO_BYTES + 1)], { type: "image/jpeg" });
     const arrayBuffer = vi.spyOn(File.prototype, "arrayBuffer");
     const bytes = vi.spyOn(File.prototype, "bytes");
     const response = await post({ photo: big });
@@ -147,6 +160,50 @@ describe("POST /api/shops/[slug]/search", () => {
     const empty = await post({ photo: new Blob([]) });
     expect(await body(empty)).toEqual({ error: PHOTO_ERRORS.read });
     expect(search).not.toHaveBeenCalled();
+  });
+
+  it("a body over the size limit is refused before multipart parsing, from its header or its stream", async () => {
+    const formData = vi.spyOn(Request.prototype, "formData");
+    const huge = new Uint8Array(MAX_SEARCH_BODY_BYTES + 1);
+    const declared = await POST(
+      new NextRequest("https://shop.test/api/shops/may-boutique/search", {
+        method: "POST",
+        body: huge,
+        headers: { "content-type": "multipart/form-data; boundary=x", "content-length": String(huge.length) },
+      }),
+      { params: Promise.resolve({ slug: "may-boutique" }) },
+    );
+    expect(declared.status).toBe(413);
+    expect(await body(declared)).toEqual({ error: PHOTO_ERRORS.size });
+
+    // No (or a lying) Content-Length: the stream is cut off once it passes the limit.
+    const chunks = [new Uint8Array(MAX_SEARCH_BODY_BYTES), new Uint8Array(10), new Uint8Array(10)];
+    let pulled = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = chunks[pulled++];
+        if (chunk) controller.enqueue(chunk);
+        else controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const streamed = await POST(
+      new NextRequest("https://shop.test/api/shops/may-boutique/search", {
+        method: "POST",
+        body: stream,
+        headers: { "content-type": "multipart/form-data; boundary=x" },
+        duplex: "half",
+      } as ConstructorParameters<typeof NextRequest>[1]),
+      { params: Promise.resolve({ slug: "may-boutique" }) },
+    );
+    expect(streamed.status).toBe(413);
+    expect(cancelled).toBe(true);
+    expect(formData).not.toHaveBeenCalled();
+    expect(takeSlot).not.toHaveBeenCalled();
+    formData.mockRestore();
   });
 
   it("a body that is not a form is 400", async () => {
