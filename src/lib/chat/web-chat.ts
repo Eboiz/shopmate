@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { replySchema } from "@/contract";
+import { replySchema, type ConversationMode } from "@/contract";
 import { sortSizes } from "@/lib/engine/text";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ShopCatalog } from "@/lib/shop/types";
@@ -134,20 +134,24 @@ export async function loadCatalog(shop: Shop): Promise<ShopCatalog> {
   };
 }
 
-// The shopper's messages in this shop, oldest first; empty when they never wrote.
-export async function loadHistory(shopId: string, externalId: string): Promise<ChatMessage[]> {
+// The shopper's messages in this shop, oldest first, and the conversation's
+// mode (PB-42); no messages and "ai" when they never wrote.
+export async function loadHistory(
+  shopId: string,
+  externalId: string,
+): Promise<{ messages: ChatMessage[]; mode: ConversationMode }> {
   const db = createAdminClient();
   // One conversation per shopper (conversations.shopper_id is unique).
   const { data: conversation, error: conversationError } = await db
     .from("conversations")
-    .select("id, shoppers!inner(id)")
+    .select("id, mode, shoppers!inner(id)")
     .eq("shop_id", shopId)
     .eq("shoppers.shop_id", shopId)
     .eq("shoppers.channel", "web")
     .eq("shoppers.external_id", externalId)
     .maybeSingle();
   if (conversationError) throw new Error(`conversations: ${conversationError.message}`);
-  if (!conversation) return [];
+  if (!conversation) return { messages: [], mode: "ai" };
   const conversationId = conversation.id;
 
   const { data, error } = await db
@@ -159,7 +163,7 @@ export async function loadHistory(shopId: string, externalId: string): Promise<C
     .limit(HISTORY_SHOWN);
   if (error) throw new Error(`messages: ${error.message}`);
 
-  return data.toReversed().map((message) => {
+  const messages = data.toReversed().map((message) => {
     const reply = message.reply === null ? null : replySchema.safeParse(message.reply);
     return {
       id: message.id,
@@ -169,4 +173,5 @@ export async function loadHistory(shopId: string, externalId: string): Promise<C
       createdAt: message.created_at,
     };
   });
+  return { messages, mode: conversation.mode };
 }

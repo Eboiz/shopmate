@@ -9,6 +9,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { ProductCard } from "@/components/ui/product-card";
 import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
+import type { ConversationMode } from "@/contract";
+import { chatStatus } from "@/lib/chat/chat-status";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { compareSizes } from "@/lib/size-order";
 import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
@@ -48,6 +50,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // The conversation's mode from the last poll (PB-42): outside `ai` no AI
+  // turn runs, so the chat says it is waiting for staff instead of typing.
+  const [mode, setMode] = useState<ConversationMode>("ai");
   // The message being sent, shown straight away: POST only answers once the
   // whole AI turn is done, which can take several seconds. knownIds are the
   // messages already on screen, so the stored copy can replace this one.
@@ -106,7 +111,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       const data = chatHistorySchema.parse(await response.json());
       if (sequence !== refreshSequence.current) return;
       setMessages(data.messages);
-      if (data.messages.some((message) => message.sender !== "shopper" && !previousReplies.current.has(message.id))) {
+      setMode(data.mode);
+      if (data.mode !== "ai" || data.messages.some((message) => message.sender !== "shopper" && !previousReplies.current.has(message.id))) {
         setAwaitingReply(false);
       }
       setError("");
@@ -283,7 +289,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         cartMessageRef.current = null;
         cart.clear();
       }
-      setAwaitingReply(true);
+      // Only an `ai` conversation answers; with staff the poll shows the wait.
+      if (mode === "ai") setAwaitingReply(true);
       await refresh();
     } catch {
       setAwaitingReply(false);
@@ -330,6 +337,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // Hidden once a poll brings back the stored copy of the same message.
   const showOutgoing = outgoing !== null && !messages.some((message) =>
     message.sender === "shopper" && message.text === outgoing.text && !outgoing.knownIds.has(message.id));
+  const status = chatStatus(messages, mode, sending, awaitingReply);
   if (catalogLoading) {
     return <main className="flex flex-1 flex-col">{detailProductId ? <ProductDetailSkeleton /> : <ShopFrontSkeleton />}</main>;
   }
@@ -596,10 +604,11 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
               <div className="space-y-5"><div className="ui-card overflow-hidden"><Image src="/images/chat-welcome.jpg" alt="" width={840} height={360} sizes="(max-width: 640px) 100vw, 420px" className="aspect-[7/3] w-full object-cover" /><div className="p-5"><h3 className="text-lg font-bold">Xin chào! Mình giúp gì cho bạn?</h3><p className="mt-2 text-sm leading-6 text-[#706d67]">Hỏi về sản phẩm, size, màu sắc hoặc một set đồ hợp với bạn.</p></div></div><div><p className="mb-3 text-xs font-semibold text-[#706d67]">Gợi ý câu hỏi</p><div className="flex flex-wrap gap-2">{["Shop còn size M không?", "Tư vấn size giúp mình", "Gợi ý phối đồ"].map((text) => <button key={text} type="button" onClick={() => void send(text)} disabled={sending || loading} className="inline-flex min-h-11 items-center rounded-full border border-[#8f8a82] bg-white px-4 text-sm font-semibold transition-colors hover:border-[#171717] disabled:opacity-50">{text}</button>)}</div></div></div>
             ) : (
               <div className="space-y-4">
-                {messages.map((message) => (
+                {messages.map((message, index) => (
                   <div key={message.id} className={message.sender === "shopper" ? "ml-8" : "mr-8"}>
                     <p className="mb-1 text-xs text-[#706d67]">
                       {senderLabel[message.sender]}
+                      {status === "waiting_staff" && index === messages.length - 1 && " · Đã gửi"}
                     </p>
                     <div className={`break-words rounded-xl p-3 text-sm leading-6 ${message.sender === "shopper" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white text-[#171717]"}`}>
                       {message.reply?.text || message.text}
@@ -629,9 +638,14 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 )}
               </div>
             )}
-            {(sending || awaitingReply) && (
+            {status === "typing" && (
               <p role="status" className="mt-4 inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-[#e3dfd8] bg-white px-3 py-2 text-sm text-[#706d67]">
                 <TypingDots /> Shop đang trả lời…
+              </p>
+            )}
+            {status === "waiting_staff" && (
+              <p role="status" className="mt-4 inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-[#e3dfd8] bg-white px-3 py-2 text-sm text-[#706d67]">
+                <span className="sr-only">Đã gửi. </span>Đang chờ nhân viên shop trả lời
               </p>
             )}
             <div ref={endRef} />
