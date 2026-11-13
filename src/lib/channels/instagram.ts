@@ -1,6 +1,6 @@
 import type { Reply } from "@/contract";
 import type { DeliveryTarget } from "./adapters";
-import { parseMessagingEvents, sendMessagingMessages, toMessengerMessages, type MessagingEvent } from "./messenger";
+import { parseMessagingEvents, sendMessagingReply, toMessengerMessages, type MessagingEvent } from "./messenger";
 
 // Instagram Direct (PB-23) through the Messenger API for Instagram. Deliveries come
 // on the same Meta webhook as Messenger (object = "instagram"), signed with the same
@@ -53,7 +53,9 @@ export function splitUtf8(text: string, maxBytes = MAX_TEXT_BYTES): string[] {
 
 // Design A, as on Messenger: text, then one carousel of product cards (generic
 // template, up to 10), with the quick replies (up to 13, titles of 20 characters)
-// on the last message. Only the text is split for Instagram's byte limit.
+// on the last message. Each in-stock card has the same "Chọn size" postback button
+// (PB-22), and a refused carousel falls back to text and photos, as on Messenger.
+// Only the text is split for Instagram's byte limit.
 export function toInstagramMessages(reply: Reply): Record<string, unknown>[] {
   return toMessengerMessages(reply, (text) => splitUtf8(text));
 }
@@ -61,5 +63,5 @@ export function toInstagramMessages(reply: Reply): Record<string, unknown>[] {
 // The Instagram channel adapter: the shopper's IGSID is the target's external id,
 // and the channel account's token is the linked Page's token.
 export async function sendInstagram(target: DeliveryTarget, reply: Reply, fetchFn: typeof fetch = fetch) {
-  await sendMessagingMessages("instagram", target, toInstagramMessages(reply), fetchFn);
+  await sendMessagingReply("instagram", target, reply, toInstagramMessages(reply), fetchFn);
 }

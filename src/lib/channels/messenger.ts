@@ -28,6 +28,8 @@ export type MessengerEvent = MessagingEvent;
 type Attachment = { type?: string; payload?: { url?: string; sticker_id?: unknown } };
 type Messaging = {
   sender?: { id?: string };
+  timestamp?: number;
+  postback?: { mid?: string; payload?: string };
   message?: {
     mid?: string;
     text?: string;
@@ -39,9 +41,16 @@ type Messaging = {
   };
 };
 
+// The "Chọn size" button on a product card (PB-22) is a postback whose payload is
+// the shopper text it stands for, e.g. "Chọn size Đầm suông linen". Only postbacks
+// starting with this are read; other postbacks (Get Started…) are skipped.
+export const CHOOSE_SIZE = "Chọn size";
+const isChooseSize = (payload?: string): payload is string => !!payload?.startsWith(`${CHOOSE_SIZE} `);
+
 // Shopper messages only. Echoes of the account's own sends, deliveries, reads,
-// reactions, postbacks and unsent messages are skipped. A tapped quick reply is
-// read from its payload, which holds the full quick reply text (the title may be cut).
+// reactions, other postbacks and unsent messages are skipped. A tapped quick reply
+// is read from its payload, which holds the full quick reply text (the title may be
+// cut); so is a tapped "Chọn size" card button.
 export function parseMessagingEvents(body: unknown, label: string): MessagingEvent[] {
   const entries = (body as { entry?: { id?: string; messaging?: Messaging[] }[] })?.entry ?? [];
   const events: MessagingEvent[] = [];
@@ -49,6 +58,13 @@ export function parseMessagingEvents(body: unknown, label: string): MessagingEve
     for (const item of entry.messaging ?? []) {
       const message = item.message;
       const senderId = item.sender?.id;
+      const postback = item.postback;
+      if (entry.id && senderId && isChooseSize(postback?.payload)) {
+        // Meta gives the postback a mid; the fallback id still dedupes a resent delivery.
+        const mid = postback.mid ?? `postback:${senderId}:${item.timestamp ?? postback.payload}`;
+        events.push({ accountId: entry.id, senderId, mid, type: "text", text: postback.payload });
+        continue;
+      }
       if (!entry.id || !senderId || !message?.mid || message.is_echo || message.is_deleted) continue;
       const base = { accountId: entry.id, senderId, mid: message.mid };
       const attachments = message.attachments ?? [];
@@ -98,17 +114,42 @@ export function toMessengerMessages(
             title: cut(p.name),
             subtitle: cut(`${formatPrice(p.price)} · ${formatSizesInStock(p.sizesInStock)}`),
             ...(p.imageUrl ? { image_url: p.imageUrl } : {}),
+            // PB-22: a sold-out card has no size to choose, so no button.
+            ...(p.sizesInStock.length > 0
+              ? { buttons: [{ type: "postback", title: CHOOSE_SIZE, payload: `${CHOOSE_SIZE} ${p.name}` }] }
+              : {}),
           })),
         },
       },
     });
   }
+  addQuickReplies(messages, reply.quickReplies);
+  return messages;
+}
+
+function addQuickReplies(messages: Record<string, unknown>[], quickReplies: string[]) {
   const last = messages.at(-1);
-  if (last && reply.quickReplies.length > 0) {
-    last.quick_replies = reply.quickReplies
+  if (last && quickReplies.length > 0) {
+    last.quick_replies = quickReplies
       .slice(0, MAX_QUICK_REPLIES)
       .map((q) => ({ content_type: "text", title: cut(q, MAX_QUICK_REPLY_TITLE), payload: q }));
   }
+}
+
+const isCarousel = (message: Record<string, unknown>) =>
+  (message.attachment as { type?: string } | undefined)?.type === "template";
+
+// PB-22: when the carousel is refused, the products go as text and photo instead:
+// each card's photo, then its caption (name, price, sizes in stock), with the
+// quick replies on the last message. A photo can't carry a caption on Messenger.
+export function toProductFallbackMessages(reply: Reply): Record<string, unknown>[] {
+  const messages: Record<string, unknown>[] = [];
+  for (const p of reply.products.slice(0, MAX_CARDS)) {
+    if (p.imageUrl) messages.push({ attachment: { type: "image", payload: { url: p.imageUrl } } });
+    messages.push({ text: `${p.name}
+${formatPrice(p.price)} · ${formatSizesInStock(p.sizesInStock)}` });
+  }
+  addQuickReplies(messages, reply.quickReplies);
   return messages;
 }
 
@@ -139,9 +180,34 @@ export async function sendMessagingMessages(
   }
 }
 
+// Sends a reply built by toMessengerMessages. If the Send API refuses the
+// carousel, the products are sent as text and photo instead (PB-22); a refused
+// text, or a refused fallback, still throws.
+export async function sendMessagingReply(
+  label: string,
+  target: DeliveryTarget,
+  reply: Reply,
+  messages: Record<string, unknown>[],
+  fetchFn: typeof fetch,
+) {
+  for (const message of messages) {
+    if (!isCarousel(message)) {
+      await sendMessagingMessages(label, target, [message], fetchFn);
+      continue;
+    }
+    try {
+      await sendMessagingMessages(label, target, [message], fetchFn);
+    } catch (error) {
+      // The error holds Meta's status and message, never the token.
+      console.warn(`${label}: carousel refused, sending text and photos instead`, (error as Error).message);
+      await sendMessagingMessages(label, target, toProductFallbackMessages(reply), fetchFn);
+    }
+  }
+}
+
 // The Messenger channel adapter.
 export async function sendMessenger(target: DeliveryTarget, reply: Reply, fetchFn: typeof fetch = fetch) {
-  await sendMessagingMessages("messenger", target, toMessengerMessages(reply), fetchFn);
+  await sendMessagingReply("messenger", target, reply, toMessengerMessages(reply), fetchFn);
 }
 
 // "Typing…" until the next message is sent (or about 20 seconds). Instagram takes
