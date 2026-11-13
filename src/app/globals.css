@@ -48,6 +48,16 @@ button:disabled { cursor: not-allowed; }
 .ui-marquee { display: flex; width: max-content; animation: ui-marquee 28s linear infinite; }
 .ui-marquee:hover { animation-play-state: paused; }
 .ui-chat-enter { animation: ui-chat .28s cubic-bezier(.2,.8,.2,1) both; }
+
+/* PB-46: the shop page's phone bottom bar ("Chat với shop" + cart). The page
+   ends with the bar's height so nothing stays under it, and scrolling to an
+   anchor or a focused field stops above it. */
+:root { --shop-bar: calc(4.625rem + env(safe-area-inset-bottom)); }
+.shop-bar { padding-bottom: calc(.75rem + env(safe-area-inset-bottom)); }
+@media (max-width: 639.98px) {
+  .shop-has-bar { padding-bottom: var(--shop-bar); }
+  html:has(.shop-has-bar) { scroll-padding-bottom: var(--shop-bar); }
+}
 /* Chat: rises in on phones (full screen), slides in from the right edge above. */
 .ui-drawer { animation: ui-chat .28s cubic-bezier(.2,.8,.2,1) both; }
 @media (min-width: 640px) { .ui-drawer { animation-name: ui-drawer; } }

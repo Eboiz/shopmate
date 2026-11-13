@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { formatPrice } from "@/lib/format";
+import { BODY_LIMITS_ERROR, parseBody } from "@/lib/shop/body-limits";
 import type { ShopProduct, SizeChartRow } from "@/lib/shop/types";
 import { Icon } from "@/components/ui/icon";
 import { HeaderSearch } from "./header-search";
@@ -224,14 +225,16 @@ export function ShopHero({ shopName, featured, onAsk, onAskAbout }: HeroProps) {
 
 type TilesProps = { groups: GroupLink[]; onChoose: (name: string) => void; onAsk: (text: string) => void };
 
+// PB-46: every group that has products, then the "ask the AI" tile. On a phone
+// the AI tile takes the free cell of an odd last row, or a row of its own.
 export function GroupTiles({ groups, onChoose, onAsk }: TilesProps) {
-  const shown = groups.slice(0, 4);
+  const odd = groups.length % 2 === 1;
   return (
     <section aria-labelledby="bo-suu-tap-title" className="mx-auto max-w-[1400px] px-4 pb-16 sm:px-6 sm:pb-20 lg:px-10">
       <h2 id="bo-suu-tap-title" className="mb-6 text-[clamp(1.9rem,3.6vw,3rem)] font-black uppercase leading-none tracking-[-.04em]">Theo danh mục<span className="text-[#e9573f]">.</span></h2>
-      <div style={{ "--tiles": Math.max(4, shown.length + 1) } as CSSProperties} className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-[repeat(var(--tiles),minmax(0,1fr))]">
-        {shown.map((group) => (
-          <button key={group.name} type="button" onClick={() => onChoose(group.name)} className="group relative flex aspect-[3/4.2] items-end overflow-hidden bg-[#33312d] text-left text-white">
+      <div style={{ "--tiles": Math.max(4, groups.length + 1) } as CSSProperties} className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-[repeat(var(--tiles),minmax(0,1fr))]">
+        {groups.map((group) => (
+          <button key={group.name} type="button" onClick={() => onChoose(group.name)} className="group relative flex aspect-[4/5] items-end overflow-hidden bg-[#33312d] text-left text-white md:aspect-[3/4.2]">
             <Image src={group.imageUrl || "/images/product-placeholder.jpg"} alt="" fill sizes="(max-width: 768px) 50vw, 20vw" className="object-cover transition-transform duration-500 group-hover:scale-105" />
             <span className="absolute inset-0 bg-gradient-to-b from-[#17171700] from-40% to-[#171717cc]" />
             <span className="relative z-10 grid gap-1 p-4 sm:p-5">
@@ -240,7 +243,7 @@ export function GroupTiles({ groups, onChoose, onAsk }: TilesProps) {
             </span>
           </button>
         ))}
-        <button type="button" onClick={() => onAsk("Mình chưa biết chọn gì, tư vấn giúp mình")} className="relative col-span-2 flex min-h-48 flex-col justify-between gap-6 bg-[#e9573f] p-4 text-left text-[#171717] transition-colors hover:bg-[#f06a53] sm:p-5 md:col-span-1 md:aspect-[3/4.2] md:min-h-0">
+        <button type="button" onClick={() => onAsk("Mình chưa biết chọn gì, tư vấn giúp mình")} className={`relative flex flex-col justify-between gap-6 bg-[#e9573f] p-4 text-left text-[#171717] transition-colors hover:bg-[#f06a53] sm:p-5 md:col-span-1 md:aspect-[3/4.2] md:min-h-0 ${odd ? "aspect-[4/5]" : "col-span-2 min-h-48"}`}>
           <span className="text-[clamp(2.25rem,3.6vw,3.25rem)] font-black leading-[.92] tracking-[-.04em]">Chưa biết chọn?</span>
           <span className="grid gap-1">
             <span className="text-lg font-black uppercase leading-tight tracking-[-.03em] sm:text-xl">Hỏi trợ lý AI</span>
@@ -252,8 +255,6 @@ export function GroupTiles({ groups, onChoose, onAsk }: TilesProps) {
   );
 }
 
-const inRange = (value: number, min: number, max: number) => Number.isFinite(value) && value >= min && value <= max;
-
 export function SizeBand({ chart, onAsk }: { chart: SizeChartRow[] | null; onAsk: (text: string) => void }) {
   const [height, setHeight] = useState("");
   const [weight, setWeight] = useState("");
@@ -261,14 +262,13 @@ export function SizeBand({ chart, onAsk }: { chart: SizeChartRow[] | null; onAsk
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const h = Number(height.replace(",", "."));
-    const w = Number(weight.replace(",", "."));
-    if (!inRange(h, 120, 210) || !inRange(w, 30, 150)) {
-      setError("Nhập chiều cao từ 120 đến 210 cm và cân nặng từ 30 đến 150 kg.");
+    const body = parseBody(height, weight);
+    if (!body) {
+      setError(BODY_LIMITS_ERROR);
       return;
     }
     setError("");
-    onAsk(`Mình cao ${h}cm, nặng ${w}kg, tư vấn size giúp mình`);
+    onAsk(`Mình cao ${body.heightCm}cm, nặng ${body.weightKg}kg, tư vấn size giúp mình`);
   }
 
   const field = "min-h-[52px] w-full border-[1.5px] border-[#5a5752] bg-transparent px-3.5 text-base tabular-nums text-white outline-none placeholder:text-[#8f8a82] focus:border-[#e9573f]";
@@ -331,8 +331,9 @@ export function ShopFooter({ shopName, groups, policyItems, onChoose, onAsk }: F
   const head = "mb-4 text-xs font-extrabold uppercase tracking-[.16em]";
   const link = "inline-flex min-h-8 items-center text-left text-sm text-[#45423d] hover:text-[#c2412b]";
   return (
-    // pb-28 leaves room for the floating chat button and the phone bottom bar.
-    <footer id="chinh-sach" className="scroll-mt-24 border-t border-[#e3dfd8] bg-[#f5f3ef] pb-28">
+    // sm:pb-28 leaves room for the floating chat button; on a phone the page
+    // already ends with the bottom bar's height (.shop-has-bar).
+    <footer id="chinh-sach" className="scroll-mt-24 border-t border-[#e3dfd8] bg-[#f5f3ef] pb-10 sm:pb-28">
       <div className="mx-auto grid max-w-[1400px] gap-10 px-4 pt-14 sm:grid-cols-2 sm:px-6 lg:grid-cols-[1.2fr_.8fr_.9fr_2fr] lg:px-10">
         <div>
           <p className="text-2xl font-black uppercase tracking-[-.04em]">{shopName}<span className="text-[#e9573f]">.</span></p>

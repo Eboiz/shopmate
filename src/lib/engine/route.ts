@@ -192,6 +192,13 @@ export function catalogOverview(catalog: CatalogItem[], perGroup = 3): Reply | n
   return { text: ["Dạ, shop đang có:", ...lines, "Bạn muốn xem nhóm nào ạ?"].join("\n"), products: [], quickReplies: groups };
 }
 
+// PB-46: an unclear message ("asdfghjkl 🤡🔥") gets every group the shop sells,
+// then "Gặp nhân viên" only while there is room: a group is never dropped.
+export const UNCLEAR_MAX_BUTTONS = 5;
+export function unclearButtons(groups: readonly string[]): string[] {
+  return groups.length < UNCLEAR_MAX_BUTTONS ? [...groups, STAFF_BUTTON] : [...groups];
+}
+
 const lastShopperText = (history: HistoryMessage[]) => history.findLast((m) => m.sender === "shopper")?.text ?? "";
 
 const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_mai: "khuyến mãi" } as const;
@@ -307,7 +314,7 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         facts: { groups: catalogGroups(input.catalog) },
         task: "Nếu tin nhắn không liên quan tới mua sắm ở shop, nói ngắn rằng câu đó nằm ngoài việc mua sắm ở shop. Nếu không rõ ý, hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
         productIds: [],
-        quickReplies: customer ? [...catalogGroups(input.catalog).slice(0, 4), STAFF_BUTTON] : [],
+        quickReplies: customer ? unclearButtons(catalogGroups(input.catalog)) : [],
       };
     case "policy": {
       const r = await input.runTool("get_policy", { kind: d.policyKind });
