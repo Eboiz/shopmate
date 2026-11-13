@@ -88,7 +88,8 @@ export async function productName(shopId: string, productId: string): Promise<st
 
 // Every product with its in-stock colors and sizes, description, size chart
 // and the shop's return and shipping policies. Prices and stock come from the
-// database, the same rows the AI tools read.
+// database, the same rows the AI tools read. `variants` keeps sold-out rows
+// (stock 0) so the page can show a size as "Hết hàng" instead of hiding it.
 export async function loadCatalog(shop: Shop): Promise<ShopCatalog> {
   const db = createAdminClient();
   const [products, policies] = await Promise.all([
@@ -119,7 +120,7 @@ export async function loadCatalog(shop: Shop): Promise<ShopCatalog> {
         description: product.description,
         colors: [...new Set(inStock.map((variant) => variant.color))].toSorted((a, b) => a.localeCompare(b, "vi")),
         sizesInStock: sortSizes(inStock.map((variant) => variant.size)),
-        variants: inStock.map(({ color, size, stock }) => ({ color, size, stock })),
+        variants: product.variants.map(({ color, size, stock }) => ({ color, size, stock })),
         sizeChart: product.size_charts
           .map((row) => ({
             size: row.size,

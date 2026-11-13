@@ -16,7 +16,8 @@ import { compareSizes } from "@/lib/size-order";
 import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
 import { cartCount, cartMessage, stockChangeMessage, useCart, variantStock, type CartItem } from "./cart";
-import { cartItemFor, onlyChoice, productOptions, QuickAdd } from "./quick-add";
+import { onlyChoice, productOptions } from "./product-options";
+import { cartItemFor, QuickAdd } from "./quick-add";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
@@ -681,9 +682,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           <div className="border-t border-[#e3dfd8] bg-white p-3">
             {previewCatalog && <p className="mb-2 text-xs text-[#706d67]">Bản xem thử giao diện — chưa kết nối chat.</p>}
             {lastReply && lastReply.quickReplies.length > 0 && (
-              <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+              <div className="mb-2 flex flex-wrap gap-2">
                 {lastReply.quickReplies.map((text) => (
-                  <Button key={text} variant="secondary" className="shrink-0 text-sm" disabled={sending} onClick={() => void send(text)}>
+                  <Button key={text} variant="secondary" className="min-h-11 max-w-full whitespace-normal break-words text-left text-sm" disabled={sending} onClick={() => void send(text)}>
                     {text}
                   </Button>
                 ))}
