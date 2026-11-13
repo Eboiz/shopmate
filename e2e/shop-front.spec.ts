@@ -59,7 +59,7 @@ test("shop page and chat fit 375 px, send product context and restore history", 
   const chat = page.getByRole("dialog", { name: "Trò chuyện với shop" });
   await expect(chat.getByText("Đang hỏi về:")).toContainText("Váy hoa");
   await chat.getByRole("textbox", { name: "Tin nhắn" }).fill("Váy này còn size M không?");
-  await chat.getByRole("button", { name: "Gửi" }).click();
+  await chat.getByRole("button", { name: "Gửi", exact: true }).click();
   await expect(chat.getByRole("status")).toContainText("Shop đang trả lời");
   await expect(page.getByText("Váy hoa còn size M.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Xem màu Be" })).toBeVisible();
@@ -104,7 +104,7 @@ test("a send error remains visible while history polling succeeds", async ({ pag
   await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Tư vấn giúp mình");
-  await page.getByRole("button", { name: "Gửi" }).click();
+  await page.getByRole("button", { name: "Gửi", exact: true }).click();
   await expect(page.getByText("Trợ lý đang bận. Vui lòng thử lại.")).toBeVisible();
   await page.waitForTimeout(3200);
   await expect(page.getByText("Trợ lý đang bận. Vui lòng thử lại.")).toBeVisible();
@@ -126,7 +126,7 @@ test("keeps the reply indicator until the answer arrives", async ({ page }) => {
   await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Còn hàng không?");
-  await page.getByRole("button", { name: "Gửi" }).click();
+  await page.getByRole("button", { name: "Gửi", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Shop đang trả lời");
   await expect(page.getByText("Còn hàng không?", { exact: true })).toBeVisible();
   await expect(page.getByRole("status")).toContainText("Shop đang trả lời");
@@ -153,9 +153,9 @@ test("reuses message id on retry and shows a Vietnamese network error", async ({
   await page.getByRole("button", { name: "Chat với shop" }).first().focus();
   await page.keyboard.press("Enter");
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Tư vấn giúp mình");
-  await page.getByRole("button", { name: "Gửi" }).click();
+  await page.getByRole("button", { name: "Gửi", exact: true }).click();
   await expect(page.getByText("Chưa gửi được tin nhắn. Vui lòng kiểm tra kết nối và thử lại.")).toBeVisible();
-  await page.getByRole("button", { name: "Gửi" }).click();
+  await page.getByRole("button", { name: "Gửi", exact: true }).click();
   await expect.poll(() => submitted.length).toBe(2);
   expect(submitted[1]?.clientMessageId).toBe(submitted[0]?.clientMessageId);
 });
@@ -190,7 +190,7 @@ test("a delayed old poll cannot erase a newer answer", async ({ page }) => {
   await page.keyboard.press("Enter");
   await pollStarted;
   await page.getByRole("textbox", { name: "Tin nhắn" }).fill("Còn hàng không?");
-  await page.getByRole("button", { name: "Gửi" }).click();
+  await page.getByRole("button", { name: "Gửi", exact: true }).click();
   await expect(page.getByText("Còn hàng ạ.")).toBeVisible();
   releaseOldPoll();
   await expect(page.getByText("Còn hàng ạ.")).toBeVisible();

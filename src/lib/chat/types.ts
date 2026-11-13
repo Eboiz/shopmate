@@ -7,8 +7,8 @@ export const chatMessageSchema = z.object({
   text: z.string(),
   reply: replySchema.nullable(),
   // PB-30: the shopper's photos, as signed URLs valid for an hour ("" when one
-  // could not be signed).
-  photoUrls: z.array(z.string()),
+  // could not be signed). Missing (a response from before PB-30) means none.
+  photoUrls: z.array(z.string()).default([]),
   createdAt: z.string(),
 });
 
