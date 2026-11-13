@@ -60,7 +60,7 @@ beforeEach(() => {
 });
 
 describe("GET /api/shops/[slug]/catalog", () => {
-  it("lists the slug's products with in-stock colors and sizes in the shape the page parses", async () => {
+  it("lists the slug's products with in-stock colors and sizes, and every variant, in the shape the page parses", async () => {
     const response = await get("may-boutique");
     expect(response.status).toBe(200);
     const body = shopCatalogSchema.parse(await response.json());
@@ -78,6 +78,8 @@ describe("GET /api/shops/[slug]/catalog", () => {
         { color: "Trắng", size: "L", stock: 2 },
         { color: "Be", size: "M", stock: 1 },
         { color: "Be", size: "S", stock: 4 },
+        // Sold out, kept so the page can show it as "Hết hàng".
+        { color: "Đen", size: "XL", stock: 0 },
       ],
       // Sorted by height, so the page and the finder read it top to bottom.
       sizeChart: [
@@ -85,7 +87,7 @@ describe("GET /api/shops/[slug]/catalog", () => {
         { size: "M", heightMinCm: 156, heightMaxCm: 162, weightMinKg: 47, weightMaxKg: 53 },
       ],
     });
-    expect(body.products[1]).toMatchObject({ colors: [], sizesInStock: [] });
+    expect(body.products[1]).toMatchObject({ colors: [], sizesInStock: [], variants: [{ color: "Đỏ", size: "M", stock: 0 }] });
     expect(filters).toContainEqual(["products.shop_id", "shop-a"]);
   });
 

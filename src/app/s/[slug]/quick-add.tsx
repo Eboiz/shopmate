@@ -4,35 +4,14 @@ import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
-import { compareSizes } from "@/lib/size-order";
 import { displayColor } from "@/lib/shop/catalog-view";
 import type { ShopProduct } from "@/lib/shop/types";
 import type { CartItem } from "./cart";
+import { productOptions } from "./product-options";
 import { useModal } from "./use-modal";
-
-// The colours and sizes a shopper can still buy, as the detail page offers them.
-export function productOptions(product: ShopProduct) {
-  const available = product.variants?.filter((variant) => variant.stock > 0);
-  const colors = available ? [...new Set(available.map((variant) => variant.color))] : product.colors;
-  const sizesFor = (color: string) =>
-    available
-      ? [...new Set(available.filter((variant) => variant.color === color).map((variant) => variant.size))].sort(compareSizes)
-      : [...product.sizesInStock].sort(compareSizes);
-  const stockOf = (color: string, size: string) => available?.find((variant) => variant.color === color && variant.size === size)?.stock ?? 99;
-  return { colors, sizesFor, stockOf };
-}
 
 export function cartItemFor(product: ShopProduct, color: string, size: string): CartItem {
   return { productId: product.id, name: product.name, price: product.price, imageUrl: product.imageUrl, color, size, quantity: 1 };
-}
-
-// The one choice left when the product has a single colour and size.
-export function onlyChoice(product: ShopProduct): { color: string; size: string } | null {
-  const { colors, sizesFor } = productOptions(product);
-  if (colors.length > 1) return null;
-  const color = colors[0] ?? "";
-  const sizes = sizesFor(color);
-  return sizes.length === 1 ? { color, size: sizes[0] } : null;
 }
 
 type Props = {
@@ -43,16 +22,18 @@ type Props = {
 
 // Pick colour and size from the product grid without opening the product page.
 export function QuickAdd({ product, onAdd, onClose }: Props) {
-  const { colors, sizesFor, stockOf } = productOptions(product);
-  const [color, setColor] = useState(colors[0] ?? "");
+  const { colors, sizesFor, inStockSizesFor, sizeState, isColorSoldOut, defaultColor, stockOf } = productOptions(product);
+  const [color, setColor] = useState(defaultColor);
   const sizes = sizesFor(color);
-  const [size, setSize] = useState(sizes.length === 1 ? sizes[0] : "");
+  const inStockSizes = inStockSizesFor(color);
+  const soldOutSizes = sizes.filter((option) => sizeState(color, option) === "sold_out");
+  const [size, setSize] = useState(inStockSizes.length === 1 ? inStockSizes[0] : "");
   const panelRef = useRef<HTMLElement>(null);
   useModal(panelRef);
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
-    panelRef.current?.querySelector<HTMLElement>("button[data-option]")?.focus({ preventScroll: true });
+    panelRef.current?.querySelector<HTMLElement>("button[data-option]:not(:disabled)")?.focus({ preventScroll: true });
     function onEscape(event: KeyboardEvent) { if (event.key === "Escape") onClose(); }
     window.addEventListener("keydown", onEscape);
     return () => {
@@ -63,13 +44,13 @@ export function QuickAdd({ product, onAdd, onClose }: Props) {
 
   function changeColor(next: string) {
     setColor(next);
-    const nextSizes = sizesFor(next);
+    const nextSizes = inStockSizesFor(next);
     setSize(nextSizes.includes(size) ? size : nextSizes.length === 1 ? nextSizes[0] : "");
   }
 
-  const canAdd = size !== "" && sizes.includes(size);
+  const canAdd = size !== "" && inStockSizes.includes(size);
   const optionClass = (active: boolean) =>
-    `min-h-11 min-w-11 rounded-lg border px-3 text-sm font-medium transition-colors ${active ? "border-[#c2412b] bg-[#fff0eb] text-[#a83826]" : "border-[#8f8a82] hover:border-[#171717]"}`;
+    `min-h-11 min-w-11 rounded-lg border px-3 text-sm font-medium transition-colors ${active ? "border-[#c2412b] bg-[#fff0eb] text-[#a83826]" : "border-[#8f8a82] hover:border-[#171717]"} disabled:cursor-not-allowed disabled:border-[#d6d1c9] disabled:bg-[#f5f3ef] disabled:text-[#8f8a82] disabled:line-through`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
@@ -91,7 +72,10 @@ export function QuickAdd({ product, onAdd, onClose }: Props) {
             <legend className="mb-2 text-sm font-semibold">Màu: <span className="font-normal">{color ? displayColor(color) : "—"}</span></legend>
             <div className="flex flex-wrap gap-2">
               {colors.map((option) => (
-                <button key={option} type="button" data-option aria-pressed={option === color} onClick={() => changeColor(option)} className={optionClass(option === color)}>{displayColor(option)}</button>
+                <button key={option} type="button" data-option aria-pressed={option === color} onClick={() => changeColor(option)} className={optionClass(option === color)}>
+                  {displayColor(option)}
+                  {isColorSoldOut(option) && <span className="ml-1 text-xs font-normal text-[#706d67]">· Hết hàng</span>}
+                </button>
               ))}
             </div>
           </fieldset>
@@ -101,12 +85,18 @@ export function QuickAdd({ product, onAdd, onClose }: Props) {
           <legend className="mb-2 text-sm font-semibold">Size{size ? `: ${size}` : ""}</legend>
           {sizes.length > 0 ? (
             <div className="flex flex-wrap gap-2">
-              {sizes.map((option) => (
-                <button key={option} type="button" data-option aria-pressed={option === size} onClick={() => setSize(option)} className={optionClass(option === size)}>{option}</button>
-              ))}
+              {sizes.map((option) => {
+                const soldOut = sizeState(color, option) === "sold_out";
+                return (
+                  <button key={option} type="button" data-option disabled={soldOut} aria-label={soldOut ? `Size ${option}, hết hàng` : undefined} title={soldOut ? "Hết hàng" : undefined} aria-pressed={option === size} onClick={() => setSize(option)} className={optionClass(option === size)}>{option}</button>
+                );
+              })}
             </div>
           ) : (
-            <p className="text-sm text-[#706d67]">Màu này đã hết size.</p>
+            <p className="text-sm text-[#706d67]">Màu này chưa có size.</p>
+          )}
+          {soldOutSizes.length > 0 && (
+            <p className="mt-2 text-xs text-[#706d67]">{inStockSizes.length > 0 ? `Hết hàng: size ${soldOutSizes.join(", ")}` : "Màu này đã hết hàng."}</p>
           )}
         </fieldset>
 
@@ -116,7 +106,7 @@ export function QuickAdd({ product, onAdd, onClose }: Props) {
           onClick={() => onAdd(cartItemFor(product, color, size), stockOf(color, size))}
           className="mt-6 inline-flex min-h-12 w-full items-center justify-center bg-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] text-white transition-colors hover:bg-[#c2412b] disabled:cursor-not-allowed disabled:bg-[#bdb8b0]"
         >
-          {canAdd ? "Thêm vào giỏ" : "Chọn size để thêm vào giỏ"}
+          {canAdd ? "Thêm vào giỏ" : inStockSizes.length === 0 ? "Màu này đã hết hàng" : "Chọn size để thêm vào giỏ"}
         </button>
       </section>
     </div>
