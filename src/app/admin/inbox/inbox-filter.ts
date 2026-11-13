@@ -1,6 +1,20 @@
 import type { Channel, ConversationMode } from "@/contract";
 import type { InboxConversation } from "./inbox-live";
 
+export const channelLabels: Record<Channel, string> = {
+  web: "Web chat",
+  messenger: "Messenger",
+  instagram: "Instagram",
+  telegram: "Telegram",
+  whatsapp: "WhatsApp",
+};
+
+// A shopper who never gave a name still needs a label staff can tell apart
+// from the next one: "Khách Messenger #3F2A" instead of a row of "Khách hàng".
+export function customerLabel(displayName: string | null | undefined, channel: Channel, conversationId: string) {
+  return displayName?.trim() || `Khách ${channelLabels[channel]} #${conversationId.slice(0, 4).toUpperCase()}`;
+}
+
 export type ModeFilter = "all" | ConversationMode;
 export type ChannelFilter = "all" | Channel;
 export type InboxFilter = { query: string; mode: ModeFilter; channel: ChannelFilter };
@@ -55,4 +69,10 @@ export function formatListTime(iso: string, now: number) {
 // Notes in brackets ("(demo 013)") and words without letters are skipped.
 export function initialOf(name: string) {
   return name.replace(/\(.*?\)/g, " ").match(/\p{L}+/gu)?.at(-1)?.charAt(0).toUpperCase() ?? "?";
+}
+
+// The avatar letter for a conversation: the given name, or the channel's
+// first letter when the shopper has no name (customerLabel made one up).
+export function avatarInitial(conversation: Pick<InboxConversation, "customerName" | "channel" | "unnamed">) {
+  return conversation.unnamed ? channelLabels[conversation.channel].charAt(0) : initialOf(conversation.customerName);
 }

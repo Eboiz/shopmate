@@ -15,7 +15,7 @@ export function TextArea({ label, error, className = "", ...props }: TextAreaPro
       <textarea
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        className={`ui-field px-3 py-2 text-base aria-invalid:border-red-600 ${className}`}
+        className={`ui-field px-3 py-2 text-base aria-invalid:border-[#b2382a] ${className}`}
         {...props}
       />
       {error && <ErrorMessage id={errorId}>{error}</ErrorMessage>}

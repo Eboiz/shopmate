@@ -1,10 +1,14 @@
 import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { createClient } from "@/lib/supabase/client";
+import { customerLabel } from "./inbox-filter";
 
-export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string };
+// staff_id is set on staff messages: who on the team wrote it.
+export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string; staff_id: string | null };
 export type InboxConversation = {
   id: string;
   customerName: string;
+  // True when the shopper gave no name and customerName is a made-up label.
+  unnamed?: boolean;
   channel: Channel;
   mode: ConversationMode;
   lastMessageAt: string;
@@ -42,7 +46,8 @@ export async function listLiveConversations(): Promise<InboxConversation[]> {
 
   return [...urgent.data, ...(other?.data ?? [])].map((conversation) => ({
     id: conversation.id,
-    customerName: conversation.shoppers.display_name?.trim() || "Khách hàng",
+    customerName: customerLabel(conversation.shoppers.display_name, conversation.shoppers.channel, conversation.id),
+    unnamed: !conversation.shoppers.display_name?.trim() || undefined,
     channel: conversation.shoppers.channel,
     mode: conversation.mode,
     lastMessageAt: conversation.last_message_at,
@@ -54,7 +59,7 @@ export async function listLiveConversations(): Promise<InboxConversation[]> {
 
 export async function listInboxMessages(conversationId: string): Promise<InboxMessage[]> {
   const { data, error } = await createClient().from("messages")
-    .select("id, sender, text, created_at")
+    .select("id, sender, text, created_at, staff_id")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -62,6 +67,14 @@ export async function listInboxMessages(conversationId: string): Promise<InboxMe
 
   if (error) throw error;
   return data.reverse();
+}
+
+// Names of the shop's team (RLS limits profiles to the signed-in user's shop),
+// so the inbox can say who is replying. A missing name stays out of the map.
+export async function listTeamNames(): Promise<Record<string, string>> {
+  const { data, error } = await createClient().from("profiles").select("id, full_name");
+  if (error) throw error;
+  return Object.fromEntries(data.flatMap(({ id, full_name }) => full_name?.trim() ? [[id, full_name.trim()]] : []));
 }
 
 export async function setLiveInboxMode(conversationId: string, mode: "ai" | "staff") {
