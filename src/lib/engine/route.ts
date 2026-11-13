@@ -11,7 +11,7 @@ import { asksForHuman, OFFER_QUESTION, offerReply, sizeOfferText, type OfferReas
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
 import { answersOrderConfirm, isOrderMessage, ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
-import { isReturnsQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
+import { asksPriceOrStock, isReturnsQuestion, isShippingQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
 import { answersPairingQuestion, ASK_PAIRING_PRODUCT_TEXT, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
 import { fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
@@ -200,14 +200,30 @@ const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_
 //  - buying words and no person asked for: an order, never asked_for_human (any
 //    word for a person keeps "human": a request for a person always wins);
 //  - "mặc không vừa thì đổi được không": the doi_tra policy, not product data.
+//  - PB-39: "phí ship bao nhiêu?": the giao_hang policy. Jev reads the earlier
+//    turns too and, after a returns talk (BOT-05, after a handback), picked
+//    doi_tra; the latest message alone decides the kind.
 function settledDecision(d: JevDecision, text: string): JevDecision {
   if (d.intent === "human" && isOrderMessage(text) && !asksForHuman(text)) return { ...d, intent: "order" };
   // Not "stock": "đổi màu khác cho mình xem" asks for other colors.
   if (["product_detail", "size", "unclear"].includes(d.intent) && isReturnsQuestion(text)) {
     return { ...d, intent: "policy", policyKind: "doi_tra" };
   }
+  if (["policy", "stock", "product_detail", "unclear"].includes(d.intent) && isShippingQuestion(text)) {
+    return { ...d, intent: "policy", policyKind: "giao_hang" };
+  }
   return d;
 }
+
+// PB-39 (BOT-01): a size question that also asks the price or the colors in
+// stock gets get_stock too, so the reply has them. null when the tool failed.
+async function stockFacts(input: RouteInput, productId: string) {
+  const r = await input.runTool("get_stock", { productId });
+  if (!r.ok) return null;
+  const stock = r.output as ToolOutput<"get_stock">;
+  return { price: stock.price, inStock: inStock(stock.variants) };
+}
+const STOCK_TASK = " Báo luôn giá (price) và các size, màu còn hàng (inStock), chép đúng như dữ liệu.";
 
 // The AI already read an order back in this conversation.
 const orderReadBack = (history: HistoryMessage[]) =>
@@ -388,12 +404,14 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
 
   if (d.intent === "size") {
     const { heightCm, weightKg } = shopperMeasurements(input.history);
+    const wantsStock = asksPriceOrStock(last);
     if (heightCm === null || weightKg === null) {
       const missing = [heightCm === null ? "chiều cao (cm)" : null, weightKg === null ? "cân nặng (kg)" : null].filter(Boolean);
+      const stock = wantsStock ? await stockFacts(input, product.id) : null;
       return {
         kind: "write",
-        facts: { product: product.name, heightCm, weightKg },
-        task: `Để tư vấn size ${product.name}, hỏi bạn ${missing.join(" và ")}. Chỉ hỏi đúng thông tin còn thiếu.`,
+        facts: { product: product.name, heightCm, weightKg, ...stock },
+        task: `Để tư vấn size ${product.name}, hỏi bạn ${missing.join(" và ")}. Chỉ hỏi đúng thông tin còn thiếu.${stock ? STOCK_TASK : ""}`,
         productIds: [product.id],
       };
     }
@@ -408,13 +426,14 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         : offer(sizeOfferText(null), "not_covered_by_data");
     }
     const differs = rec.sizeByHeight !== rec.sizeByWeight;
+    const stock = wantsStock ? await stockFacts(input, product.id) : null;
     return {
       kind: "write",
       sizeAdvice: rec,
-      facts: { product: product.name, heightCm, weightKg, ...rec },
-      task: differs
+      facts: { product: product.name, heightCm, weightKg, ...rec, ...stock },
+      task: (differs
         ? `Tư vấn size ${rec.size} cho ${product.name}. Nói ngắn lý do: theo chiều cao là ${rec.sizeByHeight}, theo cân nặng là ${rec.sizeByWeight}, nên chọn size lớn hơn để mặc thoải mái.`
-        : `Tư vấn size ${rec.size} cho ${product.name} theo chiều cao và cân nặng của bạn.`,
+        : `Tư vấn size ${rec.size} cho ${product.name} theo chiều cao và cân nặng của bạn.`) + (stock ? STOCK_TASK : ""),
       productIds: [product.id],
     };
   }

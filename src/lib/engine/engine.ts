@@ -24,6 +24,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
+import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
 import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
@@ -181,6 +182,23 @@ function withOffer(text: string): Pick<Reply, "text" | "quickReplies"> {
   return { text: asked ? t : `${t} ${OFFER_QUESTION}`, quickReplies: OFFER_QUICK_REPLIES };
 }
 
+// PB-39: the reply sent when the model said twice that data is missing while
+// this turn's tools returned it (or kept promising a later update): written from
+// the tool results with the product cards. With nothing looked up, the customer
+// is offered staff instead (PB-31).
+function missingFallback(
+  claims: readonly MissingClaim[],
+  logs: readonly ToolCallLog[],
+  sizeAdvice: SizeAdvice | null,
+  mode: EngineInput["mode"],
+): { text: string; productIds: string[]; offer: OfferReason | null } {
+  const policyKinds = claims.filter((c) => c !== "price" && c !== "stock" && c !== "promise");
+  const text = dataReplyText(logs, sizeAdvice, policyKinds.length ? policyKinds : undefined);
+  if (text) return { text, productIds: productIdsInLogs(logs), offer: null };
+  if (mode === "customer") return { text: offerTextFor("not_covered_by_data", null, false), productIds: [], offer: "not_covered_by_data" };
+  return { text: STAFF_DRAFT_GIVE_UP_TEXT, productIds: [], offer: null };
+}
+
 const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
 
 function blockedOrderRun(input: unknown, code: string, extra: object = {}): ToolRun {
@@ -279,6 +297,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
   let sizeRetried = false;
   let sizeFallback = false;
+  // PB-39 post-check: the reply claimed missing data the tools returned.
+  let missingRetried = false;
+  let missingClaims: MissingClaim[] = [];
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
   const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
@@ -483,6 +504,23 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             };
             break;
           }
+          // PB-39: "chưa có giá / chưa có thông tin" while the facts have it, or
+          // "để mình kiểm tra và cập nhật": one more try, then the data itself.
+          const claims = falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: Boolean(write.offer) });
+          if (claims.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${missingRetryNote(claims)}`;
+              continue;
+            }
+            const fb = missingFallback(claims, logs, write.sizeAdvice ?? null, mode);
+            const ids = write.productIds.length ? write.productIds : fb.productIds;
+            reply = fb.offer
+              ? offerReply(fb.text)
+              : { text: fb.text, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+            offerMade = fb.offer;
+            break;
+          }
           const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
           const echoed = mode === "customer"
             && echoedShopperAmounts(parsed.reply.text, input.history, logs.map((l) => l.output)).length > 0;
@@ -574,6 +612,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         continue;
       }
       sizeFallback = !sizeOk;
+      // PB-39: "chưa có giá" while get_stock returned one, "chưa có phí ship"
+      // while get_policy(giao_hang) did, or a promise to check and update later.
+      const claims = parsed.ok && !isMatchingQuestion(input.history)
+        ? falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: offersStaff(parsed.reply) })
+        : [];
+      if (claims.length > 0 && !missingRetried && !sizeFallback) {
+        missingRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: missingRetryNote(claims) },
+        );
+        continue;
+      }
+      missingClaims = claims;
       modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
       // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
@@ -581,7 +633,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       // shopper's own amount ("không giảm 50% được"). Still failing: the server
       // refuses when the shopper asked for a discount or a price; a discount the
       // AI offered unasked hands off (below the loop).
-      if (mode === "customer" && modelReply && !pairingState.called) {
+      if (mode === "customer" && modelReply && !pairingState.called && missingClaims.length === 0) {
         const discount = findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null;
         const echoed = echoedShopperAmounts(modelReply.text, input.history, logs.map((l) => l.output)).length > 0;
         if (discount || echoed) {
@@ -855,6 +907,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       products: await deps.store.productCards(ctx.shopId, [productId]),
       quickReplies: [],
     };
+  } else if (missingClaims.length > 0) {
+    const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice ?? null;
+    const fb = missingFallback(missingClaims, logs, advice, mode);
+    const ids = fb.productIds.length ? fb.productIds : tc.product ? [tc.product.id] : [];
+    reply = fb.offer
+      ? offerReply(fb.text)
+      : { text: fb.text, products: fb.text === STAFF_DRAFT_GIVE_UP_TEXT ? [] : await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+    offerMade = fb.offer;
   } else if (pairingState.called) {
     const cards = pairingState.items.length === 0
       ? []
