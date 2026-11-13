@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { gapsModelOutputSchema } from "./gaps";
 import { buildGapsSystemPrompt, buildLearnSystemPrompt, buildLearnUserMessage, LEARNING_PROMPT_VERSION } from "./prompt";
 
 describe("learning prompt", () => {
@@ -9,7 +10,8 @@ describe("learning prompt", () => {
 
   it("spells out the gaps JSON shape (the gateway doesn't enforce the schema)", () => {
     const prompt = buildGapsSystemPrompt();
-    expect(prompt).toContain('{"topics": [{"title", "policyKind", "refs", "draft"}]}');
+    const example = /dạng (\{.*\})\. policyKind/.exec(prompt)?.[1];
+    expect(gapsModelOutputSchema.safeParse(JSON.parse(example ?? "null")).success).toBe(true);
     expect(prompt).not.toContain("theo schema");
   });
 

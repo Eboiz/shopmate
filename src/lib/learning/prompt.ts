@@ -63,7 +63,7 @@ export function buildGapsSystemPrompt(): string {
     '- title: tên chủ đề ngắn, tối đa 80 ký tự, không có con số, ví dụ "Kiểm hàng trước khi nhận".',
     `- policyKind: loại chính sách gần nhất:\n${POLICY_KINDS}`,
     "- draft: MỘT câu chính sách để chủ shop điền. MỌI thông tin (có/không, số ngày, số tiền, điều kiện, nơi, giờ) phải là chỗ trống trong ngoặc vuông, ví dụ: Shop [có/không] cho khách kiểm hàng trước khi thanh toán. Không bao giờ viết con số, giảm giá, quà tặng hay miễn phí bên ngoài ngoặc vuông.",
-    'Trả về đúng MỘT đối tượng JSON dạng {"topics": [{"title", "policyKind", "refs", "draft"}]}. policyKind chỉ là doi_tra, giao_hang hoặc khuyen_mai. Không viết gì ngoài JSON.',
+    'Trả về đúng MỘT đối tượng JSON dạng {"topics": [{"title": "Kiểm hàng trước khi nhận", "policyKind": "giao_hang", "refs": ["q1", "q3"], "draft": "Shop [có/không] cho khách kiểm hàng trước khi thanh toán."}]}. policyKind chỉ là doi_tra, giao_hang hoặc khuyen_mai. Không có chủ đề nào thì {"topics": []}. Không viết gì ngoài JSON.',
   ].join("\n");
 }
 

@@ -159,3 +159,36 @@ describe("mentionsAmount", () => {
   });
 });
 
+describe("Codex review 14/11", () => {
+  it("needs review when another clause of the sentence holds the negation", () => {
+    const reply = "Shop không nhận trả hàng nhưng cho đổi hàng trong 7 ngày";
+    expect(ruleSupported("Shop không cho đổi hàng trong 7 ngày.", "cho đổi hàng trong 7 ngày", reply)).toBe(false);
+    expect(ruleSupported("Shop cho đổi hàng trong 7 ngày.", "cho đổi hàng trong 7 ngày", reply)).toBe(false);
+  });
+  it("checks every place the evidence appears", () => {
+    const reply = "Shop từng cho kiểm hàng trước khi nhận. Hiện shop không cho kiểm hàng trước khi nhận.";
+    expect(ruleSupported("Shop cho kiểm hàng trước khi nhận.", "cho kiểm hàng trước khi nhận", reply)).toBe(false);
+  });
+  it.each(["Còn hàng.", "50kg mặc vừa.", "Size 3XL mặc vừa.", "Size XXXL mặc vừa.", "Chất liệu cotton.", "Màu xanh.", "Size\tM mặc vừa.", "Váy  hoa giá 350k."])(
+    "finds product data in %s",
+    (rule) => expect(mentionsProductData(rule)).toBe(true),
+  );
+  it.each([
+    "Quận này giao trong ngày.",
+    "Sản phẩm phải còn nguyên form thì shop nhận đổi trả.",
+    "Ship nội thành có giá 30k.",
+    "Đơn trị giá 500k được freeship.",
+    "Đơn trên 20kg tính thêm phí ship.",
+    "Hết hàng thì shop hoàn tiền.",
+    "Áo giảm giá 50k cho khách mới.",
+    "Váy đồng giá 99k.",
+    "Shop đổi trả khi lỗi chất liệu.",
+  ])("leaves the policy %s alone", (rule) => expect(mentionsProductData(rule)).toBe(false));
+  it("finds money written in words", () => {
+    expect(mentionsAmount("Phí ship ba mươi nghìn đồng.")).toBe(true);
+    expect(mentionsAmount("Phí ship hai chục ngàn.")).toBe(true);
+    expect(mentionsAmount("Đơn từ 1tr được tặng quà.")).toBe(true);
+    expect(mentionsAmount("Shop đóng gói cẩn thận, giao trong mười ngày.")).toBe(false);
+  });
+});
+

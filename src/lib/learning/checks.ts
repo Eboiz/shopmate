@@ -38,18 +38,20 @@ export function evidenceInReply(evidence: string, staffReply: string): boolean {
 // A sentence ends at . ! ? … followed by a space or the end ("500.000đ" doesn't).
 const SENTENCE_END = /[.!?…](?=\s|$)/g;
 
-// The staff's whole sentences that hold the evidence: the model may quote
-// "cho kiểm hàng" out of "shop không cho kiểm hàng". The evidence itself when
-// it isn't found.
-export function evidenceSentences(evidence: string, staffReply: string): string {
+// The staff's whole sentences that hold the evidence, at every place it
+// appears: the model may quote "cho kiểm hàng" out of "shop không cho kiểm
+// hàng". The evidence itself when it isn't found.
+export function evidenceSentences(evidence: string, staffReply: string): string[] {
   const needle = needleOf(evidence);
   const hay = squash(staffReply);
-  const at = needle ? hay.indexOf(needle) : -1;
-  if (at < 0) return evidence;
   const ends = [...hay.matchAll(SENTENCE_END)].map((m) => m.index + 1);
-  const start = Math.max(0, ...ends.filter((e) => e <= at));
-  const end = ends.find((e) => e >= at + needle.length) ?? hay.length;
-  return hay.slice(start, end);
+  const out: string[] = [];
+  for (let at = needle ? hay.indexOf(needle) : -1; at >= 0; at = hay.indexOf(needle, at + 1)) {
+    const start = Math.max(0, ...ends.filter((e) => e <= at));
+    const end = ends.find((e) => e >= at + needle.length) ?? hay.length;
+    out.push(hay.slice(start, end));
+  }
+  return out.length > 0 ? out : [evidence];
 }
 
 // Folded markers of an answer meant for this order or this shopper only:
@@ -118,11 +120,15 @@ const NEUTRAL = new Set(["shop", "hang", "khach", "duoc", "se", "la", "va", "cho
 // Share of the rule's other words the staff reply must hold.
 const MIN_COVERAGE = 0.75;
 
-// True when the rule keeps the negation (or its absence) of the staff's
-// sentence holding the evidence, and most of its words come from the staff
-// reply. A rewrite that fails needs the owner.
+// True when the rule keeps the evidence's negation (or its absence), every
+// staff sentence holding the evidence agrees with it, and most of the rule's
+// words come from the staff reply. A negation elsewhere in the sentence ("không
+// nhận trả hàng nhưng cho đổi") leaves its scope unclear: the owner decides.
 export function ruleSupported(rule: string, evidence: string, staffReply: string): boolean {
-  if (NEGATION.test(fold(rule)) !== NEGATION.test(fold(evidenceSentences(evidence, staffReply)))) return false;
+  const negated = (text: string) => NEGATION.test(fold(text));
+  const evidenceNegated = negated(evidence);
+  if (negated(rule) !== evidenceNegated) return false;
+  if (evidenceSentences(evidence, staffReply).some((sentence) => negated(sentence) !== evidenceNegated)) return false;
   const words = [...tokens(rule)].filter((w) => !NEUTRAL.has(w));
   if (words.length === 0) return false;
   const staff = tokens(staffReply);
@@ -132,44 +138,54 @@ export function ruleSupported(rule: string, evidence: string, staffReply: string
 // Facts only the catalog tools may state (prompt: price, stock and size come
 // from tools): stock, a size or a body measurement, a product's price or
 // details. Matched on folded text with comparable numbers, so the words are
-// picked to avoid their unaccented twins ("đảm bảo", "đẹp", "chất lượng"). A
-// general policy ("đổi size trong 7 ngày", "hết size thì hoàn tiền", "áo lỗi
-// chất lượng được đổi", "đơn trên 10kg") doesn't match.
-const SIZE = "(?:xxxl|xxl|xl|xs|s|m|l|\\d{1,2})";
+// picked to avoid their unaccented twins ("đảm bảo", "đẹp", "chất lượng",
+// "quận"). A general policy ("đổi size trong 7 ngày", "hết hàng thì hoàn tiền",
+// "còn nguyên form", "đơn trên 20kg", "ship có giá 30k") doesn't match; its
+// amounts are left to mentionsAmount.
+const SIZE = "(?:\\d?x{0,3}l|xs|s|m|\\d{1,2})";
 const COLOR = "(?:den|trang|do|xanh|vang|hong|tim|nau|be|kem|xam)";
 const PRODUCT = "(?:ao|vay|dam(?! bao)|quan|chan vay|set|giay|tui|mau|san pham)";
 const PRODUCT_DATA = new RegExp(
   [
-    // Stock: "còn 3 cái", "chỉ còn 1", "còn size S", "hết màu đen", "tồn kho".
+    // Stock: "còn hàng", "còn 3 cái", "chỉ còn 1", "còn size S", "hết màu đen".
+    "\\bcon hang\\b",
     "\\bcon (?:\\d+|mot|hai|ba|vai|it) (?:cai|chiec|bo|sp|san pham)\\b",
     "\\bchi con \\d",
     `\\b(?:con|het) size ${SIZE}\\b`,
     `\\b(?:con|het) mau ${COLOR}\\b`,
     "\\bton kho\\b",
-    // A size or a body measurement: "size M", "1m60", "eo 68", "vòng 1 86".
+    // A size or a body measurement: "size M", "size 3XL", "1m60", "50kg mặc",
+    // "eo 68", "vòng 1 86". A weight after "trên"/"dưới" is a parcel's.
     `\\bsize ${SIZE}\\b`,
-    "(?<![\\d.,])1\\s?m\\s?\\d{1,2}\\b",
+    "(?<![\\d.,])1 ?m ?\\d{1,2}\\b",
+    "(?<!(?:tren|duoi|qua|toi da|hon) )\\b\\d{2,3} ?(?:kg|ky|ki|can)\\b",
     "\\b(?:cao|eo|nguc|mong) \\d{2,3}\\b",
     "\\bvong [1-3] \\d{2,3}\\b",
-    // A product's price: "váy hoa giá 350k", "giá là 199000"; not "giảm giá 50k"
-    // (an offer, checked as one) or "đồng giá".
-    "(?<!giam |dong )\\bgia (?:la |chi |con |ban |goc |sale )?\\d",
-    // A product's details: "váy hoa chất voan", "áo này form rộng", "váy màu đỏ".
-    `\\b${PRODUCT} (?:nay|do|kia)\\b`,
-    `\\b${PRODUCT}\\b(?: \\S+){0,3} (?:chat(?! luong)(?: lieu| vai)?|lam bang|form|dang (?:rong|om|suong|ngan|dai)|mau ${COLOR})\\b`,
+    // A product's price: "váy hoa giá 350k", "giá bán 199000"; not "áo giảm
+    // giá 50k" or "đồng giá" (offers, checked as such).
+    `\\b${PRODUCT}\\b(?: \\S+){0,3} (?:co )?(?<!giam |dong )gia (?:la |chi |con |ban |goc |sale )?\\d`,
+    "\\bgia (?:ban|goc|niem yet) \\d",
+    // A product's details: "váy hoa chất voan", "chất liệu cotton", "màu xanh",
+    // "áo này form rộng".
+    "(?<!loi )\\bchat lieu\\b",
+    `\\bmau ${COLOR}\\b`,
+    `\\b(?:ao|vay|dam(?! bao)|mau|san pham) (?:nay|do|kia)\\b`,
+    `\\b${PRODUCT}\\b(?: \\S+){0,3} (?:chat(?! luong)(?: vai)?|lam bang|form (?:rong|om|suong|chuan|nho|to)|dang (?:rong|om|suong|ngan|dai))\\b`,
   ].join("|"),
 );
 
+// Folded, comparable numbers, single spaces: "Size\tM" is "size m".
+const flat = (text: string) => prepare(text).replace(/\s+/g, " ");
+
 export function mentionsProductData(rule: string): boolean {
-  return PRODUCT_DATA.test(prepare(rule));
+  return PRODUCT_DATA.test(flat(rule));
 }
 
-// A money amount: "30k", "25.000đ", "20 nghìn", "1 triệu", or a plain number of
-// 1000 or more. Ship fees and the like: the owner checks them.
-const MONEY = /\b\d+\s*(?:d|dong|vnd|nghin|ngan|trieu|tr)\b/;
+// A money amount: "30k", "25.000đ", "20 nghìn", "ba mươi nghìn đồng", "1 triệu",
+// or a plain number of 1000 or more. Ship fees and the like: the owner checks
+// them. "đóng gói" and "mười ngày" are not amounts.
+const MONEY = /\b\d+ ?(?:d|dong|vnd|tr)\b|\b(?:nghin|ngan|trieu)\b|\b(?:muoi|tram|lam|chuc) dong\b/;
 
 export function mentionsAmount(rule: string): boolean {
-  const text = prepare(rule);
-  return MONEY.test(text) || [...comparableNumbers(rule)].some((n) => Number(n) >= 1000);
+  return MONEY.test(flat(rule)) || [...comparableNumbers(rule)].some((n) => Number(n) >= 1000);
 }
-
