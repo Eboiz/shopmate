@@ -314,6 +314,22 @@ describe("runEngine with Jev routing", () => {
       expect(result.output.reply.text).not.toContain("7 ngày");
     });
 
+    it("a promised update on a policy that doesn't cover the question keeps the route's staff offer", async () => {
+      // Codex 14/11: the PB-39 fallback used to drop the router's policy_not_covered offer.
+      const s = setup(jevSaying({
+        intent: { type: "choice", choice: "policy", confidence: 0.9 },
+        policy_kind: { type: "choice", choice: "giao_hang" },
+        policy_answers: { type: "noul", noul: 0.1 },
+      }), [reply("Dạ để mình kiểm tra và cập nhật cho bạn nhé"), reply("Dạ mình xem lại rồi báo bạn sau nhé")]);
+      s.handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: "Phí ship đồng giá 30.000đ cho mọi đơn." } as never);
+      const result = await s.run(input("chủ nhật shop có giao không?"));
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain("30.000đ");
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      await result.turnLogged;
+      expect(s.store.insertTurn.mock.calls[0][0].handoff_offer).toBe("policy_not_covered");
+    });
+
     it("a promised update with nothing looked up: one retry, then the staff offer (not_covered_by_data)", async () => {
       const greeting = jevSaying({ intent: { type: "choice", choice: "greeting", confidence: 0.99 } });
       const s = setup(greeting, [reply("Dạ để mình kiểm tra và cập nhật cho bạn nhé"), reply("Dạ mình xem lại rồi báo bạn sau nhé")]);

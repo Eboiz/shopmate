@@ -150,8 +150,9 @@ export type EngineResult = {
   // The ai_turns row id as soon as the row is written (turnLogged also waits
   // for the metrics sink); null when the write failed. Never rejects.
   turnRow: Promise<string | null>;
-  // The create_draft_order RPC ran this turn, so its reply says what happened
-  // to that order: the channel sends it even when the shopper has written again
+  // The create_draft_order RPC ran this turn, or the order already written under
+  // the confirmed quote was found, so its reply says what happened to that
+  // order: the channel sends it even when the shopper has written again
   // meanwhile, or staff took over (receive.ts, R3).
   orderWritten: boolean;
 };
@@ -704,7 +705,11 @@ ${missingRetryNote(claims)}`;
             reply = fb.offer
               ? offerReply(fb.text)
               : { text: fb.text, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
-            offerMade = fb.offer;
+            // The route's own offer (a policy that doesn't cover the question)
+            // stays: the data alone doesn't answer it.
+            const routeOffer = !fb.offer && mode === "customer" ? write.offer ?? null : null;
+            if (routeOffer) reply = { ...reply, ...withOffer(reply.text) };
+            offerMade = fb.offer ?? routeOffer;
             break;
           }
           const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
@@ -997,6 +1002,8 @@ ${missingRetryNote(claims)}`;
             const existing = await existingOrder(false);
             if (existing) {
               orderIssue = null;
+              // The shopper must hear about this order like a fresh write (R3).
+              orderWritten = true;
               return { run: existing, ms: now() - s0, startMs: s0 - t0 };
             }
             return { run: blockedOrderRun(u.input, "quote_unavailable"), ms: now() - s0, startMs: s0 - t0 };
@@ -1005,7 +1012,10 @@ ${missingRetryNote(claims)}`;
             // A concurrent turn may already have written this quote: its order
             // stands, the shopper is not asked to confirm a re-quote of it.
             const existing = await existingOrder(true);
-            if (existing) return { run: existing, ms: now() - s0, startMs: s0 - t0 };
+            if (existing) {
+              orderWritten = true;
+              return { run: existing, ms: now() - s0, startMs: s0 - t0 };
+            }
             currentQuote = freshQuote;
             orderIssue = { code: "quote_changed" };
             return { run: blockedOrderRun(u.input, "quote_changed"), ms: now() - s0, startMs: s0 - t0 };

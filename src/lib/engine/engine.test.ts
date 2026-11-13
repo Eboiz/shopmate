@@ -434,6 +434,8 @@ describe("runEngine", () => {
       expect(orderForQuote).toHaveBeenCalledWith(expect.objectContaining({ shopId: SHOP_A }), "turn-1", true);
       expect(handlers.create_draft_order).not.toHaveBeenCalled();
       expect(result.output.reply.text).toBe(orderCreatedText());
+      // The recovered order's outcome is delivered like a fresh write (receive.ts R3).
+      expect(result.orderWritten).toBe(true);
     });
 
     it("an unreadable re-quote with no order under the key writes nothing and says so", async () => {
@@ -457,6 +459,7 @@ describe("runEngine", () => {
       const result = await run(customerInput({ history: orderHistory }));
       expect(handlers.create_draft_order).not.toHaveBeenCalled();
       expect(result.output.reply.text).toBe(orderCreatedText());
+      expect(result.orderWritten).toBe(true);
     });
 
     it("passes the confirmed quote's turn id and prices to create_draft_order", async () => {
