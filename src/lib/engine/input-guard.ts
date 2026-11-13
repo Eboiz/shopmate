@@ -107,3 +107,18 @@ export async function checkShopperMessage(
     cost: typeof response.usage?.cost === "number" ? response.usage.cost : null,
   };
 }
+
+// The history without the exchanges the guard refused: each GUARD_REFUSAL_TEXT
+// reply and the shopper messages it answered (those after the AI message before
+// it). Abuse and harmful requests are handed off, so only refusals are dropped.
+export function withoutRefusedExchanges(history: HistoryMessage[]): HistoryMessage[] {
+  const out: HistoryMessage[] = [];
+  for (const message of history) {
+    if (message.sender === "ai" && message.text === GUARD_REFUSAL_TEXT) {
+      while (out.length > 0 && out.at(-1)!.sender === "shopper") out.pop();
+      continue;
+    }
+    out.push(message);
+  }
+  return out;
+}

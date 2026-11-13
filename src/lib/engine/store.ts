@@ -73,6 +73,9 @@ export function createSupabaseStore(db: Db): EngineStore {
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
+      // A turn the input guard refused changes nothing: the turn before it
+      // decides (an order's quote, a staff offer), see engine.ts.
+      .is("postcheck->>guardRefused", null)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
