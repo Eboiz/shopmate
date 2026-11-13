@@ -21,14 +21,19 @@ import { executeTool, type ToolRun } from "./execute-tool";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
-import { checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
+import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
+import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
+import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
+import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
-import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
-import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
+import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
+import { ASK_PAIRING_PRODUCT_TEXT, isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
-import { routeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { isCatalogQuestion, productCoveringMessage } from "./product-match";
+import { catalogOverview, groupListing, isGroupName, routeTurn, unsoldSizeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { missedMentions, mustMentionNote, sizesNamedIn } from "./size-request";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -46,6 +51,8 @@ export const NO_SIZE_CHART_HANDOFF_TEXT = `Dạ, sản phẩm này shop chưa c�
 export const PRODUCT_NOT_FOUND_HANDOFF_TEXT = `Dạ, mình vẫn chưa tìm thấy sản phẩm bạn hỏi trong shop. ${HANDOFF_SUFFIX}`;
 
 type SizeStatus = "out_of_range" | "no_chart" | null;
+// PB-31: an out_of_range result of recommend_size, for the server's size text.
+type SizeOut = { nearestSize: string; offCm: number; offKg: number; belowChart?: boolean };
 
 // The shopper is told why, not just that staff will answer. A size handoff says the
 // measurements are outside the chart, or that the product has no chart.
@@ -159,6 +166,40 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
 const lastShopperText = (history: EngineInput["history"]) =>
   history.findLast((message) => message.sender === "shopper")?.text ?? "";
 
+const isOfferReason = (reason: unknown): reason is OfferReason => (OFFER_REASONS as readonly unknown[]).includes(reason);
+
+// PB-31: the model wanted to hand off for a reason that now gets an offer first.
+function offerTextFor(reason: OfferReason, sizeOut: SizeOut | null, noChart: boolean): string {
+  if (reason === "size_out_of_range" || noChart) return sizeOfferText(noChart ? null : sizeOut);
+  if (reason === "policy_not_covered") return `Dạ, chính sách của shop chưa nói tới điều bạn hỏi nên mình chưa trả lời chắc chắn được. ${OFFER_QUESTION}`;
+  return `Dạ, shop chưa có thông tin này nên mình chưa trả lời chắc chắn được. ${OFFER_QUESTION}`;
+}
+
+// The reply ends with the offer question and carries the yes/no buttons.
+function withOffer(text: string): Pick<Reply, "text" | "quickReplies"> {
+  const t = text.trim();
+  // The model may write the question itself, mid-sentence or in lower case.
+  const asked = t.toLocaleLowerCase("vi").includes(OFFER_QUESTION.toLocaleLowerCase("vi"));
+  return { text: asked ? t : `${t} ${OFFER_QUESTION}`, quickReplies: OFFER_QUICK_REPLIES };
+}
+
+// PB-39: the reply sent when the model said twice that data is missing while
+// this turn's tools returned it (or kept promising a later update): written from
+// the tool results with the product cards. With nothing looked up, the customer
+// is offered staff instead (PB-31).
+function missingFallback(
+  claims: readonly MissingClaim[],
+  logs: readonly ToolCallLog[],
+  sizeAdvice: SizeAdvice | null,
+  mode: EngineInput["mode"],
+): { text: string; productIds: string[]; offer: OfferReason | null } {
+  const policyKinds = claims.filter((c) => c !== "price" && c !== "stock" && c !== "promise");
+  const text = dataReplyText(logs, sizeAdvice, policyKinds.length ? policyKinds : undefined);
+  if (text) return { text, productIds: productIdsInLogs(logs), offer: null };
+  if (mode === "customer") return { text: offerTextFor("not_covered_by_data", null, false), productIds: [], offer: "not_covered_by_data" };
+  return { text: STAFF_DRAFT_GIVE_UP_TEXT, productIds: [], offer: null };
+}
+
 const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
 
 function blockedOrderRun(input: unknown, code: string, extra: object = {}): ToolRun {
@@ -167,6 +208,32 @@ function blockedOrderRun(input: unknown, code: string, extra: object = {}): Tool
     content: JSON.stringify({ error: code, ...extra }),
     isError: true,
   };
+}
+
+// PB-40: the last step on every path. Cards keep to the shopper's budget,
+// excluded garments and count ("có 300 nghìn, không thích váy, gợi ý 2 món");
+// a customer's buttons don't push another size than the one they asked for
+// when this turn looked up stock (BOT-02).
+async function keepToShopper(
+  reply: Reply,
+  text: string,
+  opts: { mode: EngineInput["mode"]; shopperSize: string | null; stockSizes: Set<string>; categories: () => Promise<CatalogItem[]> },
+): Promise<Reply> {
+  let out = reply;
+  const constraints = shopperConstraints(text);
+  if (out.products.length > 0 && hasConstraints(constraints)) {
+    const category = constraints.excludeGroups.length > 0
+      ? new Map((await opts.categories().catch(() => [])).map((p) => [p.id, p.category]))
+      : new Map<string, string | null>();
+    const kept = new Set(
+      fitConstraints(out.products.map((c) => ({ ...c, category: category.get(c.productId) ?? null })), constraints).map((c) => c.productId),
+    );
+    out = { ...out, products: out.products.filter((c) => kept.has(c.productId)) };
+  }
+  if (opts.mode === "customer" && opts.stockSizes.size > 0) {
+    out = { ...out, quickReplies: dropOtherSizeReplies(out.quickReplies, opts.shopperSize, opts.stockSizes) };
+  }
+  return out;
 }
 
 export async function runEngine(rawInput: EngineInput, partialDeps: Partial<EngineDeps> = {}): Promise<EngineResult> {
@@ -222,11 +289,18 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let handoff: HandoffReason | null = null;
   let truncated = false;
   let sizeStatus: SizeStatus = null;
+  // PB-31: the last out_of_range result of this turn (nearest size, distance).
+  let sizeOut: SizeOut | null = null;
+  // PB-31: this turn offered staff for this reason instead of handing off.
+  let offerMade: OfferReason | null = null;
   // PB-06 post-check: the last ok recommend_size result of this turn, the product
   // it was for, and whether the model already got its one retry.
   let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
   let sizeRetried = false;
   let sizeFallback = false;
+  // PB-39 post-check: the reply claimed missing data the tools returned.
+  let missingRetried = false;
+  let missingClaims: MissingClaim[] = [];
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
   const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
@@ -239,6 +313,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
+  // PB-31: the model's handoff was sent back once (handoffCorrection).
+  let handoffCorrected = false;
   // PB-17: the reply still failed the discount or echo check after one retry and
   // the shopper was asking for a discount or a price: the server refuses instead.
   let refusalFallback = false;
@@ -255,17 +331,62 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // PB-11: an order in progress (the last turn read back a quote) stays in the
   // tool loop, so "ok" / "đồng ý" is never routed as a greeting or unclear turn.
   const orderInProgress = mode === "customer" && (tc.previousQuote ?? null) !== null;
+  const runTool: ToolRunner = async (name, toolInput) => {
+    calls += 1;
+    const s0 = now();
+    const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
+    if (run.log) logs.push(run.log);
+    toolMetrics.push({ name, startMs: s0 - t0, ms: now() - s0, outcome: toolOutcome(run) });
+    seen.push({ name, input: toolInput });
+    return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
+  };
+
+  // PB-31: the last turn offered staff. A short "yes" hands off with the reason the
+  // offer was made for; a short "no" is acknowledged. Anything else is a new
+  // question and runs as usual.
+  let offerAccepted = false;
+  const offered = mode === "customer" && !orderInProgress ? tc.previousHandoffOffer ?? null : null;
+  const answer = offered ? offerAnswer(lastShopperText(input.history)) : null;
+  if (offered && answer === "yes") {
+    const r = await runTool("handoff_to_staff", { reason: offered });
+    routed = { kind: "handoff", reason: offered, sizeStatus: null, viaTool: r.ok };
+    offerAccepted = true;
+    route = { path: "offer_answer" };
+  } else if (offered && answer === "no") {
+    routed = { kind: "fixed", reply: { text: OFFER_DECLINED_TEXT, products: [], quickReplies: [] } };
+    route = { path: "offer_answer" };
+  }
+
+  const lastText = lastShopperText(input.history);
+  // PB-14: a complaint hands off at once, decided by the server like PB-20 does
+  // for staff drafts. The model can't skip it (seen in the PB-17 eval: a complaint
+  // with a trick in it was refused as a trick and never handed off).
+  if (!routed && mode === "customer" && isComplaint(lastText)) {
+    const r = await runTool("handoff_to_staff", { reason: "complaint" });
+    routed = { kind: "handoff", reason: "complaint", sizeStatus: null, viaTool: r.ok };
+    route = { path: "complaint" };
+  }
+
+  // PB-31: "shop có gì", "bên mình có những sản phẩm gì": the shop's groups with a
+  // few products each, from the catalog, on both paths (never a misunderstood turn).
+  // A tapped group button ("Áo") lists that group's products with their cards.
+  // A complaint or a request for a person is never answered this way (PB-14).
+  const catalogTurn = isCatalogQuestion(lastText) || isGroupName(lastText);
+  if (!routed && !orderInProgress && deps.store.catalog && catalogTurn && !isComplaint(lastText) && !asksForHuman(lastText)) {
+    const catalog = await deps.store.catalog(ctx.shopId);
+    const listing = groupListing(catalog, lastText);
+    const overview = listing || !isCatalogQuestion(lastText) ? null : catalogOverview(catalog);
+    if (listing) {
+      const { productIds, ...rest } = listing;
+      routed = { kind: "fixed", reply: { ...rest, products: await deps.store.productCards(ctx.shopId, productIds) } };
+    } else if (overview) {
+      routed = { kind: "fixed", reply: overview };
+    }
+    if (routed) route = { path: "catalog" };
+  }
+
   if (deps.jev && orderInProgress) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
-  if (deps.jev && !orderInProgress) {
-    const runTool: ToolRunner = async (name, toolInput) => {
-      calls += 1;
-      const s0 = now();
-      const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
-      if (run.log) logs.push(run.log);
-      toolMetrics.push({ name, startMs: s0 - t0, ms: now() - s0, outcome: toolOutcome(run) });
-      seen.push({ name, input: toolInput });
-      return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
-    };
+  if (deps.jev && !orderInProgress && !routed) {
     try {
       const catalog: CatalogItem[] = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
       const decision = await decideTurn(deps.jev, { history: input.history, viewing: tc.product, catalog, now });
@@ -288,6 +409,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         runTool,
         cards: (ids) => deps.store.productCards(ctx.shopId, ids),
         policyCovers: (policy) => checkPolicyCovers(deps.jev!, { history: input.history, policy }),
+        descriptionCovers: (product, description) =>
+          checkDescriptionCovers(deps.jev!, { history: input.history, product, description }),
       });
       if (routed.kind === "fallback") {
         route = { ...route, path: "llm_loop", fallbackReason: routed.reason };
@@ -300,6 +423,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
   }
 
+  // PB-45: without Jev (or when it failed) a size the product or the shop doesn't
+  // sell is still answered by the server, not by the tool loop. routeTurn does
+  // the same check with Jev's product.
+  const jevSkipped = !deps.jev || route.fallbackReason === "jev_error";
+  if (!routed && jevSkipped && !orderInProgress && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
+    const catalog = await deps.store.catalog(ctx.shopId);
+    const product = catalog.find((p) => p.id === tc.product?.id) ?? productCoveringMessage(lastText, catalog);
+    routed = await unsoldSizeTurn(
+      { mode, history: input.history, catalog, runTool, cards: (ids) => deps.store.productCards(ctx.shopId, ids) },
+      product,
+    );
+    if (routed) route = { path: "size_guard" };
+  }
+
   if (routed) {
     switch (routed.kind) {
       case "handoff":
@@ -307,7 +444,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         sizeStatus = routed.sizeStatus;
         // handoff_to_staff moved the conversation already, unless it failed.
         if (!routed.viaTool) await deps.store.setNeedsHuman(ctx);
-        reply = { text: handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
+        reply = { text: offerAccepted ? HANDOFF_TEXT : handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
         break;
       case "personal":
         personalReplyNeeded = true;
@@ -315,6 +452,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         break;
       case "fixed":
         reply = routed.reply;
+        offerMade = routed.offer ?? null;
         break;
       case "write": {
         // Same post-checks as the tool loop: an unreadable reply, a size other
@@ -381,6 +519,39 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             };
             break;
           }
+          // PB-45: every color in stock must be named ("Còn màu nào khác?"):
+          // one more try, then the reply written from get_stock.
+          const missed = missedMentions(parsed.reply.text, write.mustMention ?? []);
+          if (missed.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${mustMentionNote(missed)}`;
+              continue;
+            }
+            reply = {
+              text: dataReplyText(logs, null) ?? FALLBACK_TEXT,
+              products: await deps.store.productCards(ctx.shopId, write.productIds),
+              quickReplies: [],
+            };
+            break;
+          }
+          // PB-39: "chưa có giá / chưa có thông tin" while the facts have it, or
+          // "để mình kiểm tra và cập nhật": one more try, then the data itself.
+          const claims = falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: Boolean(write.offer) });
+          if (claims.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${missingRetryNote(claims)}`;
+              continue;
+            }
+            const fb = missingFallback(claims, logs, write.sizeAdvice ?? null, mode);
+            const ids = write.productIds.length ? write.productIds : fb.productIds;
+            reply = fb.offer
+              ? offerReply(fb.text)
+              : { text: fb.text, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+            offerMade = fb.offer;
+            break;
+          }
           const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
           const echoed = mode === "customer"
             && echoedShopperAmounts(parsed.reply.text, input.history, logs.map((l) => l.output)).length > 0;
@@ -399,12 +570,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             break;
           }
           finalFirstTokenAt = firstTokenAt;
-          // Cards are the server's choice (graded by PB-10), never the model's ids.
+          // Cards are the server's choice (graded by PB-10), never the model's ids;
+          // so are the buttons when the route chose them (PB-31).
           reply = {
             text: parsed.reply.text,
             products: await deps.store.productCards(ctx.shopId, write.productIds),
-            quickReplies: parsed.reply.quickReplies,
+            quickReplies: write.quickReplies ?? parsed.reply.quickReplies,
           };
+          if (write.offer && mode === "customer") {
+            reply = { ...reply, ...withOffer(reply.text) };
+            offerMade = write.offer;
+          }
           break;
         }
         break;
@@ -467,6 +643,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         continue;
       }
       sizeFallback = !sizeOk;
+      // PB-39: "chưa có giá" while get_stock returned one, "chưa có phí ship"
+      // while get_policy(giao_hang) did, or a promise to check and update later.
+      const claims = parsed.ok && !isMatchingQuestion(input.history)
+        ? falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: offersStaff(parsed.reply) })
+        : [];
+      if (claims.length > 0 && !missingRetried && !sizeFallback) {
+        missingRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: missingRetryNote(claims) },
+        );
+        continue;
+      }
+      missingClaims = claims;
       modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
       // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
@@ -474,7 +664,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       // shopper's own amount ("không giảm 50% được"). Still failing: the server
       // refuses when the shopper asked for a discount or a price; a discount the
       // AI offered unasked hands off (below the loop).
-      if (mode === "customer" && modelReply && !pairingState.called) {
+      if (mode === "customer" && modelReply && !pairingState.called && missingClaims.length === 0) {
         const discount = findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null;
         const echoed = echoedShopperAmounts(modelReply.text, input.history, logs.map((l) => l.output)).length > 0;
         if (discount || echoed) {
@@ -494,6 +684,26 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
 
     const uses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    // PB-31: a handoff this turn doesn't support (an order read as asked_for_human,
+    // a returns question before get_policy, product_not_found with close products)
+    // is sent back to the model once with what to do instead.
+    const handoffUse = mode === "customer" && !handoffCorrected ? uses.find((u) => u.name === "handoff_to_staff") : undefined;
+    const correction = handoffUse
+      ? handoffCorrection((handoffUse.input as { reason?: unknown } | null)?.reason, lastShopperText(input.history), logs)
+      : null;
+    if (correction) handoffCorrected = true;
+    // PB-31: a handoff for missing data, an unwritten policy or a size outside
+    // the chart becomes an offer; nothing in this batch runs.
+    const softHandoff = mode === "customer" && !correction
+      ? uses.find((u) => u.name === "handoff_to_staff" && isOfferReason((u.input as { reason?: unknown } | null)?.reason))
+      : undefined;
+    if (softHandoff) {
+      const reason = (softHandoff.input as { reason: OfferReason }).reason;
+      // The reason comes from this turn only: a size reason with no size result
+      // this turn (left over from an earlier turn) is missing data.
+      offerMade = reason === "size_out_of_range" && (sizeStatus as SizeStatus) === null ? "not_covered_by_data" : reason;
+      break;
+    }
     // None of the batch runs when it would go over the limit.
     if (calls + uses.length > MAX_TOOL_CALLS) {
       handoff = "too_many_tool_calls";
@@ -504,7 +714,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
     const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
       const s0 = now();
+      if (u === handoffUse && correction) {
+        const run: ToolRun = {
+          log: { name: "handoff_to_staff", input: u.input, error: "handoff_not_needed" },
+          content: JSON.stringify({ error: "handoff_not_needed", note: correction }),
+          isError: true,
+        };
+        return { run, ms: now() - s0, startMs: s0 - t0 };
+      }
       if (u.name === "create_draft_order" && mode === "customer") {
+        // The shopper confirms the quoted items, so those are written: the model
+        // only supplies the contact details (it once typed an invented variant id).
+        if (previousQuote && u.input && typeof u.input === "object") {
+          u = { ...u, input: { ...u.input, items: previousQuote.items } };
+        }
         const issue = orderWriteError(u.input, input.history, previousQuote);
         if (issue) {
           orderIssue = issue;
@@ -514,7 +737,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
           orderIssue = { code: "duplicate_order_call" };
           return { run: blockedOrderRun(u.input, "duplicate_order_call"), ms: now() - s0, startMs: s0 - t0 };
         }
-        createAttempted = true;
+        // A call the contract rejects writes nothing, so it doesn't count as the
+        // turn's one order write (preview 11/11: an invalid id blocked the right call).
+        createAttempted = tools.create_draft_order.input.safeParse(u.input).success;
         const candidate = u.input as { customerPhone?: unknown } | null;
         if (typeof candidate?.customerPhone === "string" && !/^0\d{9}$/.test(candidate.customerPhone)) {
           orderIssue = { code: "invalid_phone" };
@@ -559,7 +784,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       seen.push({ name: u.name, input: u.input });
       if (u.name === "recommend_size" && !run.isError) {
         sizeStatus = sizeStatusOf(run.content);
-        const out = run.log?.output as { status?: string } | undefined;
+        const out = run.log?.output as { status?: string; nearestSize?: string; offCm?: number; offKg?: number; belowChart?: boolean } | undefined;
+        if (out?.status === "out_of_range" && out.nearestSize !== undefined) {
+          sizeOut = { nearestSize: out.nearestSize, offCm: out.offCm ?? 0, offKg: out.offKg ?? 0, belowChart: out.belowChart };
+        }
         const productId = (run.log?.input as { productId?: string } | undefined)?.productId;
         if (out?.status === "ok" && productId) sizeAdvice = { advice: out as SizeAdvice, productId };
       }
@@ -609,12 +837,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (productMissedTwice) handoff = "misunderstood_twice";
   else if (discountBlocked) handoff = "postcheck_failed";
 
-  // PB-06 AC4: measurements outside the chart, or a product with no chart, always
-  // end in a handoff, even when the model answered instead of calling
-  // handoff_to_staff. (sizeStatus is set inside a callback; TS can't see it.)
+  // PB-06 AC4, soft since PB-31: measurements outside the chart, or a product with
+  // no chart, always end in the server's size text offering staff, even when the
+  // model answered with a size. (sizeStatus is set inside a callback; TS can't see it.)
   const finalSizeStatus = sizeStatus as SizeStatus;
-  const sizeHandoff = mode === "customer" && !handoff && finalSizeStatus !== null;
-  if (sizeHandoff) handoff = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
+  const finalSizeOut = sizeOut as SizeOut | null;
+  if (mode === "customer" && !handoff && !productMissedTwice && finalSizeStatus !== null) {
+    offerMade = finalSizeStatus === "no_chart" ? "not_covered_by_data" : "size_out_of_range";
+  }
 
   // A matching question must not depend on the model remembering the tool. If
   // it forgot, query the product the shopper is viewing on the server. Without
@@ -639,10 +869,14 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const finalOrderResult = orderResult as ToolOutput<"create_draft_order"> | null;
   const finalQuote = currentQuote as PendingQuote | null;
   const finalOrderIssue = orderIssue as { code: string; missing?: string[] } | null;
-  if (handoff && mode === "customer") {
+  const finalOffer = offerMade as OfferReason | null;
+  if (!handoff && finalOffer && mode === "customer" && (finalSizeStatus !== null || !modelReply || !offersStaff(modelReply))) {
+    // A size outside the chart, or a handoff the model asked for: the server's text.
+    reply = offerReply(offerTextFor(finalOffer, finalSizeOut, finalSizeStatus === "no_chart"));
+  } else if (handoff && mode === "customer") {
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
-    if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice || sizeHandoff) await deps.store.setNeedsHuman(ctx);
+    if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
     const text = productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
       : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
@@ -684,7 +918,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
     const summary = orderSummary(finalQuote.quote, shippingPolicy);
     quotedOrderPresented = summary !== null;
-    reply = { text: summary ?? "Đơn có quá nhiều món để đọc lại trong một tin. Bạn chia thành các đơn nhỏ hơn giúp mình nhé.", products: [], quickReplies: [] };
+    reply = { text: summary ?? "Đơn có quá nhiều món để đọc lại trong một tin. Bạn chia thành các đơn nhỏ hơn giúp mình nhé.", products: [], quickReplies: summary ? [ORDER_SUMMARY_YES, ORDER_SUMMARY_EDIT] : [] };
   } else if (finalOrderIssue?.code === "invalid_phone") {
     reply = { text: "Số điện thoại chưa hợp lệ. Bạn gửi lại số di động Việt Nam gồm 10 chữ số, bắt đầu bằng 0 nhé.", products: [], quickReplies: [] };
   } else if (finalOrderIssue?.code === "customer_details_missing") {
@@ -704,12 +938,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       products: await deps.store.productCards(ctx.shopId, [productId]),
       quickReplies: [],
     };
+  } else if (missingClaims.length > 0) {
+    const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice ?? null;
+    const fb = missingFallback(missingClaims, logs, advice, mode);
+    const ids = fb.productIds.length ? fb.productIds : tc.product ? [tc.product.id] : [];
+    reply = fb.offer
+      ? offerReply(fb.text)
+      : { text: fb.text, products: fb.text === STAFF_DRAFT_GIVE_UP_TEXT ? [] : await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+    offerMade = fb.offer;
   } else if (pairingState.called) {
     const cards = pairingState.items.length === 0
       ? []
       : await deps.store.productCards(ctx.shopId, pairingState.items.map((pairing) => pairing.productId));
     reply = pairingState.needsProduct
-      ? { text: "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.", products: [], quickReplies: [] }
+      ? { text: ASK_PAIRING_PRODUCT_TEXT, products: [], quickReplies: [] }
       : pairingState.failed && pairingState.items.length === 0
         ? { text: "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.", products: [], quickReplies: [] }
         : matchingReply(pairingState.items, cards);
@@ -724,6 +966,12 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       ),
       quickReplies: modelReply.quickReplies,
     };
+    // PB-31: the model offered staff itself (prompt rule). Recorded so a "yes"
+    // next turn hands off; the reason follows what the turn looked up.
+    if (mode === "customer" && offersStaff(modelReply)) {
+      reply = { ...reply, ...withOffer(reply.text) };
+      offerMade = logs.some((l) => l.name === "get_policy") ? "policy_not_covered" : "not_covered_by_data";
+    }
   }
   } // end of the LLM tool loop path
   // Auto-resume: if the conversation was in needs_human and the AI produced an
@@ -734,7 +982,19 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // A complaint the word list catches returned early above (PB-20); one only Jev
   // caught sets personalReplyNeeded here.
-  const output = engineOutputSchema.parse({ reply: reply!, personalReplyNeeded });
+  // PB-31 AC12: the pairing question comes with the shop's paired products as
+  // buttons (both paths end here). Without them the shopper types the name.
+  if (mode === "customer" && reply?.text === ASK_PAIRING_PRODUCT_TEXT && reply.quickReplies.length === 0 && deps.store.pairedProductNames) {
+    const names = await deps.store.pairedProductNames(ctx.shopId).catch(() => []);
+    reply = { ...reply, quickReplies: names };
+  }
+  reply = await keepToShopper(reply!, lastText, {
+    mode,
+    shopperSize: knownShopperSize(input.history),
+    stockSizes: sizesInToolOutputs(logs.filter((l) => l.name === "get_stock").map((l) => l.output)),
+    categories: () => (deps.store.catalog ? deps.store.catalog(ctx.shopId) : Promise.resolve([])),
+  });
+  const output = engineOutputSchema.parse({ reply, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 
   const metrics: TurnMetrics = {
@@ -752,6 +1012,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     inputTokens,
     outputTokens,
     handoffReason: handoff,
+    handoffOffer: handoff ? null : (offerMade as OfferReason | null),
     truncated,
     route,
   };
@@ -771,6 +1032,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         latency_ms: latencyMs,
         tool_calls: logs as NonNullable<Json>,
         handoff_reason: handoff,
+        handoff_offer: handoff ? null : (offerMade as OfferReason | null),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         ttft_ms: metrics.ttftMs,

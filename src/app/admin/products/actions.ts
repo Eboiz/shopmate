@@ -7,16 +7,18 @@ import {
   NOT_ALLOWED,
   PAIRING_EXISTS,
   POLICY_SAVE_FAILED,
+  SIZE_EXISTS,
+  SIZE_OVERLAP,
   writeErrorMessage,
   type WriteMessages,
 } from "@/lib/catalog-write-errors";
 import {
   addPairingSchema,
   deletePairingSchema,
+  saveProductSchema,
   updatePolicySchema,
-  updatePriceSchema,
-  updateStockSchema,
 } from "@/lib/shop-data-validation";
+import { saveSizeChartSchema } from "@/lib/size-chart-validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FormState } from "./form-state";
 
@@ -54,16 +56,21 @@ async function ownerWrite<S extends z.ZodType>(
   return { error: null };
 }
 
-export async function updatePrice(_prev: FormState, formData: FormData) {
-  return ownerWrite(updatePriceSchema, formData, ({ productId, price }) => (db, shopId) =>
-    db.from("products").update({ price }).eq("id", productId).eq("shop_id", shopId).select("id"),
-  );
-}
-
-export async function updateStock(_prev: FormState, formData: FormData) {
-  return ownerWrite(updateStockSchema, formData, ({ variantId, stock }) => (db, shopId) =>
-    db.from("variants").update({ stock }).eq("id", variantId).eq("shop_id", shopId).select("id"),
-  );
+// One product: its price and the stock rows the owner changed. Only changed rows
+// are sent, so confirming an order (which lowers stock) while the page is open
+// is not undone by saving the price. The writes are separate statements; if one
+// fails the owner sees the error, and the page after refresh shows what was saved.
+export async function saveProduct(_prev: FormState, formData: FormData) {
+  return ownerWrite(saveProductSchema, formData, ({ productId, price, stocks }) => async (db, shopId) => {
+    const product = await db.from("products").update({ price }).eq("id", productId).eq("shop_id", shopId).select("id");
+    if (product.error || product.data.length === 0) return product;
+    const rows = await Promise.all(
+      stocks.map(({ variantId, stock }) =>
+        db.from("variants").update({ stock }).eq("id", variantId).eq("product_id", productId).eq("shop_id", shopId).select("id"),
+      ),
+    );
+    return rows.find((row) => row.error || row.data.length === 0) ?? product;
+  });
 }
 
 export async function updatePolicy(_prev: FormState, formData: FormData) {
@@ -104,5 +111,32 @@ export async function addPairing(_prev: FormState, formData: FormData) {
 export async function deletePairing(_prev: FormState, formData: FormData) {
   return ownerWrite(deletePairingSchema, formData, ({ pairingId }) => (db, shopId) =>
     db.from("pairings").delete().eq("id", pairingId).eq("shop_id", shopId).select("id"),
+  );
+}
+
+// PB-24: replaces the product's whole chart in one transaction (save_size_chart),
+// so moving the boundary between two sizes never trips the overlap constraint
+// half way. recommend_size reads size_charts without a cache, so the AI uses the
+// new chart for the very next question.
+export async function saveSizeChart(_prev: FormState, formData: FormData) {
+  return ownerWrite(
+    saveSizeChartSchema,
+    formData,
+    ({ productId, rows }) =>
+      async (db) => {
+        const { error } = await db.rpc("save_size_chart", {
+          p_product_id: productId,
+          p_rows: rows.map((row) => ({
+            size: row.size,
+            height_min_cm: row.heightMin,
+            height_max_cm: row.heightMax,
+            weight_min_kg: row.weightMin,
+            weight_max_kg: row.weightMax,
+          })),
+        });
+        // An empty chart saves zero rows and is still a success.
+        return { error, data: error ? null : [productId] };
+      },
+    { duplicate: SIZE_EXISTS, overlap: SIZE_OVERLAP },
   );
 }

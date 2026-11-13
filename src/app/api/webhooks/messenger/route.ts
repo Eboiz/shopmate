@@ -1,10 +1,14 @@
 import { after, type NextRequest } from "next/server";
-import { parseMessengerEvents, sendTypingOn, verifyMessengerSignature, type MessengerEvent } from "@/lib/channels/messenger";
+import { parseInstagramEvents } from "@/lib/channels/instagram";
+import { parseMessengerEvents, sendTypingOn, verifyMessengerSignature, type MessagingEvent } from "@/lib/channels/messenger";
 import { receiveChannelMessage } from "@/lib/channels/receive";
+import { parseWhatsAppEvents, sendWhatsAppTyping, type WhatsAppEvent } from "@/lib/channels/whatsapp";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Messenger webhook (PB-15). Meta app > Messenger > Webhooks points here:
-// GET verifies the callback URL, POST delivers messages.
+// The Meta app's webhook: Messenger (PB-15), Instagram Direct (PB-23) and WhatsApp
+// (PB-27). The webhook settings of all three products point here: GET verifies the
+// callback URL, POST delivers messages. All sign with the same app secret; the
+// payload's `object` (page, instagram, whatsapp_business_account) tells them apart.
 
 export function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
@@ -33,35 +37,47 @@ export async function POST(request: NextRequest) {
   } catch {
     return new Response(null, { status: 400 });
   }
+  // Answer Meta right away; Meta resends a delivery that isn't acknowledged quickly.
+  if (payload?.object === "whatsapp_business_account") {
+    const events = parseWhatsAppEvents(payload);
+    if (events.length > 0) after(() => handleWhatsAppEvents(events));
+    return new Response("EVENT_RECEIVED", { status: 200 });
+  }
+  if (payload?.object === "instagram") {
+    const events = parseInstagramEvents(payload);
+    if (events.length > 0) after(() => handleEvents("instagram", events));
+    return new Response("EVENT_RECEIVED", { status: 200 });
+  }
   if (payload?.object !== "page") return new Response(null, { status: 404 });
 
-  // Answer Meta right away; Meta resends a delivery that isn't acknowledged quickly.
   const events = parseMessengerEvents(payload);
-  if (events.length > 0) after(() => handleEvents(events));
+  if (events.length > 0) after(() => handleEvents("messenger", events));
   return new Response("EVENT_RECEIVED", { status: 200 });
 }
 
-async function handleEvents(events: MessengerEvent[]) {
-  const pageIds = [...new Set(events.map((e) => e.pageId))];
+// Messenger and Instagram: the same messaging events, the account being a Page ID
+// or an Instagram professional account ID, and the same Send API (typing indicator).
+async function handleEvents(channel: "messenger" | "instagram", events: MessagingEvent[]) {
+  const accountIds = [...new Set(events.map((e) => e.accountId))];
   const { data: accounts, error } = await createAdminClient()
     .from("channel_accounts")
     .select("id, shop_id, external_account_id, access_token")
-    .eq("channel", "messenger")
-    .in("external_account_id", pageIds);
+    .eq("channel", channel)
+    .in("external_account_id", accountIds);
   if (error) {
-    console.error("messenger: channel account lookup failed", error.message);
+    console.error(`${channel}: channel account lookup failed`, error.message);
     return;
   }
 
   // One at a time, so a shopper's messages are handled in the order sent.
   for (const event of events) {
-    const account = accounts.find((a) => a.external_account_id === event.pageId);
+    const account = accounts.find((a) => a.external_account_id === event.accountId);
     if (!account) {
-      console.warn(`messenger: unknown page ${event.pageId}, message ignored`);
+      console.warn(`${channel}: unknown ${channel === "messenger" ? "page" : "account"} ${event.accountId}, message ignored`);
       continue;
     }
     if (event.type === "sticker") {
-      console.info(`messenger: sticker from ${event.senderId} ignored`);
+      console.info(`${channel}: sticker from ${event.senderId} ignored`);
       continue;
     }
     const incoming = {
@@ -71,12 +87,50 @@ async function handleEvents(events: MessengerEvent[]) {
     };
     try {
       await receiveChannelMessage(
-        { id: account.id, shopId: account.shop_id, channel: "messenger" },
+        { id: account.id, shopId: account.shop_id, channel },
         incoming,
-        () => sendTypingOn(account.access_token, event.senderId),
+        () => sendTypingOn(account.access_token, event.senderId, fetch, channel),
       );
     } catch (error) {
-      console.error(`messenger: message ${event.mid} failed`, error);
+      console.error(`${channel}: message ${event.mid} failed`, error);
+    }
+  }
+}
+
+async function handleWhatsAppEvents(events: WhatsAppEvent[]) {
+  const phoneNumberIds = [...new Set(events.map((e) => e.phoneNumberId))];
+  const { data: accounts, error } = await createAdminClient()
+    .from("channel_accounts")
+    .select("id, shop_id, external_account_id, access_token")
+    .eq("channel", "whatsapp")
+    .in("external_account_id", phoneNumberIds);
+  if (error) {
+    console.error("whatsapp: channel account lookup failed", error.message);
+    return;
+  }
+
+  // One at a time, so a shopper's messages are handled in the order sent.
+  for (const event of events) {
+    const account = accounts.find((a) => a.external_account_id === event.phoneNumberId);
+    if (!account) {
+      console.warn(`whatsapp: unknown phone number ${event.phoneNumberId}, message ignored`);
+      continue;
+    }
+    // A photo arrives as a media id; the stored text keeps it so staff know a photo
+    // came (the AI hands photos to staff).
+    const incoming = {
+      externalId: event.from,
+      messageId: event.messageId,
+      ...(event.type === "text" ? { text: event.text } : { imageUrls: [`whatsapp-media:${event.mediaId}`] }),
+    };
+    try {
+      await receiveChannelMessage(
+        { id: account.id, shopId: account.shop_id, channel: "whatsapp" },
+        incoming,
+        () => sendWhatsAppTyping(account.external_account_id, account.access_token, event.messageId),
+      );
+    } catch (error) {
+      console.error(`whatsapp: message ${event.messageId} failed`, error);
     }
   }
 }

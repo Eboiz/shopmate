@@ -4,7 +4,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineInput } from "@/contract";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE } from "./discount-guard";
-import { HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
+import { runEngine, type EngineDeps } from "./engine";
+import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import { buildStablePrompt } from "./prompt";
 import { ECHO_RETRY_NOTE, REFUSAL_TEXT } from "./refusal-guard";
 import type { EngineStore } from "./store";
@@ -15,6 +16,10 @@ const SHOP_A = "a0000000-0000-4000-8000-000000000001";
 const CONV = "a0000000-0000-4000-8000-000000000031";
 const GIAO_HANG =
   "Giao toàn quốc. Nội thành TP.HCM 1–2 ngày, phí 20.000đ. Tỉnh khác 3–5 ngày, phí 30.000đ. Miễn phí giao hàng cho đơn từ 500.000đ.";
+
+// The demo shop's returns policy (supabase/seed/demo/policies.csv).
+const DOI_TRA =
+  "Đổi size hoặc đổi màu trong 7 ngày kể từ ngày nhận hàng, sản phẩm còn tem mác và chưa qua giặt. Shop chỉ đổi sản phẩm, không hoàn tiền. Khách trả phí ship đổi hàng, trừ khi shop giao sai.";
 
 const ask = (text: string): EngineInput => ({ mode: "customer", conversationId: CONV, history: [{ sender: "shopper", text }] });
 const reply = (text: string) => finalJson({ text, productIds: [], quickReplies: [] });
@@ -51,15 +56,37 @@ const lastUserText = (params: Anthropic.MessageCreateParamsNonStreaming) => para
 describe("policy answers (PB-09)", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("AC2: a policy the shop didn't write goes to staff with policy_not_covered", async () => {
+  it("AC2 + PB-31: a policy the shop didn't write offers staff first (policy_not_covered), no handoff yet", async () => {
     const { handlers, run } = setup([
       toolCalls(toolUse("get_policy", { kind: "giao_hang" })),
       toolCalls(toolUse("handoff_to_staff", { reason: "policy_not_covered" })),
     ]);
     const result = await run(ask("ship miễn phí không?"));
-    expect(handlers.handoff_to_staff).toHaveBeenCalledTimes(1);
-    expect(result.handoffReason).toBe("policy_not_covered");
-    expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toContain(OFFER_QUESTION);
+    expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+  });
+
+  // PB-38: asked before buying, "giao sai màu" is a returns question, not a complaint.
+  it("PB-38: a hypothetical 'nếu shop giao sai màu' question is answered from get_policy, not handed off", async () => {
+    const question =
+      "Tôi chưa đặt hàng. Nếu nhận áo bị shop giao sai màu thì tôi có phải trả phí ship đổi không? Có được hoàn tiền không?";
+    const answer = "Dạ shop giao sai thì shop chịu phí ship đổi ạ. Shop chỉ đổi sản phẩm, không hoàn tiền.";
+    const { handlers, model, run } = setup([toolCalls(toolUse("get_policy", { kind: "doi_tra" })), reply(answer)], {
+      doi_tra: DOI_TRA,
+    });
+    const result = await run(ask(question));
+    expect(model.calls.length).toBeGreaterThan(0);
+    expect(handlers.get_policy).toHaveBeenCalledWith({ kind: "doi_tra" }, expect.anything(), expect.anything());
+    expect(handlers.handoff_to_staff).not.toHaveBeenCalled();
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toBe(answer);
+
+    const draft = setup([toolCalls(toolUse("get_policy", { kind: "doi_tra" })), reply(answer)], { doi_tra: DOI_TRA });
+    const drafted = await draft.run({ mode: "staff_draft", history: [{ sender: "shopper", text: question }] } as EngineInput);
+    expect(drafted.output.personalReplyNeeded).toBe(false);
+    expect(drafted.output.reply.text).toBe(answer);
   });
 
   describe("AC3: no discount the policy doesn't offer", () => {

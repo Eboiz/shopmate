@@ -80,8 +80,8 @@ describe("search_products and get_stock on the PB-02 demo seed (PB-05)", () => {
 
   // The PO test set's S4 scenario (test_questions 25-26): a coat the shop doesn't sell.
   it("returns no product for a name the shop doesn't sell (AC3 starts from here)", async () => {
-    expect(await searchProducts({ query: "áo măng tô", limit: 5 }, ctx, db)).toEqual({ products: [] });
-    expect(await searchProducts({ query: "ao mang to toi goi", limit: 5 }, ctx, db)).toEqual({ products: [] });
+    expect(await searchProducts({ query: "áo măng tô", limit: 5 }, ctx, db)).toEqual({ match: "none", products: [] });
+    expect(await searchProducts({ query: "ao mang to toi goi", limit: 5 }, ctx, db)).toEqual({ match: "none", products: [] });
   });
 
   it("AC1: one size and color in stock gives its stock and the product price", async () => {

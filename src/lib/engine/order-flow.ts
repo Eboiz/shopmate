@@ -9,6 +9,10 @@ export type PendingQuote = {
 };
 
 export const ORDER_SUMMARY_PREFIX = "Dạ, đơn hàng dự kiến:";
+// Buttons under the summary, so the shopper doesn't have to type a yes that
+// isOrderConfirmation may not read.
+export const ORDER_SUMMARY_YES = "Xác nhận đơn";
+export const ORDER_SUMMARY_EDIT = "Sửa đơn";
 
 export function latestQuote(logs: ToolCallLog[]): PendingQuote | null {
   for (const log of logs.toReversed()) {
@@ -28,12 +32,56 @@ export function isOrderIntent(history: HistoryMessage[]): boolean {
     /\b(lay|mua|dat|chot|order|len don)\b/.test(fold(text)));
 }
 
+// PB-31: a message that could be an order ("lấy cái đen size S") is read back
+// first; these are the buttons of that question.
+export const ORDER_CONFIRM_YES = "Đúng, đặt luôn";
+export const ORDER_CONFIRM_NO = "Chọn món khác";
+
+// The latest message uses a buying word ("cho mua", "lấy", "đặt", "chốt").
+export const isOrderMessage = (text: string) => /\b(lay|mua|dat|chot|order)\b/.test(fold(text));
+
+// "Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?"
+export function orderConfirmText(name: string, color: string | null, size: string | null): string {
+  return `Dạ, bạn muốn đặt ${name}${color ? ` màu ${color.toLowerCase()}` : ""}${size ? ` size ${size}` : ""} đúng không?`;
+}
+
+// The AI's last message read an order back ("bạn muốn đặt … đúng không?") and
+// the shopper says yes: the order flow goes on (LLM tool loop).
+export function answersOrderConfirm(history: HistoryMessage[]): boolean {
+  const last = history.at(-1);
+  const asked = history.slice(0, -1).findLast(({ sender }) => sender === "ai")?.text ?? "";
+  return last?.sender === "shopper" && /ban muon dat .* dung khong/.test(fold(asked)) && saysYes(last.text);
+}
+
 export function isOrderConfirmation(history: HistoryMessage[]): boolean {
   const last = history.at(-1);
   const summary = history.slice(0, -1).findLast(({ sender }) => sender === "ai")?.text ?? "";
-  if (last?.sender !== "shopper" || !summary.startsWith(ORDER_SUMMARY_PREFIX)) return false;
-  const answer = fold(last.text).replace(/[.!?]+$/g, "").trim();
-  return /^(?:da\s+)?(?:(?:minh|em)\s+)?(?:ok|oke|dong y|xac nhan|chot don|dat hang|lay|dung roi|chinh xac|vang)(?:\s+(?:nha|nhe|a))?$/.test(answer);
+  return last?.sender === "shopper" && summary.startsWith(ORDER_SUMMARY_PREFIX) && saysYes(last.text);
+}
+
+// A yes to a read-back or a summary ("Đúng rồi, bạn chốt đơn giúp mình nhé"): no
+// question mark, it starts with a yes word, and every other word is a yes or polite
+// filler. Anything else ("ko", "đen", "M", "bỏ", a number) may change or refuse the
+// order, so the AI asks again rather than guess. Words are matched with their
+// accents, because folding turns "đừng" into "đúng", "chờ" into "cho", "đã" into
+// "dạ"; the unaccented spellings listed are for shoppers who type without accents.
+const YES_START = new Set([
+  "ok", "oke", "okie", "oki", "okay", "uk", "yes", "ừ", "u", "uh", "đồng", "dong", "xác", "xac", "chốt", "chot",
+  "đặt", "dat", "lên", "len", "lấy", "lay", "đúng", "dung", "chính", "chinh", "chuẩn", "chuan", "vâng", "vang",
+  "được", "duoc", "đc", "dc", "có", "co", "phải", "phai",
+]);
+const YES_OR_FILLER = new Set([
+  ...YES_START, "ý", "y", "nhận", "nhan", "đơn", "don", "hàng", "hang", "rồi", "roi", "r", "vậy", "vay", "luôn", "luon",
+  "lun", "đi", "di", "dạ", "da", "ạ", "a", "nha", "nhé", "nhe", "nhen", "nghen", "nè", "ne", "hen", "ơi", "oi", "shop",
+  "bạn", "ban", "mình", "minh", "em", "anh", "chị", "chi", "giúp", "giup", "giùm", "gium", "cho", "với", "voi",
+]);
+const SPEAKER = new Set(["dạ", "da", "mình", "minh", "em"]);
+
+function saysYes(text: string): boolean {
+  if (text.includes("?")) return false;
+  const words = text.normalize("NFC").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const first = words.find((word) => !SPEAKER.has(word));
+  return first !== undefined && YES_START.has(first) && words.every((word) => YES_OR_FILLER.has(word));
 }
 
 export function sameItems(

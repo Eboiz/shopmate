@@ -5,6 +5,7 @@ import { receiveChannelMessage } from "@/lib/channels/receive";
 import { sendToConversation } from "@/lib/channels/send";
 import { FX, cleanupTwoShops, seedTwoShops } from "@/lib/engine/test/two-shops";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { chatStatus } from "./chat-status";
 import { findShop, loadCatalog, loadHistory, productInShop, shopperExternalId } from "./web-chat";
 
 // Web chat (PB-04) end to end on local Supabase, with the model replaced: the
@@ -63,7 +64,9 @@ describe("web chat on local Supabase", () => {
 
   it("lists only the shop's products with in-stock colors and sizes", async () => {
     const catalog = await loadCatalog({ id: FX.a.shop, name: "Shop A PB-03" });
-    expect(catalog.products.map((p) => p.id).toSorted()).toEqual([FX.a.ao03, FX.a.quan05, FX.a.vay01].toSorted());
+    expect(catalog.products.map((p) => p.id).toSorted()).toEqual(
+      [FX.a.ao03, FX.a.quan05, FX.a.vay01, FX.a.blazer, FX.a.bomber, FX.a.jacketJean, FX.a.jean].toSorted(),
+    );
     const vay = catalog.products.find((p) => p.id === FX.a.vay01)!;
     expect(vay).toMatchObject({ price: 350000, colors: ["be", "đen"], sizesInStock: ["M"] });
   });
@@ -87,7 +90,8 @@ describe("web chat on local Supabase", () => {
     expect(retry).toBe("duplicate");
     expect(engine).toHaveBeenCalledOnce();
 
-    const history = await loadHistory(FX.a.shop, shopper);
+    const { messages: history, mode } = await loadHistory(FX.a.shop, shopper);
+    expect(mode).toBe("ai");
     expect(history.map((m) => [m.sender, m.text])).toEqual([
       ["shopper", "Váy này còn size M không?"],
       ["ai", aiReply.text],
@@ -112,7 +116,8 @@ describe("web chat on local Supabase", () => {
     // In staff mode the AI stays silent, but the shopper's message is kept.
     expect(await receiveChannelMessage(web, { externalId: shopper, messageId: "client-2", text: "Cảm ơn shop" })).toBe("stored");
 
-    const history = await loadHistory(FX.a.shop, shopper);
+    const { messages: history, mode } = await loadHistory(FX.a.shop, shopper);
+    expect(mode).toBe("staff");
     expect(history.slice(-3).map((m) => [m.sender, m.text])).toEqual([
       ["staff", "Shop gửi bạn mã giảm ship nha."],
       ["system", "Đơn hàng của bạn đã được xác nhận."],
@@ -121,7 +126,36 @@ describe("web chat on local Supabase", () => {
   });
 
   it("never shows one shopper's or shop's chat to another", async () => {
-    expect(await loadHistory(FX.a.shop, shopperExternalId("someone-else"))).toEqual([]);
-    expect(await loadHistory(FX.b.shop, shopper)).toEqual([]);
+    expect(await loadHistory(FX.a.shop, shopperExternalId("someone-else"))).toEqual({ messages: [], mode: "ai" });
+    expect(await loadHistory(FX.b.shop, shopper)).toEqual({ messages: [], mode: "ai" });
+  });
+
+  it("reports needs_human so the page waits for staff, and stores no AI reply (PB-42)", async () => {
+    const waiting = shopperExternalId(`token-${randomUUID()}`);
+    expect(await receiveChannelMessage(web, { externalId: waiting, messageId: "w-1", text: "Chào shop" })).toBe("answered");
+    const [{ id: conversationId }] = await db
+      .from("conversations")
+      .select("id, shoppers!inner(external_id)")
+      .eq("shop_id", FX.a.shop)
+      .eq("shoppers.external_id", waiting)
+      .then(({ data }) => data!);
+    const handed = await db.from("conversations").update({ mode: "needs_human" }).eq("id", conversationId);
+    if (handed.error) throw new Error(handed.error.message);
+
+    // needs_human still runs the engine (receive.ts), but its reply is dropped
+    // (not_in_ai_mode): the shopper's message stays the last one.
+    expect(await receiveChannelMessage(web, { externalId: waiting, messageId: "w-2", text: "Cho mình gặp nhân viên" })).toBe("stored");
+
+    const waitingHistory = await loadHistory(FX.a.shop, waiting);
+    expect(waitingHistory.mode).toBe("needs_human");
+    expect(waitingHistory.messages.at(-1)).toMatchObject({ sender: "shopper", text: "Cho mình gặp nhân viên" });
+    expect(chatStatus(waitingHistory.messages, waitingHistory.mode, false, true)).toBe("waiting_staff");
+
+    // Staff hands it back to the AI: the next message gets an AI turn again.
+    await db.from("conversations").update({ mode: "ai" }).eq("id", conversationId);
+    expect(await receiveChannelMessage(web, { externalId: waiting, messageId: "w-3", text: "Váy còn size M không?" })).toBe("answered");
+    const back = await loadHistory(FX.a.shop, waiting);
+    expect(back.mode).toBe("ai");
+    expect(chatStatus(back.messages, back.mode, false)).toBe("idle");
   });
 });

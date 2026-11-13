@@ -64,13 +64,10 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   const stockBefore = await readStock(staff, PRODUCT, SIZE, COLOR);
   expect(stockBefore, "seeded stock must allow one more order; run pnpm db:seed").toBeGreaterThan(0);
 
-  // 1. Shop page, open the dress, ask about it.
+  // 1. Shop page: find the dress (the grid shows 12 products) and ask about it.
   await page.goto(`/s/${DEMO_SHOP_SLUG}`);
-  await page
-    .locator("article", { has: page.getByRole("heading", { name: PRODUCT, exact: true }) })
-    .getByRole("link", { name: PRODUCT, exact: true })
-    .click();
-  await page.getByRole("button", { name: "Hỏi shop", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Tìm sản phẩm" }).fill(PRODUCT);
+  await page.getByRole("button", { name: `Hỏi về mẫu này: ${PRODUCT}`, exact: true }).click();
 
   // Each shop reply has a label ("Trợ lý AI", or "Shop" for a system notice)
   // followed by its text bubble. Only the bubble is read: the product cards
@@ -109,7 +106,9 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   await expect(lines.first()).toContainText(`${COLOR} · Cỡ ${SIZE} · SL 1`);
 
   // 5. Staff confirm it, and stock goes down by exactly the one item ordered.
-  await order.getByRole("button", { name: "Xác nhận" }).click();
+  // Confirming takes two steps: the recap, then "Xác nhận đơn này".
+  await order.getByRole("button", { name: "Xác nhận", exact: true }).click();
+  await order.getByRole("button", { name: "Xác nhận đơn này" }).click();
   await expect(staff.getByText(`Đã xác nhận đơn của ${customer}.`)).toBeVisible({ timeout: 30_000 });
   expect(await readStock(staff, PRODUCT, SIZE, COLOR)).toBe(stockBefore - 1);
 });

@@ -3,6 +3,7 @@ import { vndSchema, type OrderStatus } from "@/contract";
 
 const draftOrderSchema = z.object({
   id: z.string().min(1),
+  conversationId: z.string().min(1),
   createdAt: z.iso.datetime({ offset: true }),
   customer: z.object({ name: z.string(), phone: z.string(), address: z.string() }),
   items: z.array(z.object({

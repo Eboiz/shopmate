@@ -7,14 +7,14 @@ export type Database = {
           Tables: {
             "ai_turns": {
                   Row: {
-                    "conversation_id": string | null,"created_at": string,"handoff_reason": Database["public"]['Enums']["handoff_reason"] | null,"id": string,"input_tokens": number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"model": string | null,"model_calls": number,"output_tokens": number,"postcheck": Json | null,"prompt_version": string | null,"shop_id": string,"tool_calls": NonNullable<Json>,"ttft_ms": number | null
+                    "conversation_id": string | null,"created_at": string,"handoff_offer": Database["public"]['Enums']["handoff_reason"] | null,"handoff_reason": Database["public"]['Enums']["handoff_reason"] | null,"id": string,"input_tokens": number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"model": string | null,"model_calls": number,"output_tokens": number,"postcheck": Json | null,"prompt_version": string | null,"shop_id": string,"tool_calls": NonNullable<Json>,"ttft_ms": number | null
                   }
                   ComputedFields: never
                   Insert: {
-                    "conversation_id"?: string | null,"created_at"?: string,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"model"?: string | null,"model_calls"?: number,"output_tokens"?: number,"postcheck"?: Json | null,"prompt_version"?: string | null,"shop_id": string,"tool_calls"?: NonNullable<Json>,"ttft_ms"?: number | null
+                    "conversation_id"?: string | null,"created_at"?: string,"handoff_offer"?: Database["public"]['Enums']["handoff_reason"] | null,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms": number,"mode": Database["public"]['Enums']["engine_mode"],"model"?: string | null,"model_calls"?: number,"output_tokens"?: number,"postcheck"?: Json | null,"prompt_version"?: string | null,"shop_id": string,"tool_calls"?: NonNullable<Json>,"ttft_ms"?: number | null
                   }
                   Update: {
-                    "conversation_id"?: string | null,"created_at"?: string,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms"?: number,"mode"?: Database["public"]['Enums']["engine_mode"],"model"?: string | null,"model_calls"?: number,"output_tokens"?: number,"postcheck"?: Json | null,"prompt_version"?: string | null,"shop_id"?: string,"tool_calls"?: NonNullable<Json>,"ttft_ms"?: number | null
+                    "conversation_id"?: string | null,"created_at"?: string,"handoff_offer"?: Database["public"]['Enums']["handoff_reason"] | null,"handoff_reason"?: Database["public"]['Enums']["handoff_reason"] | null,"id"?: string,"input_tokens"?: number,"latency_ms"?: number,"mode"?: Database["public"]['Enums']["engine_mode"],"model"?: string | null,"model_calls"?: number,"output_tokens"?: number,"postcheck"?: Json | null,"prompt_version"?: string | null,"shop_id"?: string,"tool_calls"?: NonNullable<Json>,"ttft_ms"?: number | null
                   }
                   Relationships: [
                     {
@@ -391,6 +391,19 @@ isOneToOne: false
         isOneToOne: false
         isSetofReturn: true
       } },
+"inbox_counts":
+{ Args: { "p_channel"?: Database["public"]['Enums']["channel"],"p_query"?: string }; Returns: {
+              "ai": number,"needs_human": number,"staff": number,"total": number
+            }[]
+                           },
+"save_size_chart":
+{ Args: { "p_product_id": string,"p_rows": Json }; Returns: number
+                           },
+"search_inbox":
+{ Args: { "p_after_at"?: string,"p_after_id"?: string,"p_after_urgent"?: boolean,"p_channel"?: Database["public"]['Enums']["channel"],"p_limit"?: number,"p_mode"?: Database["public"]['Enums']["conversation_mode"],"p_query"?: string }; Returns: {
+              "channel": Database["public"]['Enums']["channel"],"customer_message": string,"customer_message_at": string,"display_name": string,"id": string,"last_message_at": string,"latest_message": string,"mode": Database["public"]['Enums']["conversation_mode"]
+            }[]
+                           },
 "web_chat_take":
 { Args: { "p_client_hash": string,"p_client_per_minute": number,"p_client_shop_per_minute": number,"p_new_shopper": boolean,"p_new_shoppers_per_hour": number,"p_shop_id": string,"p_shop_per_minute": number }; Returns: string
                            }

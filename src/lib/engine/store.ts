@@ -1,4 +1,4 @@
-import { toolCallLogSchema, type ConversationMode, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { quickReplySchema, toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
 import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
@@ -14,13 +14,17 @@ export type TurnContextArgs = {
 
 export type TurnContext = {
   conversation: { shopId: string; mode: ConversationMode } | null; // always null in staff_draft
-  product: { id: string; name: string } | null;
+  // description (PB-31): the shop's text, for details questions on the tool loop.
+  product: { id: string; name: string; description?: string | null } | null;
   // customer only: the conversation's previous AI turn searched for a product and
   // found nothing (see searchMissed), and did not hand off. Missing means false.
   previousTurnMissedProduct?: boolean;
   // Last customer turn's quote, used only after its summary was shown to the
   // shopper. The engine checks the next shopper message before allowing a write.
   previousQuote?: PendingQuote | null;
+  // PB-31: the previous AI turn offered staff for this reason (soft handoff) and
+  // did not hand off. A "yes" now hands off with it. Missing means no offer.
+  previousHandoffOffer?: HandoffReason | null;
 };
 
 export type EngineStore = {
@@ -41,16 +45,20 @@ export type EngineStore = {
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
   catalog?(shopId: string): Promise<CatalogItem[]>;
+  // PB-31 AC12: up to 3 names of products the shop declared pairings for, as the
+  // buttons under "phối cùng sản phẩm nào?". Only names that fit a quick reply.
+  pairedProductNames?(shopId: string): Promise<string[]>;
 };
 
 const MAX_CARDS = 10;
+const PAIRED_BUTTONS = 3;
 
 export function createSupabaseStore(db: Db): EngineStore {
   async function product(shopId: string, productId: string | null) {
     if (productId === null) return null;
     const { data, error } = await db
       .from("products")
-      .select("id, name")
+      .select("id, name, description")
       .eq("id", productId)
       .eq("shop_id", shopId)
       .maybeSingle();
@@ -61,7 +69,7 @@ export function createSupabaseStore(db: Db): EngineStore {
   async function previousTurnState(shopId: string, conversationId: string) {
     const { data, error } = await db
       .from("ai_turns")
-      .select("tool_calls, handoff_reason")
+      .select("tool_calls, handoff_reason, handoff_offer")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
@@ -69,11 +77,12 @@ export function createSupabaseStore(db: Db): EngineStore {
       .limit(1)
       .maybeSingle();
     if (error) throw new Error(`ai_turns: ${error.message}`);
-    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null };
+    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
     return {
       previousTurnMissedProduct: logs.success && searchMissed(logs.data),
       previousQuote: logs.success ? latestQuote(logs.data) : null,
+      previousHandoffOffer: data.handoff_offer,
     };
   }
 
@@ -125,7 +134,7 @@ export function createSupabaseStore(db: Db): EngineStore {
 
     async catalog(shopId) {
       const [products, variants] = await Promise.all([
-        db.from("products").select("id, name, category").eq("shop_id", shopId).order("name"),
+        db.from("products").select("id, name, category, description, price").eq("shop_id", shopId).order("name"),
         db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
       ]);
       if (products.error) throw new Error(`products: ${products.error.message}`);
@@ -136,10 +145,22 @@ export function createSupabaseStore(db: Db): EngineStore {
           id: p.id,
           name: p.name,
           category: p.category,
+          description: p.description,
+          price: p.price,
           colors: [...new Set(own.map((v) => v.color))],
           sizes: sortSizes(own.map((v) => v.size)),
         };
       });
+    },
+
+    async pairedProductNames(shopId) {
+      const { data: pairs, error } = await db.from("pairings").select("product_a_id, product_b_id").eq("shop_id", shopId);
+      if (error) throw new Error(`pairings: ${error.message}`);
+      const ids = [...new Set(pairs.flatMap((p) => [p.product_a_id, p.product_b_id]))];
+      if (ids.length === 0) return [];
+      const { data: products, error: productError } = await db.from("products").select("name").eq("shop_id", shopId).in("id", ids).order("name");
+      if (productError) throw new Error(`products: ${productError.message}`);
+      return products.map((p) => p.name.trim()).filter((name) => quickReplySchema.safeParse(name).success).slice(0, PAIRED_BUTTONS);
     },
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),

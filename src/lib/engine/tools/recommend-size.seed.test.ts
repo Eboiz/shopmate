@@ -83,12 +83,12 @@ describe("recommendSize on every demo size chart (PB-02 seed)", () => {
       it("is out of range one unit outside the chart, in either measurement", () => {
         const h = mid(first.height_min_cm, first.height_max_cm);
         const w = mid(first.weight_min_kg, first.weight_max_kg);
-        expect(recommendSize(rows, first.height_min_cm - 1, w)).toEqual({ status: "out_of_range" });
-        expect(recommendSize(rows, h, first.weight_min_kg - 1)).toEqual({ status: "out_of_range" });
-        expect(recommendSize(rows, last.height_max_cm + 1, w)).toEqual({ status: "out_of_range" });
-        expect(recommendSize(rows, h, last.weight_max_kg + 1)).toEqual({ status: "out_of_range" });
-        expect(recommendSize(rows, last.height_max_cm + 0.5, w)).toEqual({ status: "out_of_range" });
-        expect(recommendSize(rows, first.height_min_cm - 1.5, w)).toEqual({ status: "out_of_range" });
+        expect(recommendSize(rows, first.height_min_cm - 1, w)).toMatchObject({ status: "out_of_range" });
+        expect(recommendSize(rows, h, first.weight_min_kg - 1)).toMatchObject({ status: "out_of_range" });
+        expect(recommendSize(rows, last.height_max_cm + 1, w)).toMatchObject({ status: "out_of_range" });
+        expect(recommendSize(rows, h, last.weight_max_kg + 1)).toMatchObject({ status: "out_of_range" });
+        expect(recommendSize(rows, last.height_max_cm + 0.5, w)).toMatchObject({ status: "out_of_range" });
+        expect(recommendSize(rows, first.height_min_cm - 1.5, w)).toMatchObject({ status: "out_of_range" });
         // Rounds up onto the chart's first whole number, so it is in range.
         expect(recommendSize(rows, first.height_min_cm - 0.5, w)).toMatchObject({ status: "ok", sizeByHeight: first.size });
       });

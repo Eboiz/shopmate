@@ -1,0 +1,82 @@
+# When a PR merges, write it into the "PR" column of the team board (Eboiz project 2)
+# for every issue its description refers to as "Refs Eboiz/Documents#N". PRs only
+# say "Refs" (only the PO closes an issue), so GitHub's own "Linked pull requests"
+# column stays empty; this column is what shows which PR did which issue.
+#
+# Needs the secret PROJECT_TOKEN: a fine-grained token owned by Eboiz with
+# Organization permissions "Projects: Read and write" and read access to the issues
+# of Eboiz/Documents (Repository permissions "Issues: Read-only").
+name: Board PR column
+
+on:
+  # pull_request_target: also runs for PRs from forks, with the workflow from main.
+  # Nothing is checked out and the PR text is only read as data (never run).
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Number of a merged PR to write into the board again
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: board-pr-column
+  cancel-in-progress: false
+
+jobs:
+  write:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+      ORG: Eboiz
+      PROJECT_NUMBER: "2"
+      FIELD: PR
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Write the PR into the board
+        run: |
+          set -euo pipefail
+          if [ -z "$GH_TOKEN" ]; then echo "::error::Secret PROJECT_TOKEN is not set."; exit 1; fi
+          case "$PR_NUMBER" in ''|*[!0-9]*) echo "::error::Not a PR number: $PR_NUMBER"; exit 1;; esac
+
+          # The PR text comes from the API, never interpolated into this script.
+          body=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '[.title, (.body // "")] | join("\n")')
+          merged=$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq '.merged')
+          [ "$merged" = "true" ] || { echo "PR #$PR_NUMBER is not merged: nothing to write."; exit 0; }
+          issues=$(printf '%s' "$body" | grep -ioE '(refs|closes|fixes|resolves)[^A-Za-z0-9]+([^ ,]*Documents#[0-9]+[ ,·&and]*)+' | grep -oE 'Documents#[0-9]+' | cut -d'#' -f2 | sort -un || true)
+          if [ -z "$issues" ]; then echo "::notice::PR #$PR_NUMBER has no 'Refs Eboiz/Documents#N' line."; exit 0; fi
+
+          project=$(gh api graphql -f org="$ORG" -F number="$PROJECT_NUMBER" -f field="$FIELD" -f query='
+            query($org: String!, $number: Int!, $field: String!) {
+              organization(login: $org) { projectV2(number: $number) {
+                id field(name: $field) { ... on ProjectV2Field { id } } } } }')
+          project_id=$(jq -r '.data.organization.projectV2.id' <<<"$project")
+          field_id=$(jq -r '.data.organization.projectV2.field.id // empty' <<<"$project")
+          [ -n "$field_id" ] || { echo "::error::The board has no text column \"$FIELD\"."; exit 1; }
+
+          ref="${REPO#*/}#$PR_NUMBER"
+          for n in $issues; do
+            item=$(gh api graphql -f owner="$ORG" -F number="$n" -f field="$FIELD" -f query='
+              query($owner: String!, $number: Int!, $field: String!) {
+                repository(owner: $owner, name: "Documents") { issue(number: $number) {
+                  projectItems(first: 20) { nodes { id project { id }
+                    fieldValueByName(name: $field) { ... on ProjectV2ItemFieldTextValue { text } } } } } } }' \
+              | jq -c --arg p "$project_id" '[.data.repository.issue.projectItems.nodes[]? | select(.project.id == $p)][0] // empty')
+            if [ -z "$item" ]; then echo "::warning::Documents#$n is not on the board."; continue; fi
+            item_id=$(jq -r '.id' <<<"$item")
+            current=$(jq -r '.fieldValueByName.text // ""' <<<"$item")
+            if printf '%s' "$current" | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -qxF "$ref"; then
+              echo "Documents#$n already lists $ref."; continue
+            fi
+            value=${current:+$current, }$ref
+            gh api graphql -f project="$project_id" -f item="$item_id" -f field="$field_id" -f text="$value" -f query='
+              mutation($project: ID!, $item: ID!, $field: ID!, $text: String!) {
+                updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { text: $text } }) {
+                  projectV2Item { id } } }' >/dev/null
+            echo "Documents#$n: $value"
+          done
