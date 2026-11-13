@@ -4,6 +4,16 @@ import { useEffect, type RefObject } from "react";
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// Where Tab (or Shift+Tab) must go to stay inside the dialog, or null when the
+// browser's own move already stays inside.
+export function trapTarget<T>(focusable: T[], active: unknown, inside: boolean, backwards: boolean): T | null {
+  if (focusable.length === 0) return null;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (backwards) return !inside || active === first ? last : null;
+  return !inside || active === last ? first : null;
+}
+
 // What an aria-modal dialog promises: Tab and Shift+Tab stay inside it, and the
 // page behind does not scroll while it is open.
 export function useModal(ref: RefObject<HTMLElement | null>) {
@@ -24,16 +34,12 @@ export function useModal(ref: RefObject<HTMLElement | null>) {
         event.preventDefault();
         return;
       }
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
       const active = document.activeElement;
       const inside = active instanceof Node && panel.contains(active);
-      if (event.shiftKey && (!inside || active === first)) {
+      const target = trapTarget(focusable, active, inside, event.shiftKey);
+      if (target) {
         event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && (!inside || active === last)) {
-        event.preventDefault();
-        first.focus();
+        target.focus();
       }
     }
     document.addEventListener("keydown", onKeyDown);
