@@ -75,6 +75,15 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     if (detailProductId && !catalogLoading) window.scrollTo({ top: 0, behavior: "instant" });
   }, [detailProductId, catalogLoading]);
 
+  // A link to "#san-pham" (the detail page's group breadcrumb) lands before the
+  // catalog has loaded, so the grid isn't there for the browser to scroll to yet.
+  const hashScrolled = useRef(false);
+  useEffect(() => {
+    if (detailProductId || catalogLoading || hashScrolled.current) return;
+    hashScrolled.current = true;
+    if (window.location.hash === "#san-pham") document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
+  }, [detailProductId, catalogLoading]);
+
   // The search box takes the URL's search on back/forward, and when a link
   // brings back this page, which Next keeps alive (Activity) with its old state.
   useLayoutEffect(() => {
@@ -472,6 +481,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           onChooseGroup={showGroup}
           products={products}
           productHref={(productId) => `${shopHref}/p/${encodeURIComponent(productId)}`}
+          search={search}
           onSearch={searchProducts}
         />
         <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />

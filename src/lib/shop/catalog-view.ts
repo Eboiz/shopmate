@@ -87,6 +87,11 @@ export function shopFilterQuery(filters: ShopFilters, current: URLSearchParams):
   return query ? `?${query}` : "";
 }
 
+// The shop page showing one group, scrolled to the product grid (#san-pham).
+export function shopGroupHref(shopHref: string, group: ProductGroup): string {
+  return `${shopHref}${shopFilterQuery({ group, search: "", size: "", sort: "group" }, new URLSearchParams())}#san-pham`;
+}
+
 // Every word of the query must appear somewhere in the fields, in any order.
 export function matchesQuery(fields: Array<string | null | undefined>, query: string): boolean {
   const words = foldVietnamese(query).split(" ").filter(Boolean);

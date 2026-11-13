@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayColor, firstSentence, foldVietnamese, matchesQuery, productGroup, readShopFilters, shopFilterQuery, sizeRange } from "./catalog-view";
+import { displayColor, firstSentence, foldVietnamese, matchesQuery, productGroup, readShopFilters, shopFilterQuery, shopGroupHref, sizeRange } from "./catalog-view";
 
 describe("catalog view helpers", () => {
   it("folds Vietnamese text for accent-free search", () => {
@@ -72,5 +72,12 @@ describe("shop filters in the URL", () => {
       const query = shopFilterQuery({ group, search: "", size: "", sort: "group" }, new URLSearchParams());
       expect(readShopFilters(new URLSearchParams(query), { groups, sizes: [] }).group).toBe(group);
     }
+  });
+
+  it("links a group to the shop page with that group selected and the grid in view", () => {
+    expect(shopGroupHref("/s/linh-boutique", "Áo khoác")).toBe("/s/linh-boutique?nhom=ao-khoac#san-pham");
+    const href = new URL(shopGroupHref("/s/linh-boutique", "Váy & đầm"), "http://localhost");
+    expect(href.hash).toBe("#san-pham");
+    expect(readShopFilters(href.searchParams, { groups: ["Váy & đầm"], sizes: [] })).toEqual({ group: "Váy & đầm", search: "", size: "", sort: "group" });
   });
 });
