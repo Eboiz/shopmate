@@ -8,7 +8,7 @@
 //   pnpm db:seed [--data=<name>]                   local Supabase (`pnpm db:start`)
 //   pnpm db:seed --target=shared --confirm=<ref>   the team's Supabase project
 //   pnpm db:seed --check [--data=<name>]           only read and check the CSV files
-//   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15, PB-21)
+//   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15, PB-21, PB-27)
 //     [--telegram-webhook=<base URL>]             also point the Telegram bot's webhook there
 //
 // Safe to run again: rows are upserted on their natural keys. Each run resets
@@ -288,14 +288,19 @@ async function seedAccount(shop_id: string, a: Account) {
   );
 }
 
-// 5b. The demo shop's chat channels: its Facebook Page (PB-15) and Telegram bot
-// (PB-21). Tokens come from .env.local and never enter the repo; each webhook finds
+// 5b. The demo shop's chat channels: its Facebook Page (PB-15), Telegram bot
+// (PB-21) and WhatsApp phone number (PB-27). Tokens come from .env.local and never enter the repo; each webhook finds
 // the shop from these rows. A channel whose variables are missing is skipped.
 const optionalEnv = (name: string) => process.env[name]?.trim() || undefined;
 const messengerEnv = () => {
   const pageId = optionalEnv("MESSENGER_PAGE_ID");
   const token = optionalEnv("MESSENGER_PAGE_ACCESS_TOKEN");
   return pageId && token ? { pageId, token } : null;
+};
+const whatsappEnv = () => {
+  const phoneNumberId = optionalEnv("WHATSAPP_PHONE_NUMBER_ID");
+  const token = optionalEnv("WHATSAPP_ACCESS_TOKEN");
+  return phoneNumberId && token ? { phoneNumberId, token } : null;
 };
 const telegramEnv = () => {
   const token = optionalEnv("TELEGRAM_BOT_TOKEN");
@@ -305,7 +310,7 @@ const telegramEnv = () => {
 
 async function seedChannelAccount(
   shop_id: string,
-  channel: "messenger" | "telegram",
+  channel: "messenger" | "telegram" | "whatsapp",
   external_account_id: string,
   access_token: string,
   webhook_secret: string | null = null,
@@ -329,6 +334,12 @@ async function seedChannels(shop_id: string, slug: string) {
     await seedChannelAccount(shop_id, "messenger", messenger.pageId, messenger.token);
     console.log(`✓ messenger: Page ${messenger.pageId} → ${slug}`);
   } else console.warn("! MESSENGER_PAGE_ID or MESSENGER_PAGE_ACCESS_TOKEN not set in .env.local: no Messenger channel");
+
+  const whatsapp = whatsappEnv();
+  if (whatsapp) {
+    await seedChannelAccount(shop_id, "whatsapp", whatsapp.phoneNumberId, whatsapp.token);
+    console.log(`✓ whatsapp: phone number ${whatsapp.phoneNumberId} → ${slug}`);
+  } else console.warn("! WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN not set in .env.local: no WhatsApp channel");
 
   const telegram = telegramEnv();
   if (!telegram) {
@@ -469,8 +480,8 @@ if (args.only === undefined) {
   // --only=channels touches nothing but channel_accounts: no prices, stock, photos or
   // passwords, so it is safe on the shared project while the team tests there. It
   // ends without process.exit: exiting while fetch sockets are open crashes Node on Windows.
-  if (!messengerEnv() && !telegramEnv()) {
-    fail("no channel to seed: set MESSENGER_PAGE_ID + MESSENGER_PAGE_ACCESS_TOKEN or TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_SECRET in .env.local");
+  if (!messengerEnv() && !telegramEnv() && !whatsappEnv()) {
+    fail("no channel to seed: set MESSENGER_PAGE_ID + MESSENGER_PAGE_ACCESS_TOKEN, TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_SECRET or WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN in .env.local");
   }
   const shop = must(
     await db.from("shops").select("id").eq("slug", data.shop.slug).maybeSingle(),

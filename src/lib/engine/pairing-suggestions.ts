@@ -4,10 +4,21 @@ import { fold } from "./text";
 type Pairing = ToolOutput<"get_pairings">["pairings"][number];
 
 export const MAX_MATCHING_SUGGESTIONS = 2;
+// Asked when the shopper wants matches but no product is known. PB-31 AC12: it
+// comes with the shop's paired products as buttons (EngineStore.pairedProductNames).
+export const ASK_PAIRING_PRODUCT_TEXT = "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.";
 const INTRO = "Shop gợi ý phối cùng:";
 const MAX_REPLY_LENGTH = 1000; // PB-00 reply.text limit
 
+// The shopper's message answers "phối cùng sản phẩm nào?" (a tapped button, or a typed name).
+export function answersPairingQuestion(history: HistoryMessage[]): boolean {
+  const i = history.findLastIndex((m) => m.sender === "shopper");
+  const before = history.slice(0, i).findLast((m) => m.sender !== "shopper");
+  return i > 0 && before?.sender === "ai" && before.text === ASK_PAIRING_PRODUCT_TEXT;
+}
+
 export function isMatchingQuestion(history: HistoryMessage[]): boolean {
+  if (answersPairingQuestion(history)) return true;
   const latest = [...history].reverse().find((message) => message.sender === "shopper");
   if (!latest) return false;
   const text = fold(latest.text);

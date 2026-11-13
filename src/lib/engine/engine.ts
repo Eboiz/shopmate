@@ -25,8 +25,10 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
+import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
+import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { normalizeSizeInput, shopperMeasurements, shopperTypedNumber } from "./measurements";
-import { findUncheckedNumbers, NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { findUncheckedNumbers, NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import type { PostcheckLog } from "./postcheck-log";
 import { findEnglish, VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import { answeredFromData } from "./resume";
@@ -34,11 +36,12 @@ import { fold } from "./text";
 import { turnToolCache } from "./turn-cache";
 import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
-import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
+import { ASK_PAIRING_PRODUCT_TEXT, isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
-import { isCatalogQuestion } from "./product-match";
+import { isCatalogQuestion, productCoveringMessage } from "./product-match";
 import { filterQuickReplies, type QuickReply } from "./quick-replies";
-import { catalogOverview, groupListing, isGroupName, routeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { catalogOverview, groupListing, isGroupName, routeTurn, unsoldSizeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { missedMentions, mustMentionNote, sizesNamedIn } from "./size-request";
 import {
   measurementsCorrection, measurementsQuestionText, recommendsSize, replyMatchesSize, sizeCorrection, sizeFallbackText,
   sizesInToolOutputs, type SizeAdvice,
@@ -127,6 +130,10 @@ export type EngineDeps = {
   // default; LANGFUSE_CAPTURE_CONTENT=true turns it on.
   captureContent: boolean;
   toolConcurrency: number;
+  // R3: the channel decides after the turn whether its reply goes out, so the
+  // logged row is written pending and is not read as the previous turn until
+  // the channel marks it (receive.ts, store.ts markTurn).
+  deliveryPending: boolean;
   // PB-10: Jev decides the turn and the model only writes the reply (route.ts).
   // null: every turn runs the LLM tool loop (no OPENROUTER_API_KEY, or tests).
   jev: JevClient | null;
@@ -140,6 +147,13 @@ export type EngineResult = {
   output: EngineOutput;
   handoffReason: HandoffReason | null;
   turnLogged: Promise<string | null>;
+  // The ai_turns row id as soon as the row is written (turnLogged also waits
+  // for the metrics sink); null when the write failed. Never rejects.
+  turnRow: Promise<string | null>;
+  // The create_draft_order RPC ran this turn, so its reply says what happened
+  // to that order: the channel sends it even when the shopper has written again
+  // meanwhile, or staff took over (receive.ts, R3).
+  orderWritten: boolean;
 };
 
 // Runs fn over items with at most `concurrency` at a time; results come back in
@@ -185,6 +199,7 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
     onMetrics: deps.onMetrics ?? defaultMetricsSink(),
     captureContent: deps.captureContent ?? process.env.LANGFUSE_CAPTURE_CONTENT === "true",
     toolConcurrency: deps.toolConcurrency ?? TOOL_CONCURRENCY,
+    deliveryPending: deps.deliveryPending ?? false,
     jev: deps.jev !== undefined ? deps.jev : jevFromEnv(),
   };
 }
@@ -207,6 +222,23 @@ function withOffer(text: string): Pick<Reply, "text" | "quickReplies"> {
   // The model may write the question itself, mid-sentence or in lower case.
   const asked = t.toLocaleLowerCase("vi").includes(OFFER_QUESTION.toLocaleLowerCase("vi"));
   return { text: asked ? t : `${t} ${OFFER_QUESTION}`, quickReplies: OFFER_QUICK_REPLIES };
+}
+
+// PB-39: the reply sent when the model said twice that data is missing while
+// this turn's tools returned it (or kept promising a later update): written from
+// the tool results with the product cards. With nothing looked up, the customer
+// is offered staff instead (PB-31).
+function missingFallback(
+  claims: readonly MissingClaim[],
+  logs: readonly ToolCallLog[],
+  sizeAdvice: SizeAdvice | null,
+  mode: EngineInput["mode"],
+): { text: string; productIds: string[]; offer: OfferReason | null } {
+  const policyKinds = claims.filter((c) => c !== "price" && c !== "stock" && c !== "promise");
+  const text = dataReplyText(logs, sizeAdvice, policyKinds.length ? policyKinds : undefined);
+  if (text) return { text, productIds: productIdsInLogs(logs), offer: null };
+  if (mode === "customer") return { text: offerTextFor("not_covered_by_data", null, false), productIds: [], offer: "not_covered_by_data" };
+  return { text: STAFF_DRAFT_GIVE_UP_TEXT, productIds: [], offer: null };
 }
 
 const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
@@ -237,6 +269,32 @@ function refusedHandoffRun(input: unknown, refused: RefusedHandoff): ToolRun {
   };
 }
 
+// PB-40: the last step on every path. Cards keep to the shopper's budget,
+// excluded garments and count ("có 300 nghìn, không thích váy, gợi ý 2 món");
+// a customer's buttons don't push another size than the one they asked for
+// when this turn looked up stock (BOT-02).
+async function keepToShopper(
+  reply: Reply,
+  text: string,
+  opts: { mode: EngineInput["mode"]; shopperSize: string | null; stockSizes: Set<string>; categories: () => Promise<CatalogItem[]> },
+): Promise<Reply> {
+  let out = reply;
+  const constraints = shopperConstraints(text);
+  if (out.products.length > 0 && hasConstraints(constraints)) {
+    const category = constraints.excludeGroups.length > 0
+      ? new Map((await opts.categories().catch(() => [])).map((p) => [p.id, p.category]))
+      : new Map<string, string | null>();
+    const kept = new Set(
+      fitConstraints(out.products.map((c) => ({ ...c, category: category.get(c.productId) ?? null })), constraints).map((c) => c.productId),
+    );
+    out = { ...out, products: out.products.filter((c) => kept.has(c.productId)) };
+  }
+  if (opts.mode === "customer" && opts.stockSizes.size > 0) {
+    out = { ...out, quickReplies: dropOtherSizeReplies(out.quickReplies, opts.shopperSize, opts.stockSizes) };
+  }
+  return out;
+}
+
 export async function runEngine(rawInput: EngineInput, partialDeps: Partial<EngineDeps> = {}): Promise<EngineResult> {
   const deps = resolveDeps(partialDeps);
   const { now } = deps;
@@ -252,6 +310,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       output: { reply: { text: PERSONAL_REPLY_TEXT, products: [], quickReplies: [] }, personalReplyNeeded: true },
       handoffReason: null,
       turnLogged: Promise.resolve(null),
+      turnRow: Promise.resolve(null),
+      orderWritten: false,
     };
   }
   // ONE read for everything needed before the model call.
@@ -276,6 +336,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // on screen; with none on screen it is dropped, never sent to the database.
   const cardIdsOf = (ids: readonly string[]) =>
     ids.flatMap((id) => (id !== VIEWING_PRODUCT_REF ? [id] : tc.product ? [tc.product.id] : []));
+  // PB-07: the reply sent when a reply's numbers failed twice: cards of the
+  // viewed product, else of the products the reply named (ids the shop has),
+  // else of the ones the turn looked up. With no card at all, the looked-up
+  // data itself is the text, so the shopper is never told to see a missing card.
+  const numberCardReply = async (replyIds: readonly string[]): Promise<Reply> => {
+    const looked = productIdsInLogs(logs);
+    let products = await deps.store.productCards(ctx.shopId, tc.product ? [tc.product.id] : cardIdsOf(replyIds));
+    if (products.length === 0 && looked.length > 0) products = await deps.store.productCards(ctx.shopId, looked);
+    if (products.length > 0) return { text: NUMBER_CARD_TEXT, products, quickReplies: [] };
+    return { text: dataReplyText(logs, null) ?? FALLBACK_TEXT, products: [], quickReplies: [] };
+  };
 
   // The shop's catalogue: read at most once per turn, shared by the Jev router
   // and the quick-reply check.
@@ -343,6 +414,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // and the reply then failed the "no size without measurements" check twice.
   let measurementsMissing: string[] | null = null;
   let measurementsFallback = false;
+  // PB-39 post-check: the reply claimed missing data the tools returned.
+  let missingRetried = false;
+  let missingClaims: MissingClaim[] = [];
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
   const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
@@ -362,7 +436,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // the shopper was asking for a discount or a price: the server refuses instead.
   let refusalFallback = false;
   // PB-07: prices and stock in a model-written reply must be the tools'. One
-  // rewrite; a second mismatch hands off with the product card (numberBlocked).
+  // rewrite; a second mismatch sends the product cards instead and the
+  // conversation stays with the AI (numberBlocked, PR #81 review).
   let numberCheck: PostcheckLog["numberCheck"];
   let numberBlocked = false;
   const shopperText = shopperTurnText(input.history);
@@ -376,6 +451,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let orderResult: ToolOutput<"create_draft_order"> | null = null;
   let orderIssue: { code: string; missing?: string[] } | null = null;
   let createAttempted = false;
+  // The create_draft_order RPC ran this turn (it may have committed even if it
+  // then failed): unlike createAttempted, a blocked or requoted call is not it.
+  let orderWritten = false;
 
   // PB-10: Jev routes the turn; orders, unsure turns and Jev failures fall back
   // to the LLM tool loop below.
@@ -480,6 +558,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
   }
 
+  // PB-45: without Jev (or when it failed) a size the product or the shop doesn't
+  // sell is still answered by the server, not by the tool loop. routeTurn does
+  // the same check with Jev's product.
+  const jevSkipped = !deps.jev || route.fallbackReason === "jev_error";
+  if (!routed && jevSkipped && !orderInProgress && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
+    const catalog = await deps.store.catalog(ctx.shopId);
+    const product = catalog.find((p) => p.id === tc.product?.id) ?? productCoveringMessage(lastText, catalog);
+    routed = await unsoldSizeTurn(
+      { mode, history: input.history, catalog, runTool, cards: (ids) => deps.store.productCards(ctx.shopId, ids) },
+      product,
+    );
+    if (routed) route = { path: "size_guard" };
+  }
+
   if (routed) {
     switch (routed.kind) {
       case "handoff":
@@ -582,6 +674,39 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             };
             break;
           }
+          // PB-45: every color in stock must be named ("Còn màu nào khác?"):
+          // one more try, then the reply written from get_stock.
+          const missed = missedMentions(parsed.reply.text, write.mustMention ?? []);
+          if (missed.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${mustMentionNote(missed)}`;
+              continue;
+            }
+            reply = {
+              text: dataReplyText(logs, null) ?? FALLBACK_TEXT,
+              products: await deps.store.productCards(ctx.shopId, write.productIds),
+              quickReplies: [],
+            };
+            break;
+          }
+          // PB-39: "chưa có giá / chưa có thông tin" while the facts have it, or
+          // "để mình kiểm tra và cập nhật": one more try, then the data itself.
+          const claims = falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: Boolean(write.offer) });
+          if (claims.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${missingRetryNote(claims)}`;
+              continue;
+            }
+            const fb = missingFallback(claims, logs, write.sizeAdvice ?? null, mode);
+            const ids = write.productIds.length ? write.productIds : fb.productIds;
+            reply = fb.offer
+              ? offerReply(fb.text)
+              : { text: fb.text, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+            offerMade = fb.offer;
+            break;
+          }
           const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
           const echoed = mode === "customer"
             && echoedShopperAmounts(parsed.reply.text, input.history, logs.map((l) => l.output)).length > 0;
@@ -607,10 +732,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
               continue;
             }
             numberBlocked = true;
-            handoff = "postcheck_failed";
-            await deps.store.setNeedsHuman(ctx);
-            const ids = tc.product ? [tc.product.id] : write.productIds;
-            reply = { text: NUMBER_HANDOFF_TEXT, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+            reply = await numberCardReply(write.productIds);
             break;
           }
           if (canRetry && needsVietnameseRewrite(parsed.reply.text)) {
@@ -707,6 +829,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         continue;
       }
       measurementsFallback = !measurementsOk;
+      // PB-39: "chưa có giá" while get_stock returned one, "chưa có phí ship"
+      // while get_policy(giao_hang) did, or a promise to check and update later.
+      const claims = parsed.ok && !isMatchingQuestion(input.history)
+        ? falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: offersStaff(parsed.reply) })
+        : [];
+      if (claims.length > 0 && !missingRetried && !sizeFallback && !measurementsFallback) {
+        missingRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: missingRetryNote(claims) },
+        );
+        continue;
+      }
+      missingClaims = claims;
       modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
       // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
@@ -714,7 +850,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       // shopper's own amount ("không giảm 50% được"). Still failing: the server
       // refuses when the shopper asked for a discount or a price; a discount the
       // AI offered unasked hands off (below the loop).
-      if (mode === "customer" && modelReply && !pairingState.called) {
+      if (mode === "customer" && modelReply && !pairingState.called && missingClaims.length === 0) {
         const discount = findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null;
         const echoed = echoedShopperAmounts(modelReply.text, input.history, logs.map((l) => l.output)).length > 0;
         if (discount || echoed) {
@@ -874,6 +1010,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             orderIssue = { code: "quote_changed" };
             return { run: blockedOrderRun(u.input, "quote_changed"), ms: now() - s0, startMs: s0 - t0 };
           }
+          // Past every check: the create RPC runs now (R3 sends this turn's reply).
+          orderWritten = true;
         }
       }
       // PB-09 (F3, F4): a handoff the shop's own data rules out is refused before
@@ -1047,7 +1185,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
     && answersAiMessage(input.history) && productMiss;
   if (productMissedTwice) handoff = "misunderstood_twice";
-  else if (discountBlocked || numberBlocked) handoff = "postcheck_failed";
+  else if (discountBlocked) handoff = "postcheck_failed";
   // The order may or may not have been written: staff checks it (the server
   // could not verify the write, hence postcheck_failed).
   const orderUnknown = mode === "customer" && !handoff
@@ -1097,19 +1235,18 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const text = orderUnknown ? ORDER_WRITE_UNKNOWN_TEXT
       : productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
-      : discountBlocked ? DISCOUNT_HANDOFF_TEXT
-      : numberBlocked ? NUMBER_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
-    // PB-07: the numbers the shopper gets come from the database card, not the
-    // model's text: the viewed product, else the products the reply was about.
-    const cardIds = handoff !== "postcheck_failed" ? []
-      : tc.product ? [tc.product.id]
-      : numberBlocked ? cardIdsOf(modelReply?.productIds ?? []) : [];
+      : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
+    const cardIds = handoff === "postcheck_failed" && tc.product ? [tc.product.id] : [];
     const products = cardIds.length > 0 ? await deps.store.productCards(ctx.shopId, cardIds) : [];
     reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (refusalFallback) {
     reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
+  } else if (numberBlocked) {
+    // PB-07: the numbers the shopper gets come from the database cards, not
+    // the model's text; the conversation stays with the AI.
+    reply = await numberCardReply(modelReply?.productIds ?? []);
   } else if (finalOrderResult?.status === "created") {
     reply = { text: orderCreatedText(), products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "out_of_stock") {
@@ -1164,12 +1301,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       products: await deps.store.productCards(ctx.shopId, [productId]),
       quickReplies: [],
     };
+  } else if (missingClaims.length > 0) {
+    const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice ?? null;
+    const fb = missingFallback(missingClaims, logs, advice, mode);
+    const ids = fb.productIds.length ? fb.productIds : tc.product ? [tc.product.id] : [];
+    reply = fb.offer
+      ? offerReply(fb.text)
+      : { text: fb.text, products: fb.text === STAFF_DRAFT_GIVE_UP_TEXT ? [] : await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+    offerMade = fb.offer;
   } else if (pairingState.called) {
     const cards = pairingState.items.length === 0
       ? []
       : await deps.store.productCards(ctx.shopId, pairingState.items.map((pairing) => pairing.productId));
     reply = pairingState.needsProduct
-      ? { text: "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.", products: [], quickReplies: [] }
+      ? { text: ASK_PAIRING_PRODUCT_TEXT, products: [], quickReplies: [] }
       : pairingState.failed && pairingState.items.length === 0
         ? { text: "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.", products: [], quickReplies: [] }
         : matchingReply(pairingState.items, cards);
@@ -1206,7 +1351,24 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // A complaint the word list catches returned early above (PB-20); one only Jev
   // caught sets personalReplyNeeded here.
-  const output = engineOutputSchema.parse({ reply: reply!, personalReplyNeeded });
+  // PB-31 AC12: the pairing question comes with the shop's paired products as
+  // buttons (both paths end here). Without them the shopper types the name.
+  if (mode === "customer" && reply?.text === ASK_PAIRING_PRODUCT_TEXT && reply.quickReplies.length === 0 && deps.store.pairedProductNames) {
+    const names = await deps.store.pairedProductNames(ctx.shopId).catch(() => []);
+    reply = { ...reply, quickReplies: names };
+  }
+  reply = await keepToShopper(reply!, lastText, {
+    mode,
+    shopperSize: knownShopperSize(input.history),
+    stockSizes: sizesInToolOutputs(logs.filter((l) => l.name === "get_stock").map((l) => l.output)),
+    categories: () => (deps.store.catalog ? deps.store.catalog(ctx.shopId) : Promise.resolve([])),
+  });
+  // PB-07: the shopper's budget or exclusions may have removed every card the
+  // number fallback sent; then the looked-up data is the text, never "see the card below".
+  if (reply.text === NUMBER_CARD_TEXT && reply.products.length === 0) {
+    reply = { ...reply, text: dataReplyText(logs, null) ?? FALLBACK_TEXT };
+  }
+  const output = engineOutputSchema.parse({ reply, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 
   const metrics: TurnMetrics = {
@@ -1235,16 +1397,21 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     console.error("engine: metrics sink failed", e);
   }
 
-  const turnLogged = (async () => {
+  const turnRow = (async () => {
     try {
-      const [row] = await Promise.all([deps.store.insertTurn({
+      return await deps.store.insertTurn({
         shop_id: ctx.shopId,
         conversation_id: ctx.conversationId,
         mode,
         latency_ms: latencyMs,
         tool_calls: logs as NonNullable<Json>,
         handoff_reason: handoff,
-        postcheck: { productMiss, ...(numberCheck ? { numberCheck } : {}), ...(vietnamese ? { vietnamese } : {}) } satisfies PostcheckLog,
+        postcheck: {
+          productMiss,
+          ...(numberCheck ? { numberCheck } : {}),
+          ...(vietnamese ? { vietnamese } : {}),
+          ...(deps.deliveryPending && mode === "customer" ? { pending: true as const } : {}),
+        } satisfies PostcheckLog,
         handoff_offer: handoff ? null : (offerMade as OfferReason | null),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
@@ -1252,15 +1419,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         model_calls: modelCalls.length,
         model: deps.modelName,
         prompt_version: PROMPT_VERSION,
-      }), sinkDone]);
-      return row;
+      });
     } catch (e) {
       console.error("engine: failed to write ai_turns", e);
       return null;
     }
   })();
+  const turnLogged = Promise.all([turnRow, sinkDone]).then(([row]) => row);
 
-  if (quotedOrderPresented && await turnLogged === null) {
+  // The summary is only confirmable once its quote is logged; the metrics sink
+  // (turnLogged) is not waited for.
+  if (quotedOrderPresented && await turnRow === null) {
     return {
       output: engineOutputSchema.parse({
         reply: { text: "Mình chưa lưu được báo giá lúc này. Bạn thử lại giúp mình nhé.", products: [], quickReplies: [] },
@@ -1268,7 +1437,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       }),
       handoffReason: handoff,
       turnLogged,
+      turnRow,
+      orderWritten,
     };
   }
-  return { output, handoffReason: handoff, turnLogged };
+  return { output, handoffReason: handoff, turnLogged, turnRow, orderWritten };
 }

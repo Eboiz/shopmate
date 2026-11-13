@@ -3,11 +3,12 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Icon } from "@/components/ui/icon";
 import { formatPrice } from "@/lib/format";
-import { compareSizes } from "@/lib/size-order";
-import { displayColor, firstSentence, productGroup } from "@/lib/shop/catalog-view";
+import { displayColor, firstSentence, productGroup, shopGroupHref } from "@/lib/shop/catalog-view";
 import type { ShopCatalog, ShopProduct } from "@/lib/shop/types";
 import type { CartItem } from "./cart";
+import { productOptions } from "./product-options";
 import { SizeGuide } from "./size-guide";
 
 type Policies = NonNullable<ShopCatalog["shop"]["policies"]>;
@@ -25,20 +26,17 @@ type Props = {
 };
 
 export function ProductDetailView({ shopName, product, shopHref, policies, cartCount, onAsk, onAddToCart, onOpenCart }: Props) {
-  const availableVariants = product.variants?.filter((variant) => variant.stock > 0);
-  const colors = availableVariants
-    ? [...new Set(availableVariants.map((variant) => variant.color))]
-    : product.colors;
-  const [color, setColor] = useState(colors[0] ?? "");
-  const sizes = availableVariants
-    ? [...new Set(availableVariants.filter((variant) => variant.color === color).map((variant) => variant.size))].sort(compareSizes)
-    : [...product.sizesInStock].sort(compareSizes);
-  const [size, setSize] = useState(sizes[0] ?? "");
+  const { colors, sizesFor, inStockSizesFor, sizeState, isColorSoldOut, defaultColor, defaultSizeFor, stockOf } = productOptions(product);
+  const [color, setColor] = useState(defaultColor);
+  const sizes = sizesFor(color);
+  const inStockSizes = inStockSizesFor(color);
+  const soldOutSizes = sizes.filter((item) => sizeState(color, item) === "sold_out");
+  const [size, setSize] = useState(() => defaultSizeFor(defaultColor));
   const [quantity, setQuantity] = useState(1);
   const [cartNotice, setCartNotice] = useState("");
-  const selectedVariant = availableVariants?.find((variant) => variant.color === color && variant.size === size);
-  const maxQuantity = selectedVariant?.stock ?? 99;
-  const canOrder = sizes.length > 0 && size !== "" && maxQuantity > 0;
+  const selectedVariant = product.variants?.find((variant) => variant.color === color && variant.size === size);
+  const maxQuantity = stockOf(color, size);
+  const canOrder = size !== "" && inStockSizes.includes(size) && maxQuantity > 0;
   const group = productGroup(product.category, product.name);
   const sizeChart = product.sizeChart ?? [];
   const policyItems = [
@@ -55,10 +53,7 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
   function changeColor(nextColor: string) {
     setColor(nextColor);
     setQuantity(1);
-    if (availableVariants) {
-      const firstSize = availableVariants.find((variant) => variant.color === nextColor)?.size;
-      setSize(firstSize ?? "");
-    }
+    setSize(defaultSizeFor(nextColor));
   }
 
   function pickSize(nextSize: string) {
@@ -82,7 +77,7 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
   }
 
   const optionClass = (active: boolean) =>
-    `min-h-11 rounded-lg border px-4 text-sm font-medium transition-colors ${active ? "border-[#c2412b] bg-[#fff0eb] text-[#a83826]" : "border-[#8f8a82] hover:border-[#171717]"}`;
+    `min-h-11 rounded-lg border px-4 text-sm font-medium transition-colors ${active ? "border-[#c2412b] bg-[#fff0eb] text-[#a83826]" : "border-[#8f8a82] hover:border-[#171717]"} disabled:cursor-not-allowed disabled:border-[#d6d1c9] disabled:bg-[#f5f3ef] disabled:text-[#8f8a82] disabled:line-through`;
 
   return (
     <div className="min-h-dvh bg-[#f5f3ef]">
@@ -93,7 +88,7 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
             <span className="truncate text-lg font-black uppercase tracking-[-.04em] sm:text-xl">{shopName}<span className="text-[#e9573f]">.</span></span>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={onOpenCart} className="inline-flex min-h-11 items-center rounded-lg border border-[#8f8a82] px-4 text-sm font-bold transition-colors hover:border-[#171717]">Giỏ ({cartCount})</button>
+            <button type="button" onClick={onOpenCart} aria-label={`Giỏ đặt hàng, ${cartCount} món`} title="Giỏ đặt hàng" className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-[#8f8a82] px-4 text-sm font-bold tabular-nums transition-colors hover:border-[#171717]"><Icon name="cart" className="size-5" />{cartCount}</button>
             <button type="button" aria-label="Chat với shop" onClick={() => onAsk(product)} className="inline-flex min-h-11 items-center rounded-lg border border-[#171717] px-4 text-sm font-bold transition-colors hover:bg-[#171717] hover:text-white">Chat</button>
           </div>
         </div>
@@ -102,7 +97,7 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
       <div className="mx-auto max-w-[1400px] px-4 pb-20 pt-6 sm:px-6 lg:px-10">
         <nav aria-label="Đường dẫn trang" className="mb-6 flex flex-wrap items-center gap-2 text-xs text-[#706d67]">
           <Link href={shopHref} className="hover:text-[#c2412b]">Cửa hàng</Link><span aria-hidden="true">/</span>
-          <Link href={`${shopHref}#san-pham`} className="hover:text-[#c2412b]">{group}</Link><span aria-hidden="true">/</span>
+          <Link href={shopGroupHref(shopHref, group)} className="hover:text-[#c2412b]">{group}</Link><span aria-hidden="true">/</span>
           <span aria-current="page" className="font-semibold text-[#171717]">{product.name}</span>
         </nav>
 
@@ -126,7 +121,12 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
               <fieldset className="mt-7">
                 <legend className="mb-3 text-sm font-semibold">Màu sắc <span className="font-normal text-[#706d67]">· {displayColor(color)}</span></legend>
                 <div className="flex flex-wrap gap-2">
-                  {colors.map((item) => <button key={item} type="button" aria-pressed={color === item} onClick={() => changeColor(item)} className={optionClass(color === item)}>{displayColor(item)}</button>)}
+                  {colors.map((item) => (
+                    <button key={item} type="button" aria-pressed={color === item} onClick={() => changeColor(item)} className={optionClass(color === item)}>
+                      {displayColor(item)}
+                      {isColorSoldOut(item) && <span className="ml-1 text-xs font-normal text-[#706d67]">· Hết hàng</span>}
+                    </button>
+                  ))}
                 </div>
               </fieldset>
             )}
@@ -137,9 +137,17 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
               </legend>
               {sizes.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
-                  {sizes.map((item) => <button key={item} type="button" aria-pressed={size === item} onClick={() => pickSize(item)} className={`${optionClass(size === item)} min-w-12 px-3 font-semibold`}>{item}</button>)}
+                  {sizes.map((item) => {
+                    const soldOut = sizeState(color, item) === "sold_out";
+                    return (
+                      <button key={item} type="button" disabled={soldOut} aria-label={soldOut ? `Size ${item}, hết hàng` : undefined} title={soldOut ? "Hết hàng" : undefined} aria-pressed={size === item} onClick={() => pickSize(item)} className={`${optionClass(size === item)} min-w-12 px-3 font-semibold`}>{item}</button>
+                    );
+                  })}
                 </div>
-              ) : <p className="text-sm text-[#706d67]">Chưa có size còn hàng.</p>}
+              ) : <p className="text-sm text-[#706d67]">Chưa có size.</p>}
+              {soldOutSizes.length > 0 && (
+                <p className="mt-2 text-xs text-[#706d67]">{inStockSizes.length > 0 ? `Hết hàng: size ${soldOutSizes.join(", ")}` : "Màu này đã hết hàng."}</p>
+              )}
             </fieldset>
 
             {canOrder && (
@@ -189,7 +197,7 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
         {sizeChart.length > 0 && (
           <SizeGuide
             rows={sizeChart}
-            availableSizes={sizes}
+            availableSizes={inStockSizes}
             onPick={pickSize}
             onAsk={(message) => onAsk(product, message)}
           />

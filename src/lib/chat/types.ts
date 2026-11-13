@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { messageSenderSchema, replySchema } from "@/contract";
+import { conversationModeSchema, messageSenderSchema, replySchema } from "@/contract";
 
 export const chatMessageSchema = z.object({
   id: z.uuid(),
@@ -9,7 +9,12 @@ export const chatMessageSchema = z.object({
   createdAt: z.string(),
 });
 
-export const chatHistorySchema = z.object({ messages: z.array(chatMessageSchema) });
+// mode (PB-42): the conversation mode (PB-00), so the shop page can tell a
+// pending AI turn from a wait for staff. Defaults to "ai" for older responses.
+export const chatHistorySchema = z.object({
+  messages: z.array(chatMessageSchema),
+  mode: conversationModeSchema.default("ai"),
+});
 
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
 export type ChatHistory = z.infer<typeof chatHistorySchema>;

@@ -25,7 +25,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { OFFER_DECLINED_TEXT, OFFER_NO, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_YES } from "./handoff-offer";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { POLICY_HAS_TEXT_ERROR } from "./handoff-guard";
-import { NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import { orderCreatedText } from "./order-flow";
 import { VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import { isOrderConfirmation, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES } from "./order-flow";
@@ -321,6 +321,56 @@ describe("runEngine", () => {
       const result = await run(customerInput({ history: orderHistory }));
       expect(handlers.create_draft_order).toHaveBeenCalledTimes(1);
       expect(result.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
+    });
+
+    it("R3: orderWritten is true only when the create RPC ran", async () => {
+      const created = setup([toolCalls(toolUse("create_draft_order", draftOrder))], { store: orderStore() });
+      created.handlers.quote_order.mockResolvedValue(orderQuote);
+      expect((await created.run(customerInput({ history: orderHistory }))).orderWritten).toBe(true);
+
+      // The price changed since the summary: nothing is written, only a new summary.
+      const requoted = setup([toolCalls(toolUse("create_draft_order", draftOrder))], { store: orderStore() });
+      requoted.handlers.quote_order.mockResolvedValue({ ...orderQuote, total: orderQuote.total + 10000, lines: orderQuote.lines.map((l) => ({ ...l, unitPrice: l.unitPrice + 10000, lineTotal: l.lineTotal + 10000 })) });
+      const r = await requoted.run(customerInput({ history: orderHistory }));
+      expect(requoted.handlers.create_draft_order).not.toHaveBeenCalled();
+      expect(r.orderWritten).toBe(false);
+
+      const blocked = setup([toolCalls(toolUse("create_draft_order", draftOrder)), reply()], { store: orderStore() });
+      expect((await blocked.run(customerInput({ history: [orderHistory[0]] }))).orderWritten).toBe(false);
+    });
+
+    it("R3: a channel turn is logged pending and turnRow resolves without waiting for the metrics sink", async () => {
+      let releaseSink = () => {};
+      const sink = new Promise<void>((resolve) => { releaseSink = resolve; });
+      const { store, run } = setup([reply()], { deps: { deliveryPending: true, onMetrics: () => sink } });
+      const result = await run(customerInput());
+      expect(await result.turnRow).toBe("turn-1");
+      expect(store.insertTurn.mock.calls[0][0].postcheck).toMatchObject({ pending: true });
+      let logged = false;
+      void result.turnLogged.then(() => { logged = true; });
+      await Promise.resolve();
+      expect(logged).toBe(false);
+      releaseSink();
+      expect(await result.turnLogged).toBe("turn-1");
+    });
+
+    it("R3: an order summary returns once its quote row is written, without waiting for the metrics sink", async () => {
+      const sink = new Promise<void>(() => {}); // never resolves
+      const { handlers, run } = setup(
+        [toolCalls(toolUse("quote_order", { items: draftOrder.items }), toolUse("create_draft_order", draftOrder))],
+        { deps: { deliveryPending: true, onMetrics: () => sink } },
+      );
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      const result = await run(customerInput({ history: [
+        { sender: "shopper", text: "Mình lấy váy size M màu be, tên Thảo, số 0912345678, giao tới Q1." },
+      ] }));
+      expect(result.output.reply.text).toContain("Bạn xác nhận đơn này chứ?");
+    });
+
+    it("R3: without deliveryPending (dev route, eval) the row is not pending", async () => {
+      const { store, run } = setup([reply()]);
+      await (await run(customerInput())).turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].postcheck).not.toHaveProperty("pending");
     });
 
     it("writes at most one draft per turn when the model sends two valid calls", async () => {
@@ -1260,6 +1310,63 @@ describe("runEngine", () => {
     });
   });
 
+  describe("PB-39: a reply saying data is missing while this turn's tools returned it (tool loop)", () => {
+    const ask = customerInput({ history: [{ sender: "shopper", text: "váy suông linen giá bao nhiêu, còn màu gì?" }] });
+    const stockCall = toolCalls(toolUse("get_stock", { productId: PRODUCT }));
+    const inStock = { ...stockOut, price: 289000, variants: [{ variantId: VARIANT, size: "M", color: "trắng", stock: 4 }] };
+    const lastUserText = (params: Anthropic.MessageCreateParamsNonStreaming) => {
+      const last = params.messages.at(-1)!;
+      return typeof last.content === "string" ? last.content : "";
+    };
+    const missing = "Dạ, giá và màu còn hàng thì mình chưa có thông tin cụ thể, để mình kiểm tra và cập nhật cho bạn nhé.";
+
+    it("is regenerated once with what the data has", async () => {
+      const good = "Dạ, váy giá 289.000đ, còn size M màu trắng ạ.";
+      const { handlers, model, run } = setup([stockCall, reply(missing), reply(good)]);
+      handlers.get_stock.mockResolvedValue(inStock);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(3);
+      expect(lastUserText(model.calls[2])).toContain("Kiểm tra tự động");
+      expect(lastUserText(model.calls[2])).toContain("giá");
+      expect(result.output.reply.text).toBe(good);
+    });
+
+    it("twice: the reply is written from the tool results, with the product card", async () => {
+      const { handlers, model, store, run } = setup([stockCall, reply(missing, [PRODUCT]), reply(missing, [PRODUCT])]);
+      handlers.get_stock.mockResolvedValue(inStock);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(3);
+      expect(result.output.reply.text).toContain("289.000đ");
+      expect(result.output.reply.text).toContain("size M màu trắng");
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+      expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
+      expect(result.handoffReason).toBeNull();
+    });
+
+    it("BOT-05: 'chưa có phí giao hàng' while get_policy(giao_hang) returned it -> retry, then the shop's text", async () => {
+      const shipping = "Phí ship đồng giá 30.000đ cho mọi đơn.";
+      const wrong = "Dạ, hiện shop chưa có thông tin về phí giao hàng ạ.";
+      const { handlers, model, run } = setup([
+        toolCalls(toolUse("get_policy", { kind: "giao_hang" })),
+        reply(wrong),
+        reply(wrong),
+      ]);
+      handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: shipping });
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "phí ship bao nhiêu?" }] }));
+      expect(model.calls).toHaveLength(3);
+      expect(result.output.reply.text).toContain(shipping);
+    });
+
+    it("a 'not in the policy' offer (PB-31) is not a false claim", async () => {
+      const text = `Dạ, chính sách giao hàng của shop chưa có thông tin về giao Chủ nhật ạ. ${OFFER_QUESTION}`;
+      const { handlers, model, run } = setup([toolCalls(toolUse("get_policy", { kind: "giao_hang" })), reply(text)]);
+      handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: "Phí ship 30.000đ" });
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "chủ nhật có giao không" }] }));
+      expect(model.calls).toHaveLength(2);
+      expect(result.output.reply.text).toBe(text);
+    });
+  });
+
   describe("PB-31: fewer handoffs (tool loop)", () => {
     it("the offer question is never repeated when the model wrote it mid-sentence in lower case", async () => {
       const text = "Dạ, mình không chia sẻ thông tin riêng của chủ shop ạ. Về hợp tác, bạn có muốn mình nhờ nhân viên shop trả lời thêm không?";
@@ -1662,19 +1769,84 @@ describe("runEngine", () => {
       expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
     });
 
-    it("wrong price twice sends the product card, hands off postcheck_failed and logs postcheck.numberCheck", async () => {
+    it("wrong price twice sends the product card, stays with the AI and logs postcheck.numberCheck", async () => {
       const { store, run } = setup([
         toolCalls(toolUse("get_stock", { productId: PRODUCT })),
         reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
         reply("Dạ váy giá 390k ạ", [PRODUCT]),
       ]);
       const result = await run(customerInput({ history: stockHistory }));
-      expect(result.handoffReason).toBe("postcheck_failed");
-      expect(result.output.reply.text).toBe(NUMBER_HANDOFF_TEXT);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe(NUMBER_CARD_TEXT);
       expect(result.output.reply.products).toEqual([card(PRODUCT)]);
-      expect(store.setNeedsHuman).toHaveBeenCalled();
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
       await result.turnLogged;
-      expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: ["390k"], retried: true } });
+      const row = store.insertTurn.mock.calls[0][0];
+      expect(row.handoff_reason).toBeNull();
+      expect(row.postcheck).toEqual({ productMiss: false, numberCheck: { failed: ["390k"], retried: true } });
+    });
+
+    it("wrong price twice with no product on screen sends the cards of the products the turn looked up", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", []),
+        reply("Dạ váy giá 390k ạ", []),
+      ]);
+      store.loadTurnContext.mockResolvedValueOnce({ conversation: { shopId: SHOP_A, mode: "ai" }, product: null } as never);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+    });
+
+    it("wrong price twice with ids the shop doesn't have falls back to the products the turn looked up", async () => {
+      const FOREIGN = "f0000000-0000-4000-8000-000000000099";
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [FOREIGN]),
+        reply("Dạ váy giá 390k ạ", [FOREIGN]),
+      ]);
+      store.productCards.mockImplementation(async (_shop, ids) => ids.filter((id) => id !== FOREIGN).map(card));
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(result.output.reply.text).toBe(NUMBER_CARD_TEXT);
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+    });
+
+    it("wrong price twice with no card at all sends the looked-up data instead of 'see the card below'", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", []),
+        reply("Dạ váy giá 390k ạ", []),
+      ]);
+      store.productCards.mockResolvedValue([]);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(result.output.reply.text).not.toBe(NUMBER_CARD_TEXT);
+      expect(result.output.reply.text).toContain("350.000đ");
+      expect(result.output.reply.products).toEqual([]);
+      expect(result.handoffReason).toBeNull();
+    });
+
+    it("wrong price twice whose cards the shopper's budget removes sends the data, not 'see the card below'", async () => {
+      const budget = [{ sender: "shopper" as const, text: "mình có 300 nghìn, váy này giá bao nhiêu?" }];
+      const { run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
+        reply("Dạ váy giá 390k ạ", [PRODUCT]),
+      ]);
+      const result = await run(customerInput({ history: budget }));
+      expect(result.output.reply.products).toEqual([]);
+      expect(result.output.reply.text).not.toBe(NUMBER_CARD_TEXT);
+      expect(result.output.reply.text).toContain("350.000đ");
+    });
+
+    it("wrong price twice in needs_human does not move the conversation back to the AI", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
+        reply("Dạ váy giá 390k ạ", [PRODUCT]),
+      ]);
+      store.loadTurnContext.mockResolvedValueOnce({ conversation: { shopId: SHOP_A, mode: "needs_human" }, product: { id: PRODUCT, name: "Váy" } } as never);
+      await run(customerInput({ history: stockHistory }));
+      expect(store.setAiMode).not.toHaveBeenCalled();
     });
 
     it("a reply with the tool's price is sent without a rewrite and logs no numberCheck", async () => {
@@ -1711,14 +1883,14 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toBe("Dạ size M available nha");
     });
 
-    it("the handoff card never sends VIEWING_PRODUCT_REF to the database (v1.3 merge)", async () => {
+    it("the number card never sends VIEWING_PRODUCT_REF to the database (v1.3 merge)", async () => {
       const { store, run } = setup([
         toolCalls(toolUse("get_stock", { productId: PRODUCT })),
         reply("Dạ váy giá 390k ạ", [VIEWING_PRODUCT_REF, PRODUCT]),
         reply("Dạ váy giá 390k ạ", [VIEWING_PRODUCT_REF, PRODUCT]),
       ]);
       const result = await run(customerInput({ history: stockHistory }));
-      expect(result.handoffReason).toBe("postcheck_failed");
+      expect(result.handoffReason).toBeNull();
       expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
     });
 

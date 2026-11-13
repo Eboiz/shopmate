@@ -66,3 +66,6 @@ next-env.d.ts
 /replay-runs/
 # pnpm eval:live: new shoppers sent from this machine in the last hour
 /eval-runs/.live-new-shoppers.json
+
+# impeccable critique snapshots
+.impeccable/*

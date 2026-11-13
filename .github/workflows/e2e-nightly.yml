@@ -234,9 +234,12 @@ jobs:
     timeout-minutes: 45
     outputs:
       ran: ${{ steps.changes.outputs.ran }}
+    # Same AI settings as Vercel production, from the repository secrets (the URL and
+    # model fall back to the values production used on 12/11 when a secret is unset).
     env:
-      ANTHROPIC_API_URL: https://api.agentshop247.com/api/claude
-      ANTHROPIC_MODEL: claude-haiku-5-5
+      ANTHROPIC_API_URL: ${{ secrets.ANTHROPIC_API_URL || 'https://api.agentshop247.com/api/claude' }}
+      ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL || 'claude-haiku-5-5' }}
+      OPENROUTER_API_URL: ${{ secrets.OPENROUTER_API_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -262,6 +265,9 @@ jobs:
         timeout-minutes: 25
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BACKUP_API_KEY: ${{ secrets.ANTHROPIC_BACKUP_API_KEY }}
+          # The Jev router, as on production (the eval turns it on when the key is set).
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           EVAL_SEVERITY: critical
           EVAL_RUNS: "1"
           EVAL_MAX_TOKENS: "400000"
@@ -281,6 +287,8 @@ jobs:
         timeout-minutes: 15
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_BACKUP_API_KEY: ${{ secrets.ANTHROPIC_BACKUP_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           E2E_REAL_AI: "1"
         run: |
           mkdir -p ai-out
@@ -289,26 +297,29 @@ jobs:
           status=$?
           [ -f e2e-results.json ] && mv e2e-results.json ai-out/main-flow.json
           exit $status
-      # The repository is public: nothing that may contain the key leaves this job.
-      - name: Refuse output that contains the API key
+      # The repository is public: nothing that may contain a key leaves this job.
+      - name: Refuse output that contains an API key
         if: steps.changes.outputs.ran == 'true' && !cancelled()
         env:
-          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KEY_ANTHROPIC: ${{ secrets.ANTHROPIC_API_KEY }}
+          KEY_BACKUP: ${{ secrets.ANTHROPIC_BACKUP_API_KEY }}
+          KEY_OPENROUTER: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           # No ai-out/ (the eval failed before writing): nothing to check.
           [ -d ai-out ] || exit 0
           files=$(find ai-out -type f)
           [ -n "$files" ] || exit 0
           leak=false
-          grep -qE '(sk-ant-|as_eyJ)[A-Za-z0-9_.-]{8,}' $files && leak=true
-          if [ -n "$KEY" ]; then
+          grep -qE '(sk-ant-|sk-or-|as_eyJ)[A-Za-z0-9_.-]{8,}' $files && leak=true
+          for KEY in "$KEY_ANTHROPIC" "$KEY_BACKUP" "$KEY_OPENROUTER"; do
+            [ -n "$KEY" ] || continue
             grep -qF "$KEY" $files && leak=true
             for pad in "" "x" "xx"; do
               enc=$(printf '%s%s' "$pad" "$KEY" | base64 -w0 | cut -c5-40)
               grep -qF "$enc" $files && leak=true
             done
-          fi
-          if [ "$leak" = true ]; then rm -rf ai-out; echo "::error::AI output contains the API key. Rotate the key."; exit 1; fi
+          done
+          if [ "$leak" = true ]; then rm -rf ai-out; echo "::error::AI output contains an API key. Rotate the keys."; exit 1; fi
       - if: steps.changes.outputs.ran == 'true' && !cancelled()
         uses: actions/upload-artifact@v4
         with:

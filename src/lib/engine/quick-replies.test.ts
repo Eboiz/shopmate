@@ -25,6 +25,14 @@ describe("filterQuickReplies", () => {
     expect(filterQuickReplies(replies, catalog)).toEqual(replies);
   });
 
+  it("'Lên đơn' is an order button, not the garment 'len'", () => {
+    expect(filterQuickReplies(["Lên đơn", "Lên đơn áo khoác bomber", "Len don"], catalog)).toEqual(["Lên đơn", "Lên đơn áo khoác bomber", "Len don"]);
+  });
+
+  it("'áo len' is still a garment the shop must sell", () => {
+    expect(filterQuickReplies(["Xem áo len"], catalog)).toEqual([]);
+  });
+
   it("keeps the order the model wrote", () => {
     expect(filterQuickReplies(["Áo khoác da nam", "Xem bomber", "Áo da nữ", "Hỏi nhân viên"], catalog)).toEqual([
       "Xem bomber",

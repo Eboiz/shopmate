@@ -7,22 +7,14 @@ import { ErrorMessage } from "@/components/ui/error-message";
 import { Icon } from "@/components/ui/icon";
 import { ChatSkeleton, LoadingRegion, Skeleton } from "@/components/ui/skeleton";
 import {
-  historyLimit, listInboxMessages, listLiveConversations, setLiveInboxMode, subscribeInbox,
-  type InboxConversation, type InboxMessage,
+  countConversations, getConversation, historyLimit, listInboxMessages, listTeamNames, searchConversations, setLiveInboxMode,
+  subscribeInbox, type InboxConversation, type InboxMessage,
 } from "./inbox-live";
 import {
-  countByMode, emptyFilter, filterConversations, formatListTime, initialOf,
-  type ChannelFilter, type InboxFilter, type ModeFilter,
+  avatarInitial, channelLabels, emptyFilter, formatListTime, type ChannelFilter, type InboxFilter, type ModeFilter,
 } from "./inbox-filter";
+import { appendPage, mergeFirstPage, type InboxCounts, type InboxPage } from "./inbox-page";
 import { formatWaiting, overdueAfterMs, waitingMs } from "./waiting";
-
-const channelLabels: Record<Channel, string> = {
-  web: "Web chat",
-  messenger: "Messenger",
-  instagram: "Instagram",
-  telegram: "Telegram",
-  whatsapp: "WhatsApp",
-};
 
 const modeLabels: Record<ConversationMode, string> = {
   ai: "AI đang trả lời",
@@ -50,6 +42,13 @@ const bubbleStyles: Record<Exclude<MessageSender, "system">, string> = {
   staff: "rounded-br-sm bg-[#171717] text-white",
 };
 
+// The time inside a bubble, readable on each bubble's background.
+const timeStyles: Record<Exclude<MessageSender, "system">, string> = {
+  shopper: "text-[#706d67]",
+  ai: "text-[#6b5c55]",
+  staff: "text-[#c9c5bd]",
+};
+
 const avatarColors = ["bg-[#fde3d9] text-[#9a3412]", "bg-[#e0ecdf] text-[#2f5a32]", "bg-[#e3e7f5] text-[#2f3f7a]", "bg-[#f3e6c8] text-[#6b4d0f]", "bg-[#ece2f0] text-[#5b3168]"];
 
 const inboxDate = new Intl.DateTimeFormat("vi-VN", {
@@ -68,36 +67,92 @@ const frameHeight = "h-[calc(100dvh-19rem)] min-h-[26rem] lg:h-[calc(100dvh-16re
 type InboxState =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; conversations: InboxConversation[] };
+  | ({ status: "ready" } & InboxPage);
 
 type SendMessageAction = (conversationId: string, text: string, requestId: string) => Promise<
   { ok: true } | { ok: false; messageId: string | null }
 >;
 
-function ModeBadge({ mode }: { mode: ConversationMode }) {
+// Wait this long after the last keystroke before searching the server.
+const searchDelayMs = 300;
+
+// `label` replaces the generic text, e.g. "Bạn đang trả lời" in the open conversation.
+function ModeBadge({ mode, label }: { mode: ConversationMode; label?: string }) {
   const color = mode === "needs_human" ? "bg-[#fff0eb] text-[#b2382a]" : "bg-[#efebe4] text-[#171717]";
-  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${color}`}>{modeLabels[mode]}</span>;
+  return <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${color}`}>{label ?? modeLabels[mode]}</span>;
 }
 
 function Avatar({ conversation, size = "size-11" }: { conversation: InboxConversation; size?: string }) {
   const color = avatarColors[[...conversation.id].reduce((sum, char) => sum + char.charCodeAt(0), 0) % avatarColors.length];
   return (
     <span aria-hidden="true" className={`relative flex shrink-0 items-center justify-center rounded-full text-base font-bold ${size} ${color}`}>
-      {initialOf(conversation.customerName)}
+      {avatarInitial(conversation)}
       {conversation.mode === "needs_human" && <span className="absolute right-0 top-0 size-3 rounded-full border-2 border-white bg-[#e9573f]" />}
     </span>
   );
 }
 
-export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMessageAction }) {
+export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId }: {
+  sendMessageAction?: SendMessageAction;
+  // From ?c= in the URL: links from orders and the dashboard open one conversation.
+  initialSelectedId?: string;
+  currentUserId?: string;
+}) {
   const [state, setState] = useState<InboxState>({ status: "loading" });
+  const [counts, setCounts] = useState<InboxCounts | null>(null);
+  const [filter, setFilter] = useState<InboxFilter>(emptyFilter);
+  // The search the list shows: filter.query once typing pauses.
+  const [query, setQuery] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Channels seen so far: the channel menu only offers channels the shop uses.
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId ?? null);
+  // The open conversation when it is not in the loaded pages (an old ?c= link).
+  const [outside, setOutside] = useState<InboxConversation | null>(null);
+  const [teamNames, setTeamNames] = useState<Record<string, string>>({});
   const [historyVersion, setHistoryVersion] = useState(0);
   // Clock for "waiting since" labels: set when data arrives, then once a minute,
   // so render never reads the clock itself.
   const [now, setNow] = useState<number | null>(null);
+  // Every page-one load takes a new number; a reply for an older number is
+  // stale (the filter changed meanwhile) and is dropped. "Tải thêm" reads the
+  // number without taking one, so a newer page-one load also drops it.
+  const requestId = useRef(0);
+  const shownFilter = useRef<string | null>(null);
+  const searchFilter = useMemo<InboxFilter>(() => ({ query, mode: filter.mode, channel: filter.channel }), [query, filter.mode, filter.channel]);
+  const conversations = state.status === "ready" ? state.conversations : null;
+
+  // Page one and the tab counts for the current filter. Called from effects only:
+  // when the filter settles, on reload, and on every realtime change.
+  const loadFirstPage = useEffectEvent(() => {
+    const target = searchFilter;
+    const id = ++requestId.current;
+    const key = JSON.stringify(target);
+    // A reload or realtime change keeps the pages already loaded; a new filter starts over.
+    const keepPages = shownFilter.current === key;
+    Promise.all([searchConversations(target), countConversations(target)]).then(
+      ([page, nextCounts]) => {
+        if (id !== requestId.current) return;
+        shownFilter.current = key;
+        setState((current) => ({ status: "ready", ...(keepPages && current.status === "ready" ? mergeFirstPage(current, page) : page) }));
+        setCounts(nextCounts);
+        setChannels((current) => {
+          const seen = new Set([...current, ...page.conversations.map(({ channel }) => channel)]);
+          return seen.size === current.length ? current : [...seen];
+        });
+        setNow(Date.now());
+        setRefreshing(false);
+      },
+      () => {
+        if (id !== requestId.current) return;
+        setState((current) => current.status === "ready" ? current : { status: "error" });
+        setRefreshing(false);
+      },
+    );
+  });
+
   const onMessage = useEffectEvent((conversationId?: string) => {
     if (selectedId && (!conversationId || conversationId === selectedId)) {
       setHistoryVersion((version) => version + 1);
@@ -105,36 +160,24 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
   });
 
   useEffect(() => {
+    if (filter.query === query) return;
+    const timer = setTimeout(() => setQuery(filter.query), searchDelayMs);
+    return () => clearTimeout(timer);
+  }, [filter.query, query]);
+
+  useEffect(() => {
+    loadFirstPage();
+  }, [searchFilter, attempt]);
+
+  useEffect(() => {
     let active = true;
-    let requestId = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-
-    function refresh() {
-      const id = ++requestId;
-      void listLiveConversations().then(
-        (conversations) => {
-          if (active && id === requestId) {
-            setState({ status: "ready", conversations });
-            setNow(Date.now());
-            setRefreshing(false);
-          }
-        },
-        () => {
-          if (active && id === requestId) {
-            setState((current) => current.status === "ready" ? current : { status: "error" });
-            setRefreshing(false);
-          }
-        },
-      );
-    }
-
-    refresh();
     const unsubscribe = subscribeInbox(
       () => {
         if (!active || timer) return;
         timer = setTimeout(() => {
           timer = undefined;
-          refresh();
+          loadFirstPage();
         }, 80);
       },
       (conversationId) => { if (active) onMessage(conversationId); },
@@ -147,16 +190,61 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
     };
   }, [attempt]);
 
+  // A ?c= conversation outside the loaded pages is read on its own, again
+  // whenever the list reloads so its mode stays current.
+  const inList = Boolean(selectedId && conversations?.some(({ id }) => id === selectedId));
+  useEffect(() => {
+    if (!selectedId || !conversations || inList) return;
+    let active = true;
+    void getConversation(selectedId).then((conversation) => { if (active) setOutside(conversation); }, () => {});
+    return () => { active = false; };
+  }, [selectedId, conversations, inList]);
+
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(tick);
   }, []);
+
+  // Names only make the badge friendlier; without them it says "Nhân viên".
+  useEffect(() => {
+    let active = true;
+    void listTeamNames().then((names) => { if (active) setTeamNames(names); }, () => {});
+    return () => { active = false; };
+  }, []);
+
+  // Keep the open conversation in the URL (?c=) so a reload returns to it.
+  function select(id: string | null) {
+    setSelectedId(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("c", id);
+    else url.searchParams.delete("c");
+    window.history.replaceState(null, "", url);
+  }
 
   function reload() {
     if (state.status === "error") setState({ status: "loading" });
     else setRefreshing(true);
     setAttempt((current) => current + 1);
     setHistoryVersion((version) => version + 1);
+  }
+
+  function changeFilter(next: InboxFilter) {
+    setFilter(next);
+    // Clearing the search shows everything at once, without the typing delay.
+    if (!next.query.trim()) setQuery(next.query);
+  }
+
+  function loadMore() {
+    if (state.status !== "ready" || !state.nextCursor || loadingMore) return;
+    const id = requestId.current;
+    setLoadingMore(true);
+    searchConversations(searchFilter, state.nextCursor).then(
+      (page) => {
+        if (id === requestId.current) setState((current) => current.status === "ready" ? { status: "ready", ...appendPage(current, page) } : current);
+        setLoadingMore(false);
+      },
+      () => setLoadingMore(false),
+    );
   }
 
   if (state.status === "loading") return <InboxSkeleton />;
@@ -175,9 +263,19 @@ export function StaffInbox({ sendMessageAction }: { sendMessageAction?: SendMess
   return (
     <InboxConversations
       conversations={state.conversations}
+      counts={counts}
+      channels={channels}
+      filter={filter}
+      onFilterChange={changeFilter}
+      searching={filter.query !== query}
+      hasMore={Boolean(state.nextCursor)}
+      loadingMore={loadingMore}
+      loadMore={loadMore}
       now={now}
-      selected={state.conversations.find(({ id }) => id === selectedId)}
-      onSelect={setSelectedId}
+      selected={state.conversations.find(({ id }) => id === selectedId) ?? (outside?.id === selectedId ? outside : undefined)}
+      onSelect={select}
+      teamNames={teamNames}
+      currentUserId={currentUserId}
       historyVersion={historyVersion}
       refreshing={refreshing}
       reload={reload}
@@ -196,22 +294,32 @@ function WaitingBadge({ since, now }: { since: string; now: number }) {
   );
 }
 
-function InboxConversations({ conversations, now, selected, onSelect, historyVersion, refreshing, reload, sendMessageAction }: {
+function InboxConversations({
+  conversations, counts, channels, filter, onFilterChange, searching, hasMore, loadingMore, loadMore,
+  now, selected, onSelect, teamNames, currentUserId, historyVersion, refreshing, reload, sendMessageAction,
+}: {
   conversations: InboxConversation[];
+  counts: InboxCounts | null;
+  channels: Channel[];
+  filter: InboxFilter;
+  onFilterChange: (filter: InboxFilter) => void;
+  // True while typed text waits to be searched.
+  searching: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
   now: number | null;
   selected?: InboxConversation;
   onSelect: (id: string | null) => void;
+  teamNames: Record<string, string>;
+  currentUserId?: string;
   historyVersion: number;
   refreshing: boolean;
   reload: () => void;
   sendMessageAction?: SendMessageAction;
 }) {
-  const [filter, setFilter] = useState<InboxFilter>(emptyFilter);
-  const visible = useMemo(() => filterConversations(conversations, filter), [conversations, filter]);
-  const counts = useMemo(() => countByMode(conversations, filter), [conversations, filter]);
-  // Only offer the channels this shop actually has conversations on.
-  const channels = useMemo(() => [...new Set(conversations.map(({ channel }) => channel))], [conversations]);
   const filtered = filter.query.trim() !== "" || filter.mode !== "all" || filter.channel !== "all";
+  const setFilter = (change: Partial<InboxFilter>) => onFilterChange({ ...filter, ...change });
 
   return (
     <div className={`ui-card flex overflow-hidden p-0 ${frameHeight}`}>
@@ -220,7 +328,7 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-lg font-bold">
               Đoạn chat
-              <span className="rounded-full bg-[#efebe4] px-2 py-0.5 text-xs font-semibold">{conversations.length}</span>
+              <span className="rounded-full bg-[#efebe4] px-2 py-0.5 text-xs font-semibold tabular-nums">{counts?.all ?? conversations.length}</span>
             </h2>
             <button
               type="button"
@@ -230,7 +338,7 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
               title="Làm mới"
               className="flex size-9 items-center justify-center rounded-full text-[#474640] transition-colors hover:bg-[#f5f3ef] disabled:opacity-60"
             >
-              <Icon name="refresh" className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+              <Icon name="refresh" className={`size-4 ${refreshing || searching ? "animate-spin" : ""}`} />
             </button>
           </div>
 
@@ -243,16 +351,16 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
                 aria-label="Tìm hội thoại"
                 placeholder="Tìm khách, tin nhắn…"
                 value={filter.query}
-                onChange={(event) => setFilter((current) => ({ ...current, query: event.target.value }))}
-                onKeyDown={(event) => { if (event.key === "Escape") setFilter((current) => ({ ...current, query: "" })); }}
-                className="h-10 w-full rounded-full border border-transparent bg-[#f0ede8] pl-9 pr-3 text-sm! outline-none transition-colors placeholder:text-[#7a766f] focus:border-[#171717] focus:bg-white"
+                onChange={(event) => setFilter({ query: event.target.value })}
+                onKeyDown={(event) => { if (event.key === "Escape") setFilter({ query: "" }); }}
+                className="h-10 w-full rounded-full border border-transparent bg-[#f0ede8] pl-9 pr-3 text-sm! outline-none transition-colors placeholder:text-[#66635d] focus:border-[#171717] focus:bg-white"
               />
             </div>
             {channels.length > 1 && (
               <select
                 aria-label="Lọc theo kênh"
                 value={filter.channel}
-                onChange={(event) => setFilter((current) => ({ ...current, channel: event.target.value as ChannelFilter }))}
+                onChange={(event) => setFilter({ channel: event.target.value as ChannelFilter })}
                 className="h-10 w-28 shrink-0 rounded-full border border-transparent bg-[#f0ede8] px-3 text-xs! font-semibold outline-none focus:border-[#171717] focus:bg-white"
               >
                 <option value="all">Mọi kênh</option>
@@ -267,27 +375,27 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
                 key={value}
                 type="button"
                 aria-pressed={filter.mode === value}
-                onClick={() => setFilter((current) => ({ ...current, mode: value }))}
+                onClick={() => setFilter({ mode: value })}
                 className="flex items-center gap-1 rounded-full border border-[#e3dfd8] px-2.5 py-1 text-xs! font-semibold transition-colors hover:border-[#171717] aria-pressed:border-[#171717] aria-pressed:bg-[#171717] aria-pressed:text-white"
               >
                 {label}
-                <span className="tabular-nums opacity-70">{counts[value]}</span>
+                {counts && <span className="tabular-nums opacity-70">{counts[value]}</span>}
               </button>
             ))}
           </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
-          {visible.length ? (
+          {conversations.length ? (
             <ul className="space-y-0.5">
-              {visible.map((conversation) => {
+              {conversations.map((conversation) => {
                 const waiting = conversation.mode === "needs_human";
                 return (
                   <li key={conversation.id}>
                     <button
                       type="button"
-                      aria-pressed={selected?.id === conversation.id}
-                      className="flex w-full min-w-0 items-center gap-3 rounded-xl p-2.5 text-left transition-colors hover:bg-[#f5f3ef] aria-pressed:bg-[#fff0eb]"
+                      aria-current={selected?.id === conversation.id ? "true" : undefined}
+                      className="flex w-full min-w-0 items-center gap-3 rounded-xl p-2.5 text-left transition-colors hover:bg-[#f5f3ef] aria-[current=true]:bg-[#fff0eb]"
                       onClick={() => onSelect(conversation.id)}
                     >
                       <Avatar conversation={conversation} />
@@ -314,12 +422,19 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
                   </li>
                 );
               })}
+              {hasMore && (
+                <li className="p-2">
+                  <Button variant="secondary" className="w-full" loading={loadingMore} loadingText="Đang tải…" onClick={loadMore}>
+                    Tải thêm
+                  </Button>
+                </li>
+              )}
             </ul>
           ) : (
             <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
               <p className="font-semibold">{filtered ? "Không tìm thấy hội thoại phù hợp" : "Chưa có cuộc trò chuyện"}</p>
               <p className="text-sm text-[#706d67]">{filtered ? "Thử từ khóa khác hoặc bỏ bộ lọc." : "Tin nhắn của khách sẽ xuất hiện tại đây."}</p>
-              {filtered && <Button variant="secondary" onClick={() => setFilter(emptyFilter)}>Xóa bộ lọc</Button>}
+              {filtered && <Button variant="secondary" onClick={() => onFilterChange(emptyFilter)}>Xóa bộ lọc</Button>}
             </div>
           )}
         </div>
@@ -329,6 +444,8 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
         <ConversationPanel
           key={selected.id}
           conversation={selected}
+          teamNames={teamNames}
+          currentUserId={currentUserId}
           historyVersion={historyVersion}
           reload={reload}
           sendMessageAction={sendMessageAction}
@@ -345,8 +462,10 @@ function InboxConversations({ conversations, now, selected, onSelect, historyVer
   );
 }
 
-function ConversationPanel({ conversation, historyVersion, reload, onBack, sendMessageAction }: {
+function ConversationPanel({ conversation, teamNames, currentUserId, historyVersion, reload, onBack, sendMessageAction }: {
   conversation: InboxConversation;
+  teamNames: Record<string, string>;
+  currentUserId?: string;
   historyVersion: number;
   reload: () => void;
   onBack: () => void;
@@ -357,11 +476,26 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
   const [error, setError] = useState<string>();
   const [messages, setMessages] = useState<InboxMessage[] | null>(null);
   const [historyError, setHistoryError] = useState(false);
+  const [notice, setNotice] = useState<string>();
+  // Set when this staff member takes over here, until they hand back.
+  const [tookOver, setTookOver] = useState(false);
   const sendAttempt = useRef<{ text: string; id: string } | null>(null);
   const messageLog = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
   const newestMessageId = messages?.at(-1)?.id;
   const conversationId = conversation.id;
   const isStaff = conversation.mode === "staff";
+  // Who is replying: the author of the newest staff message, else whoever took over here.
+  const lastStaffId = messages?.findLast((message) => message.sender === "staff")?.staff_id;
+  const replier = !isStaff ? undefined
+    : (lastStaffId ? lastStaffId === currentUserId : tookOver) ? "Bạn đang trả lời"
+    : lastStaffId && teamNames[lastStaffId] ? `${teamNames[lastStaffId]} đang trả lời`
+    : undefined;
+
+  // After a takeover the composer appears once the list reloads; put the cursor in it.
+  useEffect(() => {
+    if (isStaff && tookOver) composer.current?.focus();
+  }, [isStaff, tookOver]);
 
   useEffect(() => {
     let active = true;
@@ -393,10 +527,13 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
   }
 
   async function changeMode() {
+    setNotice(undefined);
     if (!await setLiveInboxMode(conversationId, isStaff ? "ai" : "staff")) {
       setError("Không đổi được trạng thái hội thoại.");
       return;
     }
+    setTookOver(!isStaff);
+    setNotice(isStaff ? "Đã trả lại cho AI. AI trả lời từ tin tiếp theo của khách." : "Bạn đã tiếp quản. AI ngừng trả lời cuộc này cho đến khi bạn trả lại.");
     reload();
   }
 
@@ -432,7 +569,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-[#706d67]">
             {channelLabels[conversation.channel]}
             <span aria-hidden="true">·</span>
-            <ModeBadge mode={conversation.mode} />
+            <ModeBadge mode={conversation.mode} label={replier} />
           </div>
         </div>
         <Button variant={isStaff ? "secondary" : "primary"} className="shrink-0" disabled={pending !== null}
@@ -452,7 +589,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
                 <p className="max-w-[90%] rounded-full bg-[#e9e5de] px-3 py-1 text-center text-xs text-[#5c5954]">
                   <span className="sr-only">{senderLabels.system}: </span>
                   {message.text || "Tin nhắn không có nội dung văn bản"}
-                  <time className="ml-2 opacity-70" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
+                  <time className="ml-2" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
                 </p>
               </li>
             ) : (
@@ -461,7 +598,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
                 <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm md:max-w-[70%] ${bubbleStyles[message.sender]}`}>
                   <p className="mb-1 flex flex-wrap items-baseline gap-x-2 text-xs">
                     <strong>{senderLabels[message.sender]}</strong>
-                    <time className="opacity-70" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
+                    <time className={timeStyles[message.sender]} dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
                   </p>
                   <p className="whitespace-pre-wrap wrap-anywhere">{message.text || "Tin nhắn không có nội dung văn bản"}</p>
                 </div>
@@ -475,9 +612,11 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
 
       <footer className="space-y-2 border-t border-[#e3dfd8] bg-white p-3">
         {error && <ErrorMessage>{error}</ErrorMessage>}
+        <div role="status">{notice && <p className="text-center text-sm font-medium text-[#2f6b3a]">{notice}</p>}</div>
         {isStaff && sendMessageAction && (
           <form className="flex items-end gap-2" onSubmit={(event) => { event.preventDefault(); submitReply(); }}>
             <textarea
+              ref={composer}
               aria-label="Tin nhắn cho khách"
               placeholder="Nhập tin nhắn… (Enter để gửi, Shift+Enter xuống dòng)"
               rows={1}
@@ -504,7 +643,7 @@ function ConversationPanel({ conversation, historyVersion, reload, onBack, sendM
         )}
         {!isStaff && (
           <p className="text-center text-sm text-[#706d67]">
-            {conversation.mode === "needs_human" ? "AI đang chờ nhân viên tiếp quản. Bấm Tiếp quản để trả lời khách." : "AI đang xử lý hội thoại. Bấm Tiếp quản nếu muốn tự trả lời."}
+            {conversation.mode === "needs_human" ? "Khách đang chờ người thật." : "AI đang trả lời cuộc này."} Bấm Tiếp quản để tự trả lời: AI sẽ ngừng trả lời cho đến khi bạn trả lại.
           </p>
         )}
       </footer>

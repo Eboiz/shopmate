@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { productCardSchema } from "@/contract";
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseStore } from "./store";
+import { createSupabaseStore, markTurn } from "./store";
 import { FX, seedTwoShops } from "./test/two-shops";
 
 const db = createAdminClient();
@@ -95,6 +95,48 @@ describe("createSupabaseStore", () => {
       expect(await missed()).toBe(false);
     });
 
+    it("skips pending and superseded turns (R3): the last turn the shopper saw decides", async () => {
+      const ids: string[] = [];
+      const turn = async (fields: { handoff_offer?: "size_out_of_range" | null; postcheck?: Json }) => {
+        const id = await store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls: [], ...fields });
+        ids.push(id);
+        return id;
+      };
+      const offer = () =>
+        store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null }).then((tc) => tc.previousHandoffOffer);
+      const postcheck = async (id: string) => (await db.from("ai_turns").select("postcheck").eq("id", id).single()).data?.postcheck;
+      try {
+        // A delivered turn (no pending flag) with an offer the shopper saw.
+        await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false } });
+        expect(await offer()).toBe("size_out_of_range");
+        // A newer channel turn, still pending: its state is not read yet.
+        const late = await turn({ handoff_offer: null, postcheck: { productMiss: false, numberCheck: { failed: [], retried: true }, pending: true } });
+        expect(await offer()).toBe("size_out_of_range");
+        // Delivered: it decides now, and the mark keeps the other fields.
+        await markTurn(db, FX.a.shop, late, "delivered");
+        expect(await offer()).toBeNull();
+        expect(await postcheck(late)).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
+        // A pending turn with an offer that is then superseded never decides.
+        const unseen = await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false, pending: true } });
+        await markTurn(db, FX.a.shop, unseen, "superseded");
+        expect(await offer()).toBeNull();
+        expect(await postcheck(unseen)).toEqual({ productMiss: false, superseded: true });
+        // More skipped rows than any fixed window still leave the delivered turn readable.
+        await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false } });
+        for (let i = 0; i < 6; i++) await turn({ handoff_offer: null, postcheck: { productMiss: false, pending: true } });
+        expect(await offer()).toBe("size_out_of_range");
+        // Another shop's id is never marked.
+        const other = await store.insertTurn({ shop_id: FX.b.shop, conversation_id: FX.b.conversation, mode: "customer", latency_ms: 1, tool_calls: [], postcheck: { pending: true } });
+        ids.push(other);
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        await markTurn(db, FX.a.shop, other, "delivered");
+        error.mockRestore();
+        expect(await postcheck(other)).toEqual({ pending: true });
+      } finally {
+        await db.from("ai_turns").delete().in("id", ids);
+      }
+    });
+
     it("returns nulls for an unknown conversation", async () => {
       expect(await store.loadTurnContext({ conversationId: randomUUID(), shopId: null, productId: FX.a.vay01 })).toEqual({
         conversation: null,
@@ -161,6 +203,14 @@ describe("createSupabaseStore", () => {
       expect(a.some((p) => p.id === FX.b.vay01)).toBe(false);
       expect(b.some((p) => p.id === FX.a.vay01)).toBe(false);
       expect(await store.catalog!(randomUUID())).toEqual([]);
+    });
+  });
+
+  describe("pairedProductNames (PB-31 AC12)", () => {
+    it("names the shop's paired products only, sorted, as quick replies", async () => {
+      expect(await store.pairedProductNames!(FX.a.shop)).toEqual(["Áo sơ mi trắng", "Váy suông linen"]);
+      // Shop B declared no pairing: no button, and never shop A's products.
+      expect(await store.pairedProductNames!(FX.b.shop)).toEqual([]);
     });
   });
 
