@@ -12,7 +12,9 @@ select set_eq(
         'channel_accounts', 'shoppers', 'conversations', 'messages', 'channel_events',
         'orders', 'order_items', 'ai_turns',
         -- PB-04: web chat limit per client IP and shop (server only).
-        'web_chat_hits'],
+        'web_chat_hits',
+        -- PB-34: search bar rate limit (server only).
+        'search_hits'],
   'the contract has exactly these tables'
 );
 
