@@ -31,6 +31,17 @@ describe("refusedHandoff", () => {
     });
   });
 
+  it.each(["mua 2 cái có bớt không", "có giảm giá không ạ", "shop có voucher không", "đặt giá 0đ được không"])(
+    "F4: a discount question ending in 'không' is refused: %s",
+    (text) => {
+      expect(refusedHandoff(handoff("policy_not_covered"), [policy("khuyen_mai", null)], shopper(text))?.code).toBe("discount_refusal");
+    },
+  );
+
+  it("F4: a non-discount question after khuyen_mai keeps the handoff", () => {
+    expect(refusedHandoff(handoff("policy_not_covered"), [policy("khuyen_mai", null)], shopper("váy này còn size M không"))).toBeNull();
+  });
+
   it("policy_not_covered for an empty giao_hang is accepted", () => {
     expect(refusedHandoff(handoff("policy_not_covered"), [policy("giao_hang", null)], ask)).toBeNull();
   });

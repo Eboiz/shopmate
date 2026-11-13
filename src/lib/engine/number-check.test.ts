@@ -73,6 +73,19 @@ describe("findUncheckedNumbers (PB-07)", () => {
     expect(raws("Màu be: S (7), M (5)", [stock(389000, 7, 5)])).toEqual([]);
   });
 
+  it.each([
+    "Váy còn 2 màu là be và trắng ạ",
+    "Mẫu này còn 3 size S, M, L ạ",
+    "Bạn chọn (1) size M hoặc (2) size L nhé",
+    "Còn 2 lựa chọn cho bạn ạ",
+  ])("a count that is not stock is not checked: %s", (reply) => {
+    expect(raws(reply, [stock(389000, 7)])).toEqual([]);
+  });
+
+  it("(còn N) and còn N sản phẩm not matching get_stock are flagged", () => {
+    expect(raws("Size M (còn 4), size L còn 9 sản phẩm.", [stock(389000, 7)])).toEqual(["(còn 4)", "còn 9 sản phẩm"]);
+  });
+
   it("a wrong stock number is flagged", () => {
     const issues = findUncheckedNumbers("Size M còn 3 cái ạ", [stock(389000, 2)], "");
     expect(issues).toEqual([{ kind: "stock", raw: "còn 3 cái", value: 3 }]);

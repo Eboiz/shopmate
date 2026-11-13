@@ -2,7 +2,7 @@
 // as an error tool result, so the model gets one more try with the reason spelled
 // out, and the refused call never counts as a handoff. Pure: no IO.
 import type { HistoryMessage, ToolCallLog } from "@/contract";
-import { findUnbackedDiscount } from "./discount-guard";
+import { shopperAsksForOffer } from "./refusal-guard";
 
 export type RefusedHandoff = { code: "policy_has_text" | "discount_refusal"; message: string };
 
@@ -32,9 +32,6 @@ const policyLogs = (logs: readonly ToolCallLog[]) => okLogs(logs).filter((log) =
 const policyContent = (log: ToolCallLog) => (log.output as { content?: unknown } | undefined)?.content;
 const policyKind = (log: ToolCallLog) => (log.input as { kind?: unknown } | null)?.kind;
 
-const latestShopperText = (history: readonly HistoryMessage[]) =>
-  history.findLast((message) => message.sender === "shopper")?.text ?? "";
-
 // A handoff_to_staff input and the turn's logs; returns the refusal to send back,
 // or null when the handoff stands. Customer mode only (the caller checks it).
 export function refusedHandoff(
@@ -59,7 +56,7 @@ export function refusedHandoff(
   // promotion text is quoted in the reply, never a reason to hand off) and the
   // latest shopper message asks for a discount: refuse politely instead.
   const promotionOnly = policies.length > 0 && policies.every((log) => policyKind(log) === "khuyen_mai");
-  const shopperText = latestShopperText(history);
-  const discountAsk = shopperText !== "" && findUnbackedDiscount(shopperText, []) !== null;
-  return promotionOnly && discountAsk ? { code: "discount_refusal", message: DISCOUNT_REFUSAL_ERROR } : null;
+  // shopperAsksForOffer reads the shopper's own words: findUnbackedDiscount is for
+  // AI replies and takes the "không" ending a question for a negation.
+  return promotionOnly && shopperAsksForOffer([...history]) ? { code: "discount_refusal", message: DISCOUNT_REFUSAL_ERROR } : null;
 }

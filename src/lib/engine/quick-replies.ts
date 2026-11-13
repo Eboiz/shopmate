@@ -54,9 +54,12 @@ export const QUICK_REPLY_STOP_WORDS = [
   "loai",
 ];
 
-// Folded tokens: punctuation separates words, diacritics are gone.
+// Folded tokens: punctuation separates words, diacritics are gone. "Lên đơn"
+// folds to "len don", an order button, so the pair is dropped rather than read
+// as the garment "len" ("áo len").
 function wordsOf(text: string): string[] {
-  return fold(text).replace(/[^\p{L}\p{N}]+/gu, " ").split(" ").filter(Boolean);
+  const words = fold(text).replace(/[^\p{L}\p{N}]+/gu, " ").split(" ").filter(Boolean);
+  return words.filter((word, i) => !(word === "len" && words[i + 1] === "don") && !(word === "don" && words[i - 1] === "len"));
 }
 
 // Whole-word (or whole-phrase) match, so "cao" is not read as "ao".

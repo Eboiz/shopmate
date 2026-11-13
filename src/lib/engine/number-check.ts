@@ -21,7 +21,9 @@ const PRICE_RE = new RegExp(
   String.raw`${NOT_WORD_BEFORE}(\d{1,3}(?:[.,]\d{3})+|\d+)\s*(k|nghìn|ngàn|đ|đồng|vnđ)${NOT_WORD_AFTER}`,
   "giu",
 );
-const STOCK_RE = new RegExp(String.raw`còn\s+(\d+)\s*(?:cái|chiếc|sp|sản phẩm)?${NOT_WORD_AFTER}|\((?:còn\s*)?(\d+)\)`, "giu");
+// A stock count needs its unit ("còn 3 cái") or the "(còn N)" form: "còn 2 màu",
+// "còn 3 size" and a bare "(1)" count something else.
+const STOCK_RE = new RegExp(String.raw`còn\s+(\d+)\s*(?:cái|chiếc|sp|sản phẩm)${NOT_WORD_AFTER}|\(còn\s*(\d+)\)`, "giu");
 
 const THOUSANDS = new Set(["k", "nghìn", "ngàn"]);
 
