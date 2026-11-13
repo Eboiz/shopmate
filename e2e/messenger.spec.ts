@@ -71,7 +71,7 @@ test.describe("with the local database", () => {
       request,
       messengerBody([{ sender: { id: psid }, message: { mid: uid("mid"), attachments: [{ type: "image", payload: { url: "https://example.com/a.jpg" } }] } }]),
     );
-    const conversation = await waitForConversation("messenger", psid, (c) => c.mode === "needs_human");
+    const conversation = await waitForConversation("messenger", psid, (c) => c.mode === "needs_human" && c.messages.at(-1)?.sender === "system");
     expect(conversation.messages[0]).toEqual({ sender: "shopper", text: "[Khách gửi ảnh, không lưu được ảnh]" });
     expect(conversation.messages.at(-1)?.sender).toBe("system");
   });
@@ -119,10 +119,11 @@ test.describe("with the local database", () => {
     expect(await conversationOf("messenger", psid)).toBeNull();
   });
 
-  test("signed but malformed bodies get 400, non-Page objects 404", async ({ request }) => {
+  test("signed but malformed bodies get 400, objects of no channel 404", async ({ request }) => {
     const broken = "{not json";
     expect((await postMessenger(request, broken, signMessenger(broken))).status()).toBe(400);
-    const instagram = JSON.stringify({ object: "instagram", entry: [] });
-    expect((await postMessenger(request, instagram, signMessenger(instagram))).status()).toBe(404);
+    // "instagram" is a channel since PB-23; "user" (profile changes) is not.
+    const user = JSON.stringify({ object: "user", entry: [] });
+    expect((await postMessenger(request, user, signMessenger(user))).status()).toBe(404);
   });
 });
