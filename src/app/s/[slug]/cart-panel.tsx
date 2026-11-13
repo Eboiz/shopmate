@@ -11,6 +11,8 @@ import { useModal } from "./use-modal";
 type Props = {
   items: CartItem[];
   shippingPolicy?: string;
+  // What the stock check changed in the basket, if anything.
+  stockNotice?: string;
   onQuantity: (key: string, quantity: number) => void;
   onRemove: (key: string) => void;
   onRestore: (item: CartItem, index: number) => boolean;
@@ -18,7 +20,7 @@ type Props = {
   onClose: () => void;
 };
 
-export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onRestore, onSend, onClose }: Props) {
+export function CartPanel({ items, shippingPolicy, stockNotice, onQuantity, onRemove, onRestore, onSend, onClose }: Props) {
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const undoRef = useRef<HTMLButtonElement>(null);
@@ -75,6 +77,7 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onResto
   const rows = items.map((item, index) => {
     const key = cartLineKey(item);
     const max = cartLineMax(item);
+    const atMax = item.quantity >= max;
     return (
       <li key={key} data-line={key} className="grid grid-cols-[64px_1fr] gap-3 border-b border-[#e3dfd8] py-4">
         <div className="relative h-20 w-16 overflow-hidden rounded-md bg-[#eeebe5]">
@@ -87,12 +90,14 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onResto
             <div className="flex items-center overflow-hidden rounded-lg border border-[#8f8a82]">
               <button type="button" aria-label={`Giảm số lượng ${item.name}`} disabled={item.quantity <= 1} onClick={() => onQuantity(key, item.quantity - 1)} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">−</button>
               <output aria-label={`Số lượng ${item.name}`} className="min-w-8 text-center text-sm font-semibold tabular-nums">{item.quantity}</output>
-              <button type="button" aria-label={`Tăng số lượng ${item.name}`} disabled={item.quantity >= max} onClick={() => onQuantity(key, item.quantity + 1)} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] disabled:opacity-40">+</button>
+              {/* aria-disabled, not disabled: the button keeps keyboard focus at the
+                  limit and points to the notice below instead of dropping focus. */}
+              <button type="button" aria-label={`Tăng số lượng ${item.name}`} aria-disabled={atMax} aria-describedby={atMax ? `max-${index}` : undefined} onClick={() => { if (!atMax) onQuantity(key, item.quantity + 1); }} className="flex size-11 items-center justify-center text-lg hover:bg-[#f5f3ef] aria-disabled:cursor-not-allowed aria-disabled:opacity-40">+</button>
             </div>
             <span className="text-sm font-bold tabular-nums">{formatPrice(item.price * item.quantity)}</span>
             <button type="button" data-remove onClick={() => remove(item, index)} aria-label={`Bỏ ${item.name} khỏi giỏ`} title="Bỏ khỏi giỏ" className="ml-auto inline-grid size-11 place-items-center rounded-lg text-[#706d67] transition-colors hover:bg-[#fff0eb] hover:text-[#b2382a]"><Icon name="trash" className="size-5" /></button>
           </div>
-          {max < 99 && item.quantity >= max && <p className="mt-1.5 text-xs text-[#706d67]">Shop chỉ còn {max} sản phẩm này.</p>}
+          <p id={`max-${index}`} role="status" className="mt-1.5 text-xs text-[#706d67] empty:hidden">{atMax ? (max < 99 ? `Tối đa ${max}: shop chỉ còn ${max} sản phẩm này.` : `Tối đa ${max} sản phẩm mỗi món.`) : ""}</p>
         </div>
       </li>
     );
@@ -109,6 +114,7 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onResto
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5">
+          <p role="status" className="mt-4 bg-[#fff0eb] px-3 py-2 text-xs font-semibold leading-5 text-[#a83826] empty:hidden">{stockNotice}</p>
           {rows.length > 0 && <ul aria-label="Món trong giỏ">{rows}</ul>}
           {items.length === 0 && (
             <p className="py-10 text-sm leading-6 text-[#706d67]">Giỏ đang trống. Chọn màu, size ở trang sản phẩm rồi bấm “Thêm vào giỏ”.</p>

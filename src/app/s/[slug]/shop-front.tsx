@@ -13,7 +13,7 @@ import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { compareSizes } from "@/lib/size-order";
 import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
-import { cartCount, cartMessage, useCart, type CartItem } from "./cart";
+import { cartCount, cartMessage, stockChangeMessage, useCart, variantStock, type CartItem } from "./cart";
 import { cartItemFor, onlyChoice, productOptions, QuickAdd } from "./quick-add";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
@@ -191,11 +191,34 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [cartNotice, setCartNotice] = useState<{ text: string; added: boolean } | null>(null);
   // The cart panel gives focus back to the button that opened it.
   const cartOpenerRef = useRef<HTMLElement | null>(null);
+  // Lines the stock check changed (capped or sold out), shown inside the cart.
+  const [stockNotice, setStockNotice] = useState("");
+  const { reconcile } = cart;
+  const checkStock = useCallback((products: ShopProduct[]): boolean => {
+    const changes = reconcile((item) => variantStock(products, item));
+    if (changes.length) setStockNotice(stockChangeMessage(changes));
+    return changes.length === 0;
+  }, [reconcile]);
   const openCart = useCallback(() => {
     cartOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setCartNotice(null);
+    setStockNotice("");
     setCartOpen(true);
-  }, []);
+    // A basket saved earlier may hold more than the shop has now: check it
+    // against the loaded catalog at once, then against fresh stock.
+    if (catalog) checkStock(catalog.products);
+    if (previewCatalog) return;
+    fetch(catalogEndpoint, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const fresh = shopCatalogSchema.parse(await response.json());
+        setCatalog(fresh);
+        checkStock(fresh.products);
+      })
+      .catch(() => {
+        // The loaded catalog was already checked; the shop confirms stock anyway.
+      });
+  }, [catalog, catalogEndpoint, checkStock, previewCatalog]);
   const closeCart = useCallback(() => {
     setCartOpen(false);
     const opener = cartOpenerRef.current;
@@ -237,6 +260,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   function sendCart() {
     if (cart.items.length === 0) return;
+    // Last check before the order leaves: a change keeps the cart open so the
+    // shopper sees the new quantities first.
+    if (catalog && !checkStock(catalog.products)) return;
     const message = cartMessage(cart.items);
     cartMessageRef.current = message;
     setSelected(null);
@@ -423,6 +449,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     <CartPanel
       items={cart.items}
       shippingPolicy={policies?.shipping || undefined}
+      stockNotice={stockNotice}
       onQuantity={cart.setQuantity}
       onRemove={cart.remove}
       onRestore={cart.restore}
