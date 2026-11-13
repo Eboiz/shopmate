@@ -40,12 +40,14 @@ const INTENT_CRITERIA: Record<Intent, string> = {
   size: "Asks which size fits, or gives height/weight to get a size recommendation.",
   pairing: "Asks what to wear with an item, what goes well with it, or for an outfit to match it.",
   policy:
-    "Asks about returns or exchanges (including whether an item that doesn't fit can be exchanged), shipping or delivery (days, fee, time, payment, checking goods on delivery), or promotions and discounts the shop runs.",
+    "Asks about returns or exchanges (including whether an item that doesn't fit can be exchanged), shipping or delivery (days, fee, time, payment, checking goods on delivery), or promotions and discounts the shop runs. Includes what happens if an item arrives wrong, damaged or missing, asked as a hypothetical.",
   product_detail:
     "Asks about a property of a product beyond stock, price and size: fabric, stretch, thickness, see-through, care or washing, origin, length, fit, how it looks, when to wear it.",
   order:
     "Wants to buy or place an order (e.g. 'cho mua 1 áo blazer đen size S', 'lấy cái này'), confirms an order, or gives order details (quantity, name, phone, address).",
-  complaint: "Complains about something that went wrong: damaged, wrong or missing item, late delivery, bad service.",
+  // PB-38: "nếu shop giao sai màu thì có được đổi không?" asked before buying is policy.
+  complaint:
+    "Complains about something that already went wrong: damaged, wrong or missing item, late delivery, bad service. A question asked before buying about what happens if an item arrives wrong, damaged or missing (e.g. 'nếu shop giao sai màu thì có được đổi không?') is policy, not a complaint.",
   human:
     "Asks to talk to or meet a person, staff member, or the shop owner instead of the assistant (e.g. 'cho gặp chủ shop', 'kêu chủ ra'). Wanting to buy an item is an order, not a request for a person.",
   greeting: "Only greets, thanks, or says goodbye, with no question.",
