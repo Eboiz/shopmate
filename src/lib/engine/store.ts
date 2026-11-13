@@ -108,8 +108,12 @@ export function createSupabaseStore(db: Db): EngineStore {
       .limit(RECENT_TURNS);
     if (error) throw new Error(`ai_turns: ${error.message}`);
     // R3: a superseded turn's reply was never sent, so the shopper never saw its
-    // offer, quote or clarifying question; the last turn whose reply went out decides.
-    const data = rows.find((row) => postcheckLogSchema.safeParse(row.postcheck).data?.superseded !== true);
+    // offer, quote or clarifying question, and a pending one's may not be; the
+    // last turn whose reply went out decides.
+    const data = rows.find((row) => {
+      const postcheck = postcheckLogSchema.safeParse(row.postcheck).data;
+      return postcheck?.superseded !== true && postcheck?.pending !== true;
+    });
     if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
     // Rows the current engine wrote carry the guard's verdict in postcheck
@@ -196,24 +200,22 @@ export function createSupabaseStore(db: Db): EngineStore {
   };
 }
 
-// R3 (receive.ts): this turn's reply was not sent because the shopper wrote
-// again. Marked in postcheck, so the next turn ignores its offer, quote and
-// product miss (previousTurnState). A failure is logged, never thrown: the
-// shopper's newer turn answers either way.
-export async function markTurnSuperseded(db: Db, shopId: string, turnId: string): Promise<void> {
+// R3 (receive.ts): a channel turn is logged pending (engine.ts); the channel
+// marks it "delivered" (the reply went out, the next turn reads its state) or
+// "superseded" (never sent: the next turn skips it). Other postcheck fields are
+// kept as stored. A failure is logged, never thrown: the row then stays
+// pending, which the next turn skips (the safe side).
+export async function markTurn(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded"): Promise<void> {
   try {
     const { data, error } = await db.from("ai_turns").select("postcheck").eq("id", turnId).eq("shop_id", shopId).single();
     if (error) throw new Error(error.message);
-    // Kept as stored: fields this schema doesn't know (another branch's) stay.
     const stored = data.postcheck;
-    const postcheck = stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
-    const { error: updateError } = await db
-      .from("ai_turns")
-      .update({ postcheck: { ...postcheck, superseded: true } })
-      .eq("id", turnId)
-      .eq("shop_id", shopId);
+    const rest = { ...(stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : {}) };
+    delete rest.pending;
+    const postcheck = outcome === "superseded" ? { ...rest, superseded: true } : rest;
+    const { error: updateError } = await db.from("ai_turns").update({ postcheck }).eq("id", turnId).eq("shop_id", shopId);
     if (updateError) throw new Error(updateError.message);
   } catch (e) {
-    console.error("engine: failed to mark the turn superseded", e);
+    console.error(`engine: failed to mark the turn ${outcome}`, e);
   }
 }

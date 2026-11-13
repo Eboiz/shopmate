@@ -228,6 +228,43 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("Nhân viên shop sẽ xác nhận");
     });
 
+    it("R3: orderWritten is true only when the create RPC ran", async () => {
+      const created = setup([toolCalls(toolUse("create_draft_order", draftOrder))], { store: orderStore() });
+      created.handlers.quote_order.mockResolvedValue(orderQuote);
+      expect((await created.run(customerInput({ history: orderHistory }))).orderWritten).toBe(true);
+
+      // The price changed since the summary: nothing is written, only a new summary.
+      const requoted = setup([toolCalls(toolUse("create_draft_order", draftOrder))], { store: orderStore() });
+      requoted.handlers.quote_order.mockResolvedValue({ ...orderQuote, total: orderQuote.total + 10000, lines: orderQuote.lines.map((l) => ({ ...l, unitPrice: l.unitPrice + 10000, lineTotal: l.lineTotal + 10000 })) });
+      const r = await requoted.run(customerInput({ history: orderHistory }));
+      expect(requoted.handlers.create_draft_order).not.toHaveBeenCalled();
+      expect(r.orderWritten).toBe(false);
+
+      const blocked = setup([toolCalls(toolUse("create_draft_order", draftOrder)), reply()], { store: orderStore() });
+      expect((await blocked.run(customerInput({ history: [orderHistory[0]] }))).orderWritten).toBe(false);
+    });
+
+    it("R3: a channel turn is logged pending and turnRow resolves without waiting for the metrics sink", async () => {
+      let releaseSink = () => {};
+      const sink = new Promise<void>((resolve) => { releaseSink = resolve; });
+      const { store, run } = setup([reply()], { deps: { deliveryPending: true, onMetrics: () => sink } });
+      const result = await run(customerInput());
+      expect(await result.turnRow).toBe("turn-1");
+      expect(store.insertTurn.mock.calls[0][0].postcheck).toMatchObject({ pending: true });
+      let logged = false;
+      void result.turnLogged.then(() => { logged = true; });
+      await Promise.resolve();
+      expect(logged).toBe(false);
+      releaseSink();
+      expect(await result.turnLogged).toBe("turn-1");
+    });
+
+    it("R3: without deliveryPending (dev route, eval) the row is not pending", async () => {
+      const { store, run } = setup([reply()]);
+      await (await run(customerInput())).turnLogged;
+      expect(store.insertTurn.mock.calls[0][0].postcheck).not.toHaveProperty("pending");
+    });
+
     it("writes at most one draft per turn when the model sends two valid calls", async () => {
       const { handlers, run } = setup(
         [toolCalls(toolUse("create_draft_order", draftOrder), toolUse("create_draft_order", draftOrder))],
@@ -1348,6 +1385,33 @@ describe("runEngine", () => {
       const result = await run(customerInput({ history: stockHistory }));
       expect(result.handoffReason).toBeNull();
       expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+    });
+
+    it("wrong price twice with ids the shop doesn't have falls back to the products the turn looked up", async () => {
+      const FOREIGN = "f0000000-0000-4000-8000-000000000099";
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [FOREIGN]),
+        reply("Dạ váy giá 390k ạ", [FOREIGN]),
+      ]);
+      store.productCards.mockImplementation(async (_shop, ids) => ids.filter((id) => id !== FOREIGN).map(card));
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(result.output.reply.text).toBe(NUMBER_CARD_TEXT);
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+    });
+
+    it("wrong price twice with no card at all sends the looked-up data instead of 'see the card below'", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", []),
+        reply("Dạ váy giá 390k ạ", []),
+      ]);
+      store.productCards.mockResolvedValue([]);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(result.output.reply.text).not.toBe(NUMBER_CARD_TEXT);
+      expect(result.output.reply.text).toContain("350.000đ");
+      expect(result.output.reply.products).toEqual([]);
+      expect(result.handoffReason).toBeNull();
     });
 
     it("wrong price twice in needs_human does not move the conversation back to the AI", async () => {

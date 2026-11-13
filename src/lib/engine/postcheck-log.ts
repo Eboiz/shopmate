@@ -11,8 +11,11 @@ export const postcheckLogSchema = z.object({
   numberCheck: z.object({ failed: z.array(z.string()), retried: z.boolean() }).optional(),
   // PB-04: an English stock/size word in the reply, and whether a rewrite was tried.
   vietnamese: z.object({ retried: z.boolean() }).optional(),
-  // R3: a newer shopper message arrived while this turn ran, so its reply was
-  // never sent (receive.ts). The next turn's state skips this row (store.ts).
+  // R3: written by a channel turn until the channel decides whether its reply
+  // goes out (receive.ts); a pending row is never the previous turn (store.ts).
+  pending: z.literal(true).optional(),
+  // R3: the reply was never sent (a newer shopper message arrived, or staff took
+  // over first). The next turn's state skips this row (store.ts).
   superseded: z.literal(true).optional(),
 });
 

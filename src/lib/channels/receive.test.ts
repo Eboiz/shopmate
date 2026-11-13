@@ -69,23 +69,27 @@ let sendResult: (from: string) => { ok: true; messageId: string } | { ok: false;
 vi.mock("./send", () => ({
   sendToConversation: async (conversationId: string, reply: Reply, sender: { from: string }) => {
     sent.push({ conversationId, reply, from: sender.from });
+    log.push(`send ${sender.from}`);
     return sendResult(sender.from);
   },
 }));
 
 const engine = vi.fn<() => Promise<EngineOutput>>();
 // What runCustomerTurn adds to the engine's output (R3).
-let orderAttempted: boolean;
+let orderWritten: boolean;
 let turnId: string | null;
 vi.mock("@/lib/engine/run", () => ({
   runCustomerTurn: async (...args: unknown[]) => ({
     output: await engine(...(args as [])),
-    orderAttempted,
-    turnLogged: Promise.resolve(turnId),
+    orderWritten,
+    turnRow: Promise.resolve(turnId),
   }),
 }));
-const markTurnSuperseded = vi.fn<(db: unknown, shopId: string, id: string) => Promise<void>>();
-vi.mock("@/lib/engine/store", () => ({ markTurnSuperseded: (...args: [unknown, string, string]) => markTurnSuperseded(...args) }));
+// Each mark, in order with the sends (log), so "marked before the send" is checkable.
+const log: string[] = [];
+const markTurn = vi.fn(async (_db: unknown, _shopId: string, id: string, outcome: string) => { log.push(`mark ${id} ${outcome}`); });
+vi.mock("@/lib/engine/store", () => ({ markTurn: (...args: [unknown, string, string, string]) => markTurn(...args) }));
+const marks = () => markTurn.mock.calls.map((c) => [c[1], c[2], c[3]]);
 
 // PB-17: the limit itself is tested in src/lib/guard/rate-limit.test.ts; here only
 // that receive.ts asks it, and stops before the AI when it says no.
@@ -106,9 +110,10 @@ beforeEach(() => {
   sent.length = 0;
   sendResult = () => ({ ok: true, messageId: "m" });
   engine.mockReset().mockResolvedValue({ reply: answer, personalReplyNeeded: false });
-  orderAttempted = false;
+  orderWritten = false;
   turnId = "turn-1";
-  markTurnSuperseded.mockReset().mockResolvedValue(undefined);
+  log.length = 0;
+  markTurn.mockClear();
   rateLimited.mockReset().mockResolvedValue(false);
 });
 
@@ -345,7 +350,37 @@ describe("only the newest shopper message gets a reply (R3)", () => {
     expect(await receiveChannelMessage(account, text("mid-1", "Váy babydoll còn màu gì?"))).toBe("superseded");
     expect(sent).toEqual([]);
     // Its logged turn is marked, so the next turn ignores its offer or quote.
-    expect(markTurnSuperseded).toHaveBeenCalledWith(expect.anything(), "shop-a", "turn-1");
+    expect(marks()).toEqual([["shop-a", "turn-1", "superseded"]]);
+  });
+
+  it("a sent reply's turn is marked delivered before the send, so the shopper's answer finds it", async () => {
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("answered");
+    expect(log).toEqual(["mark turn-1 delivered", "send ai"]);
+  });
+
+  it("staff took over before the send: the unsent reply's turn is marked superseded", async () => {
+    sendResult = (from) => (from === "ai" ? { ok: false, messageId: null, error: "not_in_ai_mode" } : { ok: true, messageId: "m" });
+    engine.mockImplementationOnce(async () => {
+      conversation().mode = "staff";
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("stored");
+    expect(marks().at(-1)).toEqual(["shop-a", "turn-1", "superseded"]);
+    expect(sent.filter((m) => m.from === "system")).toEqual([]);
+  });
+
+  it("an order write's outcome reaches the shopper even when the shopper wrote again and staff took over", async () => {
+    const created: Reply = { text: "Dạ shop đã tạo đơn nháp cho bạn", products: [], quickReplies: [] };
+    orderWritten = true;
+    sendResult = (from) => (from === "ai" ? { ok: false, messageId: null, error: "not_in_ai_mode" } : { ok: true, messageId: "m" });
+    engine.mockImplementationOnce(async () => {
+      newerMessageArrives("à cho mình hỏi thêm");
+      conversation().mode = "staff";
+      return { reply: created, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1", "Xác nhận đơn"))).toBe("answered");
+    expect(sent.filter((m) => m.from === "system")).toEqual([{ conversationId: conversation().id, reply: created, from: "system" }]);
+    expect(marks()).toEqual([["shop-a", "turn-1", "delivered"]]);
   });
 
   it("a superseded turn whose log failed marks nothing", async () => {
@@ -355,19 +390,19 @@ describe("only the newest shopper message gets a reply (R3)", () => {
       return { reply: answer, personalReplyNeeded: false };
     });
     expect(await receiveChannelMessage(account, text("mid-1"))).toBe("superseded");
-    expect(markTurnSuperseded).not.toHaveBeenCalled();
+    expect(markTurn).not.toHaveBeenCalled();
   });
 
   it("a turn that wrote an order still sends its reply when the shopper wrote again, and is not marked", async () => {
     const created: Reply = { text: "Dạ shop đã tạo đơn nháp cho bạn", products: [], quickReplies: [] };
-    orderAttempted = true;
+    orderWritten = true;
     engine.mockImplementationOnce(async () => {
       newerMessageArrives("à cho mình hỏi thêm");
       return { reply: created, personalReplyNeeded: false };
     });
     expect(await receiveChannelMessage(account, text("mid-1", "Xác nhận đơn"))).toBe("answered");
     expect(sent).toEqual([{ conversationId: conversation().id, reply: created, from: "ai" }]);
-    expect(markTurnSuperseded).not.toHaveBeenCalled();
+    expect(marks()).toEqual([["shop-a", "turn-1", "delivered"]]);
   });
 
   it("the newest turn still sends, with both messages in its history", async () => {
@@ -408,7 +443,7 @@ describe("only the newest shopper message gets a reply (R3)", () => {
       return { reply: closing, personalReplyNeeded: false };
     });
     expect(await receiveChannelMessage(account, text("mid-1", "Hàng bị rách, mình bực quá"))).toBe("handed_off");
-    expect(markTurnSuperseded).not.toHaveBeenCalled();
+    expect(marks()).toEqual([["shop-a", "turn-1", "delivered"]]);
     expect(conversation().mode).toBe("needs_human");
     expect(sent.filter((m) => m.from === "system")).toEqual([{ conversationId: conversation().id, reply: closing, from: "system" }]);
   });

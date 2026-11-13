@@ -16,15 +16,15 @@ export async function runEngine(input: EngineInput): Promise<EngineOutput> {
   return finish(await runEngineTurn(input));
 }
 
-// A customer turn for the channels (receive.ts): the reply, plus what R3 needs
-// when a newer shopper message arrived meanwhile (send the reply anyway after
-// an order write, else mark the logged turn superseded).
-export type CustomerTurn = Pick<EngineResult, "output" | "orderAttempted" | "turnLogged">;
+// A customer turn for the channels (receive.ts): the reply, plus what R3 needs.
+// The turn is logged pending; the channel marks it delivered or superseded
+// (store.ts markTurn), and sends an order write's reply in every case.
+export type CustomerTurn = Pick<EngineResult, "output" | "orderWritten" | "turnRow">;
 
 export async function runCustomerTurn(input: Extract<EngineInput, { mode: "customer" }>): Promise<CustomerTurn> {
-  const result = await runEngineTurn(input);
+  const result = await runEngineTurn(input, { deliveryPending: true });
   finish(result);
-  return { output: result.output, orderAttempted: result.orderAttempted, turnLogged: result.turnLogged };
+  return { output: result.output, orderWritten: result.orderWritten, turnRow: result.turnRow };
 }
 
 // The reply assistant (PB-20). The input carries no shop; it comes from the

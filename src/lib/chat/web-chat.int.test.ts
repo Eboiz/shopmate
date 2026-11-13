@@ -15,7 +15,7 @@ import { findShop, loadCatalog, loadHistory, productInShop, shopperExternalId } 
 
 const engine = vi.fn<(input: EngineInput) => Promise<EngineOutput>>();
 vi.mock("@/lib/engine/run", () => ({
-  runCustomerTurn: async (input: EngineInput) => ({ output: await engine(input), orderAttempted: false, turnLogged: Promise.resolve(null) }),
+  runCustomerTurn: async (input: EngineInput) => ({ output: await engine(input), orderWritten: false, turnRow: Promise.resolve(null) }),
 }));
 
 const db = createAdminClient();
