@@ -14,6 +14,7 @@ import { answersOrderConfirm, isOrderMessage, ORDER_CONFIRM_NO, ORDER_CONFIRM_YE
 import { isReturnsQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
 import { answersPairingQuestion, ASK_PAIRING_PRODUCT_TEXT, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
+import { fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { fold } from "./text";
 
 // Below this intent confidence the turn goes to the LLM tool loop instead.
@@ -264,15 +265,21 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       return customer ? offer(OFF_TOPIC_TEXT, "not_covered_by_data") : fixed(STAFF_OFF_TOPIC_TEXT);
     case "browse": {
       // PB-31: "shop có gì", "đồ đi tiệc": the groups as buttons, plus a few
-      // products whose description fits the occasion.
+      // products whose description fits the occasion. PB-40: only products that
+      // keep to the shopper's budget, excluded garments and count.
       const groups = catalogGroups(input.catalog);
-      const fits = productsForOccasion(lastShopperText(input.history), input.catalog, 3);
+      const constraints = shopperConstraints(last);
+      const limited = hasConstraints(constraints);
+      const pool = limited ? fitConstraints(input.catalog, { ...constraints, count: null }) : input.catalog;
+      const fits = productsForOccasion(last, pool, constraints.count ?? 3);
       return {
         kind: "write",
-        facts: { groups, suggested: fits.map((p) => ({ name: p.name, description: p.description ?? null })) },
+        facts: { groups, suggested: fits.map((p) => ({ name: p.name, description: p.description ?? null })), ...(limited ? { constraints } : {}) },
         task: fits.length
           ? "Giới thiệu ngắn các nhóm hàng shop có (groups), nói vài món trong suggested hợp với điều bạn hỏi (chỉ dựa trên description), rồi hỏi bạn muốn xem nhóm hay món nào. Không nêu giá."
-          : "Giới thiệu ngắn các nhóm hàng shop có (groups) rồi hỏi bạn muốn xem nhóm nào. Không nêu giá.",
+          : limited
+            ? "Nói rõ shop không có món nào hợp với điều bạn nêu (constraints: giá tối đa maxPrice, loại không muốn excludeGroups). Không nêu tên món nào khác. Hỏi bạn có muốn xem nhóm khác (groups) không. Không nêu giá."
+            : "Giới thiệu ngắn các nhóm hàng shop có (groups) rồi hỏi bạn muốn xem nhóm nào. Không nêu giá.",
         productIds: fits.map((p) => p.id),
         quickReplies: groups,
       };
@@ -425,6 +432,21 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   if ((size || color) && matching.length === 0) {
     const all = await input.runTool("get_stock", { productId: product.id });
     const others = all.ok ? inStock((all.output as ToolOutput<"get_stock">).variants) : [];
+    // PB-40 (BOT-02): the size was asked (often the size the AI advised), so the
+    // same size in another color comes first and is the only button; another
+    // size is never offered as the fix.
+    if (size && others.length) {
+      const sameSize = others.filter((o) => fold(o.size) === fold(size));
+      return {
+        kind: "write",
+        facts: { ...base, available: false, otherOptionsInStock: sameSize.length ? sameSize : others },
+        task: sameSize.length
+          ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý cùng size đó ở các màu khác còn hàng (otherOptionsInStock) kèm giá."
+          : "Nói rõ size bạn hỏi (asked) đã hết ở mọi màu. Không gợi ý size khác thay thế, vì size được chọn theo số đo; có thể nói ngắn shop còn các size trong otherOptionsInStock để bạn tự cân nhắc.",
+        productIds: [product.id],
+        quickReplies: customer ? buttons(sameSize.map((o) => `Size ${o.size} ${o.color}`)) : undefined,
+      };
+    }
     return {
       kind: "write",
       facts: { ...base, available: false, otherOptionsInStock: others },

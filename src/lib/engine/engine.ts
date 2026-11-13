@@ -24,6 +24,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
+import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
@@ -188,6 +189,32 @@ function blockedOrderRun(input: unknown, code: string, extra: object = {}): Tool
     content: JSON.stringify({ error: code, ...extra }),
     isError: true,
   };
+}
+
+// PB-40: the last step on every path. Cards keep to the shopper's budget,
+// excluded garments and count ("có 300 nghìn, không thích váy, gợi ý 2 món");
+// a customer's buttons don't push another size than the one they asked for
+// when this turn looked up stock (BOT-02).
+async function keepToShopper(
+  reply: Reply,
+  text: string,
+  opts: { mode: EngineInput["mode"]; shopperSize: string | null; stockSizes: Set<string>; categories: () => Promise<CatalogItem[]> },
+): Promise<Reply> {
+  let out = reply;
+  const constraints = shopperConstraints(text);
+  if (out.products.length > 0 && hasConstraints(constraints)) {
+    const category = constraints.excludeGroups.length > 0
+      ? new Map((await opts.categories().catch(() => [])).map((p) => [p.id, p.category]))
+      : new Map<string, string | null>();
+    const kept = new Set(
+      fitConstraints(out.products.map((c) => ({ ...c, category: category.get(c.productId) ?? null })), constraints).map((c) => c.productId),
+    );
+    out = { ...out, products: out.products.filter((c) => kept.has(c.productId)) };
+  }
+  if (opts.mode === "customer" && opts.stockSizes.size > 0) {
+    out = { ...out, quickReplies: dropOtherSizeReplies(out.quickReplies, opts.shopperSize, opts.stockSizes) };
+  }
+  return out;
 }
 
 export async function runEngine(rawInput: EngineInput, partialDeps: Partial<EngineDeps> = {}): Promise<EngineResult> {
@@ -870,7 +897,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     const names = await deps.store.pairedProductNames(ctx.shopId).catch(() => []);
     reply = { ...reply, quickReplies: names };
   }
-  const output = engineOutputSchema.parse({ reply: reply!, personalReplyNeeded });
+  reply = await keepToShopper(reply!, lastText, {
+    mode,
+    shopperSize: knownShopperSize(input.history),
+    stockSizes: sizesInToolOutputs(logs.filter((l) => l.name === "get_stock").map((l) => l.output)),
+    categories: () => (deps.store.catalog ? deps.store.catalog(ctx.shopId) : Promise.resolve([])),
+  });
+  const output = engineOutputSchema.parse({ reply, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 
   const metrics: TurnMetrics = {
