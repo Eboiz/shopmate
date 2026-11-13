@@ -259,6 +259,19 @@ describe("runEngine", () => {
       expect(await result.turnLogged).toBe("turn-1");
     });
 
+    it("R3: an order summary returns once its quote row is written, without waiting for the metrics sink", async () => {
+      const sink = new Promise<void>(() => {}); // never resolves
+      const { handlers, run } = setup(
+        [toolCalls(toolUse("quote_order", { items: draftOrder.items }), toolUse("create_draft_order", draftOrder))],
+        { deps: { deliveryPending: true, onMetrics: () => sink } },
+      );
+      handlers.quote_order.mockResolvedValue(orderQuote);
+      const result = await run(customerInput({ history: [
+        { sender: "shopper", text: "Mình lấy váy size M màu be, tên Thảo, số 0912345678, giao tới Q1." },
+      ] }));
+      expect(result.output.reply.text).toContain("Bạn xác nhận đơn này chứ?");
+    });
+
     it("R3: without deliveryPending (dev route, eval) the row is not pending", async () => {
       const { store, run } = setup([reply()]);
       await (await run(customerInput())).turnLogged;
@@ -1412,6 +1425,19 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toContain("350.000đ");
       expect(result.output.reply.products).toEqual([]);
       expect(result.handoffReason).toBeNull();
+    });
+
+    it("wrong price twice whose cards the shopper's budget removes sends the data, not 'see the card below'", async () => {
+      const budget = [{ sender: "shopper" as const, text: "mình có 300 nghìn, váy này giá bao nhiêu?" }];
+      const { run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
+        reply("Dạ váy giá 390k ạ", [PRODUCT]),
+      ]);
+      const result = await run(customerInput({ history: budget }));
+      expect(result.output.reply.products).toEqual([]);
+      expect(result.output.reply.text).not.toBe(NUMBER_CARD_TEXT);
+      expect(result.output.reply.text).toContain("350.000đ");
     });
 
     it("wrong price twice in needs_human does not move the conversation back to the AI", async () => {

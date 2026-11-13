@@ -77,11 +77,13 @@ vi.mock("./send", () => ({
 const engine = vi.fn<() => Promise<EngineOutput>>();
 // What runCustomerTurn adds to the engine's output (R3).
 let orderWritten: boolean;
+let handedOff: boolean;
 let turnId: string | null;
 vi.mock("@/lib/engine/run", () => ({
   runCustomerTurn: async (...args: unknown[]) => ({
     output: await engine(...(args as [])),
     orderWritten,
+    handedOff,
     turnRow: Promise.resolve(turnId),
   }),
 }));
@@ -111,6 +113,7 @@ beforeEach(() => {
   sendResult = () => ({ ok: true, messageId: "m" });
   engine.mockReset().mockResolvedValue({ reply: answer, personalReplyNeeded: false });
   orderWritten = false;
+  handedOff = false;
   turnId = "turn-1";
   log.length = 0;
   markTurn.mockClear();
@@ -227,6 +230,7 @@ describe("receiveChannelMessage", () => {
   });
 
   it("sends the engine's closing reply as a system message when the engine handed off in this turn", async () => {
+    handedOff = true;
     engine.mockImplementation(async () => {
       conversation().mode = "needs_human";
       return { reply: answer, personalReplyNeeded: false };
@@ -353,9 +357,40 @@ describe("only the newest shopper message gets a reply (R3)", () => {
     expect(marks()).toEqual([["shop-a", "turn-1", "superseded"]]);
   });
 
-  it("a sent reply's turn is marked delivered before the send, so the shopper's answer finds it", async () => {
+  it("a sent reply's turn is marked delivered only after the send", async () => {
     expect(await receiveChannelMessage(account, text("mid-1"))).toBe("answered");
-    expect(log).toEqual(["mark turn-1 delivered", "send ai"]);
+    expect(log).toEqual(["send ai", "mark turn-1 delivered"]);
+  });
+
+  it("a failed send leaves the turn pending (no mark), so the next turn never builds on it", async () => {
+    sendResult = () => ({ ok: false, messageId: null, error: "insert failed" });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("answered");
+    error.mockRestore();
+    expect(markTurn).not.toHaveBeenCalled();
+  });
+
+  it("another turn's handoff (a photo) does not make this turn's reply a closing message", async () => {
+    sendResult = (from) => (from === "ai" ? { ok: false, messageId: null, error: "not_in_ai_mode" } : { ok: true, messageId: "m" });
+    engine.mockImplementationOnce(async () => {
+      newerMessageArrives("[ảnh]");
+      conversation().mode = "needs_human"; // the photo turn's handOff()
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1", "Váy này có size L không?"))).toBe("superseded");
+    expect(sent).toEqual([]);
+    expect(marks()).toEqual([["shop-a", "turn-1", "superseded"]]);
+  });
+
+  it("another turn's handoff with no newer message: the reply is not sent as a system message", async () => {
+    sendResult = (from) => (from === "ai" ? { ok: false, messageId: null, error: "not_in_ai_mode" } : { ok: true, messageId: "m" });
+    engine.mockImplementationOnce(async () => {
+      conversation().mode = "needs_human";
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("stored");
+    expect(sent.filter((m) => m.from === "system")).toEqual([]);
+    expect(marks()).toEqual([["shop-a", "turn-1", "superseded"]]);
   });
 
   it("staff took over before the send: the unsent reply's turn is marked superseded", async () => {
@@ -437,6 +472,7 @@ describe("only the newest shopper message gets a reply (R3)", () => {
   it("a superseded turn that handed off leaves the conversation in needs_human and still tells the shopper", async () => {
     const closing: Reply = { text: "Dạ mình đã chuyển cho nhân viên shop", products: [], quickReplies: [] };
     sendResult = (from) => (from === "ai" ? { ok: false, messageId: null, error: "not_in_ai_mode" } : { ok: true, messageId: "m" });
+    handedOff = true;
     engine.mockImplementationOnce(async () => {
       conversation().mode = "needs_human"; // the engine's handoff_to_staff
       newerMessageArrives("alo shop");

@@ -98,6 +98,10 @@ describe("createSupabaseStore", () => {
         await markTurn(db, FX.a.shop, unseen, "superseded");
         expect(await offer()).toBeNull();
         expect(await postcheck(unseen)).toEqual({ productMiss: false, superseded: true });
+        // More skipped rows than any fixed window still leave the delivered turn readable.
+        await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false } });
+        for (let i = 0; i < 6; i++) await turn({ handoff_offer: null, postcheck: { productMiss: false, pending: true } });
+        expect(await offer()).toBe("size_out_of_range");
         // Another shop's id is never marked.
         const other = await store.insertTurn({ shop_id: FX.b.shop, conversation_id: FX.b.conversation, mode: "customer", latency_ms: 1, tool_calls: [], postcheck: { pending: true } });
         ids.push(other);

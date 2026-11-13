@@ -1156,6 +1156,11 @@ ${missingRetryNote(claims)}`;
     stockSizes: sizesInToolOutputs(logs.filter((l) => l.name === "get_stock").map((l) => l.output)),
     categories: () => (deps.store.catalog ? deps.store.catalog(ctx.shopId) : Promise.resolve([])),
   });
+  // PB-07: the shopper's budget or exclusions may have removed every card the
+  // number fallback sent; then the looked-up data is the text, never "see the card below".
+  if (reply.text === NUMBER_CARD_TEXT && reply.products.length === 0) {
+    reply = { ...reply, text: dataReplyText(logs, null) ?? FALLBACK_TEXT };
+  }
   const output = engineOutputSchema.parse({ reply, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 
@@ -1215,7 +1220,9 @@ ${missingRetryNote(claims)}`;
   })();
   const turnLogged = Promise.all([turnRow, sinkDone]).then(([row]) => row);
 
-  if (quotedOrderPresented && await turnLogged === null) {
+  // The summary is only confirmable once its quote is logged; the metrics sink
+  // (turnLogged) is not waited for.
+  if (quotedOrderPresented && await turnRow === null) {
     return {
       output: engineOutputSchema.parse({
         reply: { text: "Mình chưa lưu được báo giá lúc này. Bạn thử lại giúp mình nhé.", products: [], quickReplies: [] },

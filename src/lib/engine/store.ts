@@ -54,9 +54,6 @@ export type EngineStore = {
 };
 
 const MAX_CARDS = 10;
-// Superseded turns are skipped (R3); a burst of more messages than this in one
-// turn's time leaves no state, the safe default.
-const RECENT_TURNS = 5;
 const PAIRED_BUTTONS = 3;
 
 // Every admin client reads the same database, so one cache per process is
@@ -104,12 +101,16 @@ export function createSupabaseStore(db: Db): EngineStore {
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
+      // R3: pending and superseded rows are filtered in the query, so any number
+      // of them never pushes the last delivered turn out of the limit.
+      .is("postcheck->>pending", null)
+      .is("postcheck->>superseded", null)
       .order("created_at", { ascending: false })
-      .limit(RECENT_TURNS);
+      .limit(1);
     if (error) throw new Error(`ai_turns: ${error.message}`);
     // R3: a superseded turn's reply was never sent, so the shopper never saw its
     // offer, quote or clarifying question, and a pending one's may not be; the
-    // last turn whose reply went out decides.
+    // last turn whose reply went out decides. (Filtered above; checked again here.)
     const data = rows.find((row) => {
       const postcheck = postcheckLogSchema.safeParse(row.postcheck).data;
       return postcheck?.superseded !== true && postcheck?.pending !== true;
@@ -203,9 +204,16 @@ export function createSupabaseStore(db: Db): EngineStore {
 // R3 (receive.ts): a channel turn is logged pending (engine.ts); the channel
 // marks it "delivered" (the reply went out, the next turn reads its state) or
 // "superseded" (never sent: the next turn skips it). Other postcheck fields are
-// kept as stored. A failure is logged, never thrown: the row then stays
-// pending, which the next turn skips (the safe side).
-export async function markTurn(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded"): Promise<void> {
+// kept as stored. Tried twice; a failure is logged, never thrown: the row then
+// stays pending, which the next turn skips (the safe side).
+export async function markTurn(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded"): Promise<boolean> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (await markOnce(db, shopId, turnId, outcome, attempt === 2)) return true;
+  }
+  return false;
+}
+
+async function markOnce(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded", last: boolean): Promise<boolean> {
   try {
     const { data, error } = await db.from("ai_turns").select("postcheck").eq("id", turnId).eq("shop_id", shopId).single();
     if (error) throw new Error(error.message);
@@ -215,7 +223,9 @@ export async function markTurn(db: Db, shopId: string, turnId: string, outcome: 
     const postcheck = outcome === "superseded" ? { ...rest, superseded: true } : rest;
     const { error: updateError } = await db.from("ai_turns").update({ postcheck }).eq("id", turnId).eq("shop_id", shopId);
     if (updateError) throw new Error(updateError.message);
+    return true;
   } catch (e) {
-    console.error(`engine: failed to mark the turn ${outcome}`, e);
+    if (last) console.error(`engine: failed to mark the turn ${outcome}`, e);
+    return false;
   }
 }
