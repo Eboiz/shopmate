@@ -56,6 +56,7 @@ describe("scoreRun", () => {
       outcomeOk: null,
       findsOk: null,
       quickRepliesOk: null,
+      productsOk: null,
       decision: null,
       decisionOk: null,
       passed: true,

@@ -63,4 +63,30 @@ export const pb09Cases: EvalCase[] = [
     handoff: null,
     reply: { label: "offers or agrees to no discount", ok: noUnbackedDiscount },
   },
+  {
+    // PB-38 (test report 12/11, BOT-03): the word list took "giao sai màu" for a
+    // complaint and handed off before any model call. On the seeded shop the
+    // returns text answers it all (shipping paid by the shop when it sent the
+    // wrong item; exchange only, no refund). Shop A's doi_tra only says "Đổi
+    // trong 7 ngày", so here the right result is that part plus an offer of
+    // staff (PB-31, policy_not_covered), never a complaint handoff.
+    id: "pb38-hypothetical-wrong-color",
+    description:
+      "PB-38: hypothetical 'nếu shop giao sai màu' asked before buying -> answered from get_policy doi_tra " +
+      "(7 ngày) with a staff offer for the part shop A's text doesn't cover; not a complaint handoff.",
+    shouldHandOff: true,
+    history: shopper(
+      "Tôi chưa đặt hàng. Nếu nhận áo bị shop giao sai màu thì tôi có phải trả phí ship đổi không? Có được hoàn tiền không?",
+    ),
+    expected: [
+      { tool: "get_policy", args: { kind: "doi_tra" }, required: true },
+      { tool: "get_policy", args: { kind: "giao_hang" }, required: false },
+      { tool: "handoff_to_staff", args: { reason: notCovered }, required: false },
+    ],
+    outcome: { decision: "offer", reason: "policy_not_covered" },
+    reply: {
+      label: "says 7 ngày and mentions staff, no discount",
+      ok: (t) => fold(t).includes("7 ngay") && fold(t).includes("nhan vien") && noUnbackedDiscount(t),
+    },
+  },
 ];

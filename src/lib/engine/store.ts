@@ -1,4 +1,4 @@
-import { toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { quickReplySchema, toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
 import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
@@ -45,9 +45,13 @@ export type EngineStore = {
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
   catalog?(shopId: string): Promise<CatalogItem[]>;
+  // PB-31 AC12: up to 3 names of products the shop declared pairings for, as the
+  // buttons under "phối cùng sản phẩm nào?". Only names that fit a quick reply.
+  pairedProductNames?(shopId: string): Promise<string[]>;
 };
 
 const MAX_CARDS = 10;
+const PAIRED_BUTTONS = 3;
 
 export function createSupabaseStore(db: Db): EngineStore {
   async function product(shopId: string, productId: string | null) {
@@ -130,7 +134,7 @@ export function createSupabaseStore(db: Db): EngineStore {
 
     async catalog(shopId) {
       const [products, variants] = await Promise.all([
-        db.from("products").select("id, name, category, description").eq("shop_id", shopId).order("name"),
+        db.from("products").select("id, name, category, description, price").eq("shop_id", shopId).order("name"),
         db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
       ]);
       if (products.error) throw new Error(`products: ${products.error.message}`);
@@ -142,10 +146,21 @@ export function createSupabaseStore(db: Db): EngineStore {
           name: p.name,
           category: p.category,
           description: p.description,
+          price: p.price,
           colors: [...new Set(own.map((v) => v.color))],
           sizes: sortSizes(own.map((v) => v.size)),
         };
       });
+    },
+
+    async pairedProductNames(shopId) {
+      const { data: pairs, error } = await db.from("pairings").select("product_a_id, product_b_id").eq("shop_id", shopId);
+      if (error) throw new Error(`pairings: ${error.message}`);
+      const ids = [...new Set(pairs.flatMap((p) => [p.product_a_id, p.product_b_id]))];
+      if (ids.length === 0) return [];
+      const { data: products, error: productError } = await db.from("products").select("name").eq("shop_id", shopId).in("id", ids).order("name");
+      if (productError) throw new Error(`products: ${productError.message}`);
+      return products.map((p) => p.name.trim()).filter((name) => quickReplySchema.safeParse(name).success).slice(0, PAIRED_BUTTONS);
     },
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildEvalEnv, buildPlanEnv, EVAL_DEFAULT_MODEL, isLocalSupabaseUrl, parseStatusEnv } from "./eval-env";
+import { buildEvalEnv, buildPlanEnv, EVAL_DEFAULT_MODEL, isLocalSupabaseUrl, parseStatusEnv, productionDefaults } from "./eval-env";
 
 const PROD = "https://yhleogzpoonndbyphueu.supabase.co";
 const status = parseStatusEnv(
@@ -75,5 +75,20 @@ describe("eval:injection env (local Supabase only)", () => {
     const files = [{ ANTHROPIC_MODEL: "from-env-local" }, { ANTHROPIC_MODEL: "from-env-test-local" }];
     expect(buildEvalEnv({ shell: {}, files, status }).ANTHROPIC_MODEL).toBe("from-env-test-local");
     expect(buildEvalEnv({ shell: { ANTHROPIC_MODEL: "from-shell" }, files, status }).ANTHROPIC_MODEL).toBe("from-shell");
+  });
+
+  it("Jev router on by default, as on production; JEV_IN_TESTS=false turns it off", () => {
+    expect(buildEvalEnv({ shell: {}, files: [], status }).JEV_IN_TESTS).toBe("true");
+    expect(buildEvalEnv({ shell: { JEV_IN_TESTS: "false" }, files: [], status }).JEV_IN_TESTS).toBe("false");
+    expect(productionDefaults({}, { JEV_IN_TESTS: "false" }).JEV_IN_TESTS).toBe("false");
+    expect(productionDefaults({ JEV_IN_TESTS: "true" }, { JEV_IN_TESTS: "false" }).JEV_IN_TESTS).toBe("true");
+  });
+
+  it("copies the Jev variables from the env files, never a Supabase one", () => {
+    const files = [{ OPENROUTER_API_KEY: "or-key", JEV_MODEL: "m", NEXT_PUBLIC_SUPABASE_URL: PROD }];
+    const env = buildEvalEnv({ shell: {}, files, status });
+    expect(env.OPENROUTER_API_KEY).toBe("or-key");
+    expect(env.JEV_MODEL).toBe("m");
+    expect(env.NEXT_PUBLIC_SUPABASE_URL).toBe(status.API_URL);
   });
 });

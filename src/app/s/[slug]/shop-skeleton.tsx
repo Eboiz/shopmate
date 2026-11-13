@@ -15,7 +15,7 @@ function ShopHeaderSkeleton({ detail = false }: { detail?: boolean }) {
           <Skeleton className="h-6 w-36" />
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Skeleton className={detail ? "h-11 w-16 rounded-lg" : "h-11 w-16 rounded-none sm:w-36"} />
+          <Skeleton className={detail ? "h-11 w-16 rounded-lg" : "hidden size-11 rounded-none sm:block"} />
         </div>
       </div>
     </div>

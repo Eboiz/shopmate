@@ -14,6 +14,7 @@ const ORDER = "a0000000-0000-4000-8000-000000000011";
 const listed: DraftOrderView[] = [
   {
     id: ORDER,
+    conversationId: "a0000000-0000-4000-8000-000000000031",
     createdAt: "2026-11-07T03:00:00.000+00:00",
     customer: { name: "Thảo", phone: "0912345678", address: "12 Lê Lợi, Q1" },
     items: [{ id: "a0000000-0000-4000-8000-000000000061", name: "Váy suông linen", size: "M", color: "be", quantity: 2, unitPrice: 350000 }],

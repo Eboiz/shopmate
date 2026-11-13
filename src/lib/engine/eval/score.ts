@@ -1,5 +1,5 @@
 // Scores one engine run against a labeled case. Pure: no IO.
-import type { HandoffReason } from "@/contract";
+import type { HandoffReason, ProductCard } from "@/contract";
 import { OFFER_YES, type OfferReason } from "../handoff-offer";
 import { callKey } from "../metrics";
 import type { ArgMatcher, EvalCase, ExpectedCall, OutcomeLabel } from "./cases";
@@ -14,6 +14,7 @@ export type RunOutcome = {
   // PB-31 soft handoff: the turn's ai_turns.handoff_offer (the reason staff was offered for).
   handoffOffer?: OfferReason | null;
   quickReplies?: string[];
+  products?: ProductCard[];
 };
 
 // PB-31: what the turn decided. handoff = the conversation went to staff;
@@ -36,6 +37,7 @@ export type RunScore = {
   outcomeOk: boolean | null; // decision + reason match one of the case's `outcome` labels
   findsOk: boolean | null; // a search_products output contains the `finds` product
   quickRepliesOk: boolean | null;
+  productsOk: boolean | null; // PB-40
   // null when the run has no outcome to read.
   decision: Decision | null;
   // The decision matches the case's label: its `outcome` labels when it has
@@ -122,6 +124,7 @@ export function scoreRun(c: EvalCase, calls: ActualCall[], outcome?: RunOutcome)
   const outcomeOk = labels.length === 0 ? null : outcome !== undefined && labels.some((l) => outcomeMatches(l, outcome));
   const findsOk = c.finds === undefined ? null : searchFound(calls, c.finds) || directFind;
   const quickRepliesOk = c.quickReplies === undefined ? null : outcome !== undefined && c.quickReplies.ok(outcome.quickReplies ?? []);
+  const productsOk = c.products === undefined ? null : outcome !== undefined && c.products.ok(outcome.products ?? []);
   const decision = outcome === undefined ? null : decisionOf(outcome);
   const decisionOk =
     decision === null
@@ -141,13 +144,14 @@ export function scoreRun(c: EvalCase, calls: ActualCall[], outcome?: RunOutcome)
     outcomeOk,
     findsOk,
     quickRepliesOk,
+    productsOk,
     decision,
     decisionOk,
     passed:
       requiredHit === required.length &&
       paramMismatched === 0 &&
       unnecessary === 0 &&
-      [handoffOk, replyOk, outcomeOk, findsOk, quickRepliesOk].every((ok) => ok !== false),
+      [handoffOk, replyOk, outcomeOk, findsOk, quickRepliesOk, productsOk].every((ok) => ok !== false),
   };
 }
 
