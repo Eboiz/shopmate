@@ -160,3 +160,20 @@ export function isReturnsQuestion(text: string): boolean {
   const verb = RETURN_VERB.test(t) || (noMarks && /\b(doi|tra)\b/.test(plain));
   return verb && (AFTER_BUYING.test(t) || AFTER_BUYING_PLAIN.test(plain));
 }
+
+// PB-39: shipping and delivery ("phí ship bao nhiêu?", "ship bao lâu thì nhận",
+// "phi van chuyen", "có freeship không"): the giao_hang policy answers them,
+// whatever the earlier turns were about. Folded text: none of these words collide.
+const SHIPPING = /\b(ship|shipping|freeship|giao hang|van chuyen|phi giao)\b/;
+// The same message also asks about a product's stock, size or color: not a
+// shipping-only question ("váy này còn size M không, ship được không").
+const ABOUT_A_PRODUCT = /\bcon (hang|size|mau|khong|ko|k)\b|\bsize\b|\bmau\b/;
+export function isShippingQuestion(text: string): boolean {
+  const plain = fold(text).replace(/[^a-z0-9]+/g, " ");
+  return SHIPPING.test(plain) && !ABOUT_A_PRODUCT.test(plain) && !isReturnsQuestion(text);
+}
+
+// PB-39: the message asks for the price or what is in stock ("báo giá, màu còn
+// hàng", "giá bao nhiêu"), next to a size question.
+const PRICE_OR_STOCK = /\b(gia|bao gia|bao nhieu tien)\b|\bcon (hang|mau|size|khong|ko)\b|\bmau (nao|gi)\b|\bmau con\b|\bton kho\b/;
+export const asksPriceOrStock = (text: string) => PRICE_OR_STOCK.test(fold(text).replace(/[^a-z0-9]+/g, " "));

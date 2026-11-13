@@ -1,5 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 import { findStaffProfile, requireUser } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
 import { LoadingRegion, PageHeaderSkeleton, Skeleton } from "@/components/ui/skeleton";
 import { AdminShell } from "./admin-shell";
 
@@ -18,14 +19,22 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
 async function AdminGate({ children }: { children: ReactNode }) {
   const user = await requireUser();
   const staff = await findStaffProfile();
-  return <AdminShell email={user.email ?? ""} showNav={Boolean(staff)}>{staff ? children : <NoShopNotice />}</AdminShell>;
+  const shopName = staff ? await readShopName(staff.shopId) : undefined;
+  return <AdminShell email={user.email ?? ""} shopName={shopName} showNav={Boolean(staff)}>{staff ? children : <NoShopNotice />}</AdminShell>;
+}
+
+// The shop name for the header. A failed read only hides it.
+async function readShopName(shopId: string) {
+  const db = await createClient();
+  const { data } = await db.from("shops").select("name").eq("id", shopId).maybeSingle();
+  return data?.name ?? undefined;
 }
 
 // A signed-in account with no profiles row belongs to no shop: every admin page
 // would fail to load its data, so say what is wrong instead.
 function NoShopNotice() {
   return (
-    <section className="mx-auto max-w-md space-y-2 rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-900">
+    <section className="mx-auto max-w-md space-y-2 rounded-lg border border-[#f3d3c9] bg-[#fff6f3] p-4 text-[#7a2a1d]">
       <h1 className="font-semibold">Tài khoản chưa được gắn với shop nào</h1>
       <p className="text-sm">
         Bạn đã đăng nhập, nhưng tài khoản này chưa thuộc shop nào nên chưa xem được hộp thư, đơn hàng và sản phẩm.

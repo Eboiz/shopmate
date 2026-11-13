@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { z } from "zod";
 import { formatPrice } from "@/lib/format";
+import { displayColor } from "@/lib/shop/catalog-view";
 
 // The order basket of the shop page. It never takes payment: it only gathers
 // items so the shopper sends one order message in the chat, and the shop
@@ -16,11 +17,81 @@ const cartItemSchema = z.object({
   color: z.string(),
   size: z.string(),
   quantity: z.number().int().min(1).max(99),
+  // Stock when the line was added; older baskets have none and cap at 99.
+  maxQuantity: z.number().int().min(1).max(99).optional(),
 });
 export type CartItem = z.infer<typeof cartItemSchema>;
 
 // The chat field takes one line of up to 1000 characters.
 export const CART_MAX_LINES = 10;
+
+// Lines are found by what they are, not by their place in the list: another
+// tab can change the basket while this one is open.
+export function cartLineKey(item: Pick<CartItem, "productId" | "color" | "size">): string {
+  return [item.productId, item.color, item.size].join("|");
+}
+
+export function cartLineMax(item: CartItem): number {
+  return item.maxQuantity ?? 99;
+}
+
+// What the cart can say about a line after checking it against the shop's
+// current stock.
+export type StockChange = { name: string; color: string; size: string } & (
+  | { kind: "capped"; stock: number }
+  | { kind: "sold_out" }
+);
+
+// The stock of the line's variant in the catalog, or null when the catalog
+// does not say (product missing or listed without variants): such lines are
+// left alone and the shop checks them when it confirms the order.
+export function variantStock(
+  products: { id: string; variants?: { color: string; size: string; stock: number }[] }[],
+  item: Pick<CartItem, "productId" | "color" | "size">,
+): number | null {
+  const product = products.find((candidate) => candidate.id === item.productId);
+  if (!product?.variants) return null;
+  return product.variants.find((variant) => variant.color === item.color && variant.size === item.size)?.stock ?? 0;
+}
+
+// Brings every line within the stock the shop has now. Baskets saved before
+// lines carried maxQuantity, or before the stock dropped, are fixed here:
+// sold-out lines go, the rest cap at the stock.
+export function reconcileCart(
+  items: CartItem[],
+  stockOf: (item: CartItem) => number | null,
+): { items: CartItem[]; changes: StockChange[] } {
+  const changes: StockChange[] = [];
+  const next: CartItem[] = [];
+  for (const item of items) {
+    const stock = stockOf(item);
+    if (stock === null) {
+      next.push(item);
+      continue;
+    }
+    const label = { name: item.name, color: item.color, size: item.size };
+    if (stock <= 0) {
+      changes.push({ ...label, kind: "sold_out" });
+      continue;
+    }
+    const max = Math.min(99, stock);
+    if (item.quantity > max) changes.push({ ...label, kind: "capped", stock: max });
+    next.push({ ...item, quantity: Math.min(item.quantity, max), maxQuantity: max });
+  }
+  return { items: next, changes };
+}
+
+export function stockChangeMessage(changes: StockChange[]): string {
+  return changes
+    .map((change) => {
+      const variant = [change.color && displayColor(change.color), change.size && `size ${change.size}`].filter(Boolean).join(", ");
+      const name = variant ? `${change.name} (${variant})` : change.name;
+      return change.kind === "sold_out"
+        ? `${name} đã hết hàng, đã bỏ khỏi giỏ.`
+        : `${name} chỉ còn ${change.stock}, đã giảm số lượng về ${change.stock}.`;
+    })
+    .join(" ");
+}
 
 const storageKey = (slug: string) => `shopmate-cart:${slug}`;
 
@@ -78,34 +149,63 @@ export function useCart(slug: string) {
     [key],
   );
 
-  // Adds the line, or raises its quantity; false when the basket is full.
+  // Adds the line, or raises its quantity up to the stock; false when the
+  // basket is full.
   const add = useCallback((item: CartItem, maxQuantity = 99): boolean => {
     let added = true;
+    const max = Math.max(1, Math.min(99, maxQuantity));
+    const key = cartLineKey(item);
     setItems((current) => {
-      const index = current.findIndex((line) => line.productId === item.productId && line.color === item.color && line.size === item.size);
+      const index = current.findIndex((line) => cartLineKey(line) === key);
       if (index >= 0) {
-        return current.map((line, i) => (i === index ? { ...line, quantity: Math.min(maxQuantity, line.quantity + item.quantity) } : line));
+        return current.map((line, i) => (i === index ? { ...line, quantity: Math.min(max, line.quantity + item.quantity), maxQuantity: max } : line));
       }
       if (current.length >= CART_MAX_LINES) {
         added = false;
         return current;
       }
-      return [...current, item];
+      return [...current, { ...item, quantity: Math.min(max, item.quantity), maxQuantity: max }];
     });
     return added;
   }, [setItems]);
 
-  const setQuantity = useCallback((index: number, quantity: number) => {
-    setItems((current) => current.map((line, i) => (i === index ? { ...line, quantity: Math.max(1, Math.min(99, quantity)) } : line)));
+  const setQuantity = useCallback((key: string, quantity: number) => {
+    setItems((current) => current.map((line) => (cartLineKey(line) === key ? { ...line, quantity: Math.max(1, Math.min(cartLineMax(line), quantity)) } : line)));
   }, [setItems]);
 
-  const remove = useCallback((index: number) => {
-    setItems((current) => current.filter((_, i) => i !== index));
+  const remove = useCallback((key: string) => {
+    setItems((current) => current.filter((line) => cartLineKey(line) !== key));
+  }, [setItems]);
+
+  // Puts a removed line back where it was ("Hoàn tác"); false when the basket
+  // filled up meanwhile.
+  const restore = useCallback((item: CartItem, index: number): boolean => {
+    let restored = true;
+    setItems((current) => {
+      if (current.some((line) => cartLineKey(line) === cartLineKey(item))) return current;
+      if (current.length >= CART_MAX_LINES) {
+        restored = false;
+        return current;
+      }
+      return [...current.slice(0, index), item, ...current.slice(index)];
+    });
+    return restored;
   }, [setItems]);
 
   const clear = useCallback(() => setItems(() => []), [setItems]);
 
-  return { items, add, setQuantity, remove, clear };
+  // Checks the stored lines against the shop's current stock; returns what changed.
+  const reconcile = useCallback((stockOf: (item: CartItem) => number | null): StockChange[] => {
+    let changes: StockChange[] = [];
+    setItems((current) => {
+      const result = reconcileCart(current, stockOf);
+      changes = result.changes;
+      return result.items;
+    });
+    return changes;
+  }, [setItems]);
+
+  return { items, add, setQuantity, remove, restore, clear, reconcile };
 }
 
 export function cartSubtotal(items: CartItem[]): number {
