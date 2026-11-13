@@ -1,6 +1,7 @@
 // PB-07: every price and stock quantity in a model-written reply must be one a
 // tool returned in the same turn. Pure: no IO. The engine rewrites once on a
-// mismatch, then sends a product card and hands off (engine.ts).
+// mismatch, then sends the product cards from the database and the conversation
+// stays with the AI (engine.ts).
 import type { ToolCallLog } from "@/contract";
 
 export type NumberIssue = { kind: "price" | "stock"; raw: string; value: number };
@@ -8,8 +9,10 @@ export type NumberIssue = { kind: "price" | "stock"; raw: string; value: number 
 export const NUMBER_RETRY_NOTE =
   "Câu trả lời có giá hoặc số lượng tồn kho không khớp dữ liệu tool. Viết lại, chỉ dùng đúng giá và số lượng tool trả về.";
 
-export const NUMBER_HANDOFF_TEXT =
-  "Dạ, mình gửi bạn thông tin sản phẩm từ dữ liệu của shop. Nhân viên shop sẽ kiểm tra và trả lời bạn sớm nhé!";
+// Sent with the cards when the rewrite still has a wrong number: the card's
+// price comes from the database, so nothing here promises staff.
+export const NUMBER_CARD_TEXT =
+  "Dạ, bạn xem giá và thông tin sản phẩm theo dữ liệu của shop ở thẻ bên dưới nhé. Bạn cần mình tư vấn thêm gì không ạ?";
 
 // "\b" in a JS regex only knows ASCII letters, so "350.000đ" followed by a space
 // would not end a word. Unicode look-arounds stand in for it: a number starts

@@ -28,7 +28,7 @@ import { createLangfuseSink } from "./langfuse";
 import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
 import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { normalizeSizeInput } from "./measurements";
-import { findUncheckedNumbers, NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { findUncheckedNumbers, NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import type { PostcheckLog } from "./postcheck-log";
 import { findEnglish, VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import { answeredFromData } from "./resume";
@@ -306,6 +306,13 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // on screen; with none on screen it is dropped, never sent to the database.
   const cardIdsOf = (ids: readonly string[]) =>
     ids.flatMap((id) => (id !== VIEWING_PRODUCT_REF ? [id] : tc.product ? [tc.product.id] : []));
+  // PB-07: the cards sent when a reply's numbers failed twice: the viewed
+  // product, else the ones the reply was about, else the ones the turn looked up.
+  const numberCardIds = (replyIds: readonly string[]) => {
+    if (tc.product) return [tc.product.id];
+    const ids = cardIdsOf(replyIds);
+    return ids.length > 0 ? ids : productIdsInLogs(logs);
+  };
 
   // The shop's catalogue: read at most once per turn, shared by the Jev router
   // and the quick-reply check.
@@ -380,7 +387,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // the shopper was asking for a discount or a price: the server refuses instead.
   let refusalFallback = false;
   // PB-07: prices and stock in a model-written reply must be the tools'. One
-  // rewrite; a second mismatch hands off with the product card (numberBlocked).
+  // rewrite; a second mismatch sends the product cards instead and the
+  // conversation stays with the AI (numberBlocked, PR #81 review).
   let numberCheck: PostcheckLog["numberCheck"];
   let numberBlocked = false;
   const shopperText = shopperTurnText(input.history);
@@ -642,10 +650,7 @@ ${missingRetryNote(claims)}`;
               continue;
             }
             numberBlocked = true;
-            handoff = "postcheck_failed";
-            await deps.store.setNeedsHuman(ctx);
-            const ids = tc.product ? [tc.product.id] : write.productIds;
-            reply = { text: NUMBER_HANDOFF_TEXT, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+            reply = { text: NUMBER_CARD_TEXT, products: await deps.store.productCards(ctx.shopId, numberCardIds(write.productIds)), quickReplies: [] };
             break;
           }
           if (canRetry && needsVietnameseRewrite(parsed.reply.text)) {
@@ -968,7 +973,7 @@ ${missingRetryNote(claims)}`;
   productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
     && answersAiMessage(input.history) && productMiss;
   if (productMissedTwice) handoff = "misunderstood_twice";
-  else if (discountBlocked || numberBlocked) handoff = "postcheck_failed";
+  else if (discountBlocked) handoff = "postcheck_failed";
 
   // PB-06 AC4, soft since PB-31: measurements outside the chart, or a product with
   // no chart, always end in the server's size text offering staff, even when the
@@ -1012,19 +1017,18 @@ ${missingRetryNote(claims)}`;
     if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
     const text = productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
-      : discountBlocked ? DISCOUNT_HANDOFF_TEXT
-      : numberBlocked ? NUMBER_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
-    // PB-07: the numbers the shopper gets come from the database card, not the
-    // model's text: the viewed product, else the products the reply was about.
-    const cardIds = handoff !== "postcheck_failed" ? []
-      : tc.product ? [tc.product.id]
-      : numberBlocked ? cardIdsOf(modelReply?.productIds ?? []) : [];
+      : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
+    const cardIds = handoff === "postcheck_failed" && tc.product ? [tc.product.id] : [];
     const products = cardIds.length > 0 ? await deps.store.productCards(ctx.shopId, cardIds) : [];
     reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (refusalFallback) {
     reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
+  } else if (numberBlocked) {
+    // PB-07: the numbers the shopper gets come from the database cards, not
+    // the model's text; the conversation stays with the AI.
+    reply = { text: NUMBER_CARD_TEXT, products: await deps.store.productCards(ctx.shopId, numberCardIds(modelReply?.productIds ?? [])), quickReplies: [] };
   } else if (finalOrderResult?.status === "created") {
     reply = { text: orderCreatedText(), products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "out_of_stock") {

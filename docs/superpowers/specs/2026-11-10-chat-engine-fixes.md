@@ -31,8 +31,11 @@ progress) still runs the LLM tool loop, so each fix covers both paths.
 - Numbers the shopper gave (height, weight such as "1m65", "58kg") and size names are not checked.
   Amounts that appear in the shopper's latest message ("bớt 50k") are also not checked: repeating the
   shopper's number is not a promise (the discount guard, PB-09, covers that case).
-- Mismatch → the AI rewrites once. Still wrong → a product card from data is sent instead, the event is
-  logged (`ai_turns.postcheck`), and the conversation is handed off (`postcheck_failed`, `needs_human`).
+- Mismatch → the AI rewrites once. Still wrong → the product cards from data are sent instead and the
+  event is logged (`ai_turns.postcheck`); the conversation stays with the AI (no handoff, PR #81 review
+  2026-11-12: the AI rule is "rewrite once, then send the product card from data").
+- A stock count needs its unit ("còn 3 cái/chiếc/sp/sản phẩm") or the "(còn N)" form; "còn 2 màu",
+  "còn 3 size" and a bare "(1)" are not stock.
 - At least 20 unit-test replies, including each price format, an order summary with a total and a
   shipping-fee answer.
 

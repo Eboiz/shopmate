@@ -22,7 +22,7 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { OFFER_DECLINED_TEXT, OFFER_NO, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_YES } from "./handoff-offer";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { POLICY_HAS_TEXT_ERROR } from "./handoff-guard";
-import { NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import { VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import { isOrderConfirmation, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES } from "./order-flow";
 import { PROMPT_VERSION, VIEWING_PRODUCT_REF } from "./prompt";
@@ -1321,19 +1321,44 @@ describe("runEngine", () => {
       expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
     });
 
-    it("wrong price twice sends the product card, hands off postcheck_failed and logs postcheck.numberCheck", async () => {
+    it("wrong price twice sends the product card, stays with the AI and logs postcheck.numberCheck", async () => {
       const { store, run } = setup([
         toolCalls(toolUse("get_stock", { productId: PRODUCT })),
         reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
         reply("Dạ váy giá 390k ạ", [PRODUCT]),
       ]);
       const result = await run(customerInput({ history: stockHistory }));
-      expect(result.handoffReason).toBe("postcheck_failed");
-      expect(result.output.reply.text).toBe(NUMBER_HANDOFF_TEXT);
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toBe(NUMBER_CARD_TEXT);
       expect(result.output.reply.products).toEqual([card(PRODUCT)]);
-      expect(store.setNeedsHuman).toHaveBeenCalled();
+      expect(store.setNeedsHuman).not.toHaveBeenCalled();
       await result.turnLogged;
-      expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: ["390k"], retried: true } });
+      const row = store.insertTurn.mock.calls[0][0];
+      expect(row.handoff_reason).toBeNull();
+      expect(row.postcheck).toEqual({ productMiss: false, numberCheck: { failed: ["390k"], retried: true } });
+    });
+
+    it("wrong price twice with no product on screen sends the cards of the products the turn looked up", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", []),
+        reply("Dạ váy giá 390k ạ", []),
+      ]);
+      store.loadTurnContext.mockResolvedValueOnce({ conversation: { shopId: SHOP_A, mode: "ai" }, product: null } as never);
+      const result = await run(customerInput({ history: stockHistory }));
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+    });
+
+    it("wrong price twice in needs_human does not move the conversation back to the AI", async () => {
+      const { store, run } = setup([
+        toolCalls(toolUse("get_stock", { productId: PRODUCT })),
+        reply("Dạ váy giá 390.000đ ạ", [PRODUCT]),
+        reply("Dạ váy giá 390k ạ", [PRODUCT]),
+      ]);
+      store.loadTurnContext.mockResolvedValueOnce({ conversation: { shopId: SHOP_A, mode: "needs_human" }, product: { id: PRODUCT, name: "Váy" } } as never);
+      await run(customerInput({ history: stockHistory }));
+      expect(store.setAiMode).not.toHaveBeenCalled();
     });
 
     it("a reply with the tool's price is sent without a rewrite and logs no numberCheck", async () => {
@@ -1370,14 +1395,14 @@ describe("runEngine", () => {
       expect(result.output.reply.text).toBe("Dạ size M available nha");
     });
 
-    it("the handoff card never sends VIEWING_PRODUCT_REF to the database (v1.3 merge)", async () => {
+    it("the number card never sends VIEWING_PRODUCT_REF to the database (v1.3 merge)", async () => {
       const { store, run } = setup([
         toolCalls(toolUse("get_stock", { productId: PRODUCT })),
         reply("Dạ váy giá 390k ạ", [VIEWING_PRODUCT_REF, PRODUCT]),
         reply("Dạ váy giá 390k ạ", [VIEWING_PRODUCT_REF, PRODUCT]),
       ]);
       const result = await run(customerInput({ history: stockHistory }));
-      expect(result.handoffReason).toBe("postcheck_failed");
+      expect(result.handoffReason).toBeNull();
       expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
     });
 

@@ -7,7 +7,7 @@ import { FALLBACK_TEXT } from "./model-reply";
 import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import { ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
 import type { JevClient, JevResponse } from "./jev";
-import { NUMBER_HANDOFF_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import { VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import type { TurnMetrics } from "./metrics";
 import { PROMPT_VERSION } from "./prompt";
@@ -213,13 +213,15 @@ describe("runEngine with Jev routing", () => {
     expect(result.output.reply.text).toBe("Dạ size M màu be còn 7 cái ạ");
   });
 
-  it("router write with a wrong price twice sends the card and hands off (PB-07)", async () => {
+  it("router write with a wrong price twice sends the card and stays with the AI (PB-07)", async () => {
     const { store, run } = setup(jevSaying({}), [reply("Dạ váy giá 350k ạ"), reply("Dạ váy giá 350k ạ")]);
     const result = await run(input("váy này giá bao nhiêu?"));
-    expect(result.handoffReason).toBe("postcheck_failed");
-    expect(result.output.reply.text).toBe(NUMBER_HANDOFF_TEXT);
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toBe(NUMBER_CARD_TEXT);
     expect(result.output.reply.products.map((p) => p.productId)).toEqual([VAY]);
-    expect(store.setNeedsHuman).toHaveBeenCalled();
+    expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    await result.turnLogged;
+    expect(store.insertTurn.mock.calls[0][0].handoff_reason).toBeNull();
   });
 
   it("an unreadable reply is asked for once more, then falls back", async () => {
