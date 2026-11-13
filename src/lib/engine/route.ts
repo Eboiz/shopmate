@@ -11,9 +11,10 @@ import { asksForHuman, OFFER_QUESTION, offerReply, sizeOfferText, type OfferReas
 import type { CatalogItem, JevDecision } from "./jev";
 import { shopperMeasurements } from "./measurements";
 import { answersOrderConfirm, isOrderMessage, ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
-import { isReturnsQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
+import { asksPriceOrStock, isReturnsQuestion, isShippingQuestion, productCoveringMessage, productsForOccasion, productsNamedIn } from "./product-match";
 import { answersPairingQuestion, ASK_PAIRING_PRODUCT_TEXT, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import type { SizeAdvice } from "./size-postcheck";
+import { fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { fold } from "./text";
 
 // Below this intent confidence the turn goes to the LLM tool loop instead.
@@ -199,14 +200,30 @@ const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_
 //  - buying words and no person asked for: an order, never asked_for_human (any
 //    word for a person keeps "human": a request for a person always wins);
 //  - "mặc không vừa thì đổi được không": the doi_tra policy, not product data.
+//  - PB-39: "phí ship bao nhiêu?": the giao_hang policy. Jev reads the earlier
+//    turns too and, after a returns talk (BOT-05, after a handback), picked
+//    doi_tra; the latest message alone decides the kind.
 function settledDecision(d: JevDecision, text: string): JevDecision {
   if (d.intent === "human" && isOrderMessage(text) && !asksForHuman(text)) return { ...d, intent: "order" };
   // Not "stock": "đổi màu khác cho mình xem" asks for other colors.
   if (["product_detail", "size", "unclear"].includes(d.intent) && isReturnsQuestion(text)) {
     return { ...d, intent: "policy", policyKind: "doi_tra" };
   }
+  if (["policy", "stock", "product_detail", "unclear"].includes(d.intent) && isShippingQuestion(text)) {
+    return { ...d, intent: "policy", policyKind: "giao_hang" };
+  }
   return d;
 }
+
+// PB-39 (BOT-01): a size question that also asks the price or the colors in
+// stock gets get_stock too, so the reply has them. null when the tool failed.
+async function stockFacts(input: RouteInput, productId: string) {
+  const r = await input.runTool("get_stock", { productId });
+  if (!r.ok) return null;
+  const stock = r.output as ToolOutput<"get_stock">;
+  return { price: stock.price, inStock: inStock(stock.variants) };
+}
+const STOCK_TASK = " Báo luôn giá (price) và các size, màu còn hàng (inStock), chép đúng như dữ liệu.";
 
 // The AI already read an order back in this conversation.
 const orderReadBack = (history: HistoryMessage[]) =>
@@ -264,15 +281,21 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       return customer ? offer(OFF_TOPIC_TEXT, "not_covered_by_data") : fixed(STAFF_OFF_TOPIC_TEXT);
     case "browse": {
       // PB-31: "shop có gì", "đồ đi tiệc": the groups as buttons, plus a few
-      // products whose description fits the occasion.
+      // products whose description fits the occasion. PB-40: only products that
+      // keep to the shopper's budget, excluded garments and count.
       const groups = catalogGroups(input.catalog);
-      const fits = productsForOccasion(lastShopperText(input.history), input.catalog, 3);
+      const constraints = shopperConstraints(last);
+      const limited = hasConstraints(constraints);
+      const pool = limited ? fitConstraints(input.catalog, { ...constraints, count: null }) : input.catalog;
+      const fits = productsForOccasion(last, pool, constraints.count ?? 3);
       return {
         kind: "write",
-        facts: { groups, suggested: fits.map((p) => ({ name: p.name, description: p.description ?? null })) },
+        facts: { groups, suggested: fits.map((p) => ({ name: p.name, description: p.description ?? null })), ...(limited ? { constraints } : {}) },
         task: fits.length
           ? "Giới thiệu ngắn các nhóm hàng shop có (groups), nói vài món trong suggested hợp với điều bạn hỏi (chỉ dựa trên description), rồi hỏi bạn muốn xem nhóm hay món nào. Không nêu giá."
-          : "Giới thiệu ngắn các nhóm hàng shop có (groups) rồi hỏi bạn muốn xem nhóm nào. Không nêu giá.",
+          : limited
+            ? "Nói rõ shop không có món nào hợp với điều bạn nêu (constraints: giá tối đa maxPrice, loại không muốn excludeGroups). Không nêu tên món nào khác. Hỏi bạn có muốn xem nhóm khác (groups) không. Không nêu giá."
+            : "Giới thiệu ngắn các nhóm hàng shop có (groups) rồi hỏi bạn muốn xem nhóm nào. Không nêu giá.",
         productIds: fits.map((p) => p.id),
         quickReplies: groups,
       };
@@ -381,12 +404,14 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
 
   if (d.intent === "size") {
     const { heightCm, weightKg } = shopperMeasurements(input.history);
+    const wantsStock = asksPriceOrStock(last);
     if (heightCm === null || weightKg === null) {
       const missing = [heightCm === null ? "chiều cao (cm)" : null, weightKg === null ? "cân nặng (kg)" : null].filter(Boolean);
+      const stock = wantsStock ? await stockFacts(input, product.id) : null;
       return {
         kind: "write",
-        facts: { product: product.name, heightCm, weightKg },
-        task: `Để tư vấn size ${product.name}, hỏi bạn ${missing.join(" và ")}. Chỉ hỏi đúng thông tin còn thiếu.`,
+        facts: { product: product.name, heightCm, weightKg, ...stock },
+        task: `Để tư vấn size ${product.name}, hỏi bạn ${missing.join(" và ")}. Chỉ hỏi đúng thông tin còn thiếu.${stock ? STOCK_TASK : ""}`,
         productIds: [product.id],
       };
     }
@@ -401,13 +426,14 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         : offer(sizeOfferText(null), "not_covered_by_data");
     }
     const differs = rec.sizeByHeight !== rec.sizeByWeight;
+    const stock = wantsStock ? await stockFacts(input, product.id) : null;
     return {
       kind: "write",
       sizeAdvice: rec,
-      facts: { product: product.name, heightCm, weightKg, ...rec },
-      task: differs
+      facts: { product: product.name, heightCm, weightKg, ...rec, ...stock },
+      task: (differs
         ? `Tư vấn size ${rec.size} cho ${product.name}. Nói ngắn lý do: theo chiều cao là ${rec.sizeByHeight}, theo cân nặng là ${rec.sizeByWeight}, nên chọn size lớn hơn để mặc thoải mái.`
-        : `Tư vấn size ${rec.size} cho ${product.name} theo chiều cao và cân nặng của bạn.`,
+        : `Tư vấn size ${rec.size} cho ${product.name} theo chiều cao và cân nặng của bạn.`) + (stock ? STOCK_TASK : ""),
       productIds: [product.id],
     };
   }
@@ -425,6 +451,21 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
   if ((size || color) && matching.length === 0) {
     const all = await input.runTool("get_stock", { productId: product.id });
     const others = all.ok ? inStock((all.output as ToolOutput<"get_stock">).variants) : [];
+    // PB-40 (BOT-02): the size was asked (often the size the AI advised), so the
+    // same size in another color comes first and is the only button; another
+    // size is never offered as the fix.
+    if (size && others.length) {
+      const sameSize = others.filter((o) => fold(o.size) === fold(size));
+      return {
+        kind: "write",
+        facts: { ...base, available: false, otherOptionsInStock: sameSize.length ? sameSize : others },
+        task: sameSize.length
+          ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý cùng size đó ở các màu khác còn hàng (otherOptionsInStock) kèm giá."
+          : "Nói rõ size bạn hỏi (asked) đã hết ở mọi màu. Không gợi ý size khác thay thế, vì size được chọn theo số đo; có thể nói ngắn shop còn các size trong otherOptionsInStock để bạn tự cân nhắc.",
+        productIds: [product.id],
+        quickReplies: customer ? buttons(sameSize.map((o) => `Size ${o.size} ${o.color}`)) : undefined,
+      };
+    }
     return {
       kind: "write",
       facts: { ...base, available: false, otherOptionsInStock: others },

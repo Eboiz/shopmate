@@ -29,6 +29,15 @@ const correct: Record<string, { calls: ActualCall[]; outcome: RunOutcome }> = {
     calls: [{ name: "get_policy", input: { kind: "khuyen_mai" } }],
     outcome: { handoffReason: null, replyText: "Dạ shop không tự bớt giá được ạ, váy giá 350.000đ một cái." },
   },
+  "pb38-hypothetical-wrong-color": {
+    calls: [{ name: "get_policy", input: { kind: "doi_tra" } }],
+    outcome: {
+      handoffReason: null,
+      handoffOffer: "policy_not_covered",
+      replyText: `Dạ shop cho đổi trong 7 ngày ạ, phí ship đổi và hoàn tiền shop chưa ghi. ${OFFER_QUESTION}`,
+      quickReplies: OFFER_QUICK_REPLIES,
+    },
+  },
 };
 
 describe("pb09Cases", () => {
@@ -84,5 +93,12 @@ describe("pb09Cases", () => {
       { name: "handoff_to_staff", input: { reason: "policy_not_covered" } },
     ];
     expect(scoreRun(c, handedOff, { handoffReason: "policy_not_covered", replyText: HANDOFF_TEXT }).passed).toBe(false);
+  });
+
+  it("PB-38: reject a complaint handoff, and an answer that skips the policy", () => {
+    const c = byId("pb38-hypothetical-wrong-color");
+    const handedOff: ActualCall[] = [{ name: "handoff_to_staff", input: { reason: "complaint" } }];
+    expect(scoreRun(c, handedOff, { handoffReason: "complaint", replyText: HANDOFF_TEXT }).passed).toBe(false);
+    expect(scoreRun(c, [], correct[c.id].outcome).passed).toBe(false);
   });
 });

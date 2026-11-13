@@ -134,7 +134,7 @@ export function createSupabaseStore(db: Db): EngineStore {
 
     async catalog(shopId) {
       const [products, variants] = await Promise.all([
-        db.from("products").select("id, name, category, description").eq("shop_id", shopId).order("name"),
+        db.from("products").select("id, name, category, description, price").eq("shop_id", shopId).order("name"),
         db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
       ]);
       if (products.error) throw new Error(`products: ${products.error.message}`);
@@ -146,6 +146,7 @@ export function createSupabaseStore(db: Db): EngineStore {
           name: p.name,
           category: p.category,
           description: p.description,
+          price: p.price,
           colors: [...new Set(own.map((v) => v.color))],
           sizes: sortSizes(own.map((v) => v.size)),
         };
