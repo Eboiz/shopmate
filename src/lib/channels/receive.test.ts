@@ -154,6 +154,17 @@ describe("receiveChannelMessage", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("answers an Instagram message delivered twice only once (same mid, PB-23)", async () => {
+    const instagram = { id: "acc-ig", shopId: "shop-a", channel: "instagram" as const };
+    const message = { externalId: "igsid-1", messageId: "aWdfZAG1faXRlbToxOklH", text: "Váy còn size M không?" };
+    expect(await receiveChannelMessage(instagram, message)).toBe("answered");
+    expect(await receiveChannelMessage(instagram, message)).toBe("duplicate");
+    expect(tables.channel_events).toMatchObject([{ channel_account_id: "acc-ig", external_message_id: "aWdfZAG1faXRlbToxOklH", shop_id: "shop-a" }]);
+    expect(tables.shoppers).toMatchObject([{ channel: "instagram", external_id: "igsid-1", channel_account_id: "acc-ig" }]);
+    expect(engine).toHaveBeenCalledOnce();
+    expect(sent).toHaveLength(1);
+  });
+
   it("keeps one conversation per shopper and sends the history oldest first", async () => {
     await receiveChannelMessage(account, text("mid-1", "câu 1"));
     tables.messages.push({ id: "ai-1", shop_id: "shop-a", conversation_id: conversation().id, sender: "ai", text: "trả lời 1", created_at: String(++nextId).padStart(4, "0") });

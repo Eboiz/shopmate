@@ -38,8 +38,8 @@ describe("parseMessengerEvents", () => {
       ]),
     );
     expect(events).toEqual([
-      { type: "text", pageId: "111", senderId: "u1", mid: "m1", text: "Váy còn size M không?" },
-      { type: "text", pageId: "111", senderId: "u1", mid: "m2", text: "Size M" },
+      { type: "text", accountId: "111", senderId: "u1", mid: "m1", text: "Váy còn size M không?" },
+      { type: "text", accountId: "111", senderId: "u1", mid: "m2", text: "Size M" },
     ]);
   });
 
@@ -57,8 +57,8 @@ describe("parseMessengerEvents", () => {
       ]),
     );
     expect(events).toEqual([
-      { type: "image", pageId: "111", senderId: "u1", mid: "m3", imageUrls: ["https://x/1.jpg"] },
-      { type: "sticker", pageId: "111", senderId: "u1", mid: "m4" },
+      { type: "image", accountId: "111", senderId: "u1", mid: "m3", imageUrls: ["https://x/1.jpg"] },
+      { type: "sticker", accountId: "111", senderId: "u1", mid: "m4" },
     ]);
   });
 
@@ -82,7 +82,7 @@ describe("parseMessengerEvents", () => {
         { id: "222", messaging: [{ sender: { id: "u2" }, message: { mid: "b", text: "2" } }] },
       ],
     };
-    expect(parseMessengerEvents(body).map((e) => `${e.pageId}/${e.mid}`)).toEqual(["111/a", "222/b"]);
+    expect(parseMessengerEvents(body).map((e) => `${e.accountId}/${e.mid}`)).toEqual(["111/a", "222/b"]);
   });
 
   it("ignores malformed items instead of throwing", () => {
