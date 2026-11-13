@@ -618,3 +618,116 @@ describe("routeTurn", () => {
     });
   });
 });
+
+describe("PB-45: sizes the shop doesn't sell, and every color in stock", () => {
+  const BLAZER = "a0000000-0000-4000-8000-000000000014";
+  const shop: CatalogItem[] = [
+    ...catalog,
+    { id: BLAZER, name: "Áo blazer dáng suông", category: "Áo", colors: ["Be", "Đen"], sizes: ["XL", "S", "M", "L"] },
+  ];
+  const blazer = { kind: "catalog" as const, id: BLAZER };
+  const XXL = "mình cao 1m58 nặng 50kg nhưng muốn mặc size XXL cho rộng như cái mền được không?";
+  const textOf = (out: unknown) => (out as { reply: { text: string } }).reply.text;
+
+  it("Bot #1: says the shop has no XXL, lists the sizes sold, gives recommend_size and one size up", async () => {
+    const { run, runTool } = setup({ recommend_size: { ok: true, output: { status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "S" } } });
+    for (const intent of ["size", "stock", "product_detail"] as const) {
+      runTool.mockClear();
+      const out = await run({ catalog: shop, viewing: null, history: said(XXL), decision: decision({ intent, product: blazer }) });
+      expect(out).toMatchObject({ kind: "fixed", reply: { quickReplies: ["Size M", "Size L"] } });
+      const text = textOf(out);
+      expect(text).toContain("không có size XXL");
+      expect(text).toContain("S, M, L, XL");
+      expect(text).toContain("size M là vừa");
+      expect(text).toContain("size L");
+      expect(text).not.toMatch(/XXL cũng được|còn size XXL/);
+      expect(runTool.mock.calls).toEqual([["recommend_size", { productId: BLAZER, heightCm: 158, weightKg: 50 }]]);
+    }
+  });
+
+  it("never looks up the stock of a size the product doesn't sell", async () => {
+    const { run, runTool } = setup();
+    const out = await run({ catalog: shop, viewing: null, history: said("áo blazer size XXL còn không"), decision: decision({ product: blazer }) });
+    expect(runTool).not.toHaveBeenCalled();
+    expect(textOf(out)).toContain("không có size XXL");
+    expect(textOf(out)).toContain("chiều cao (cm) và cân nặng (kg)");
+  });
+
+  it("the advised size is the largest: no size up, said so", async () => {
+    const { run } = setup({ recommend_size: { ok: true, output: { status: "ok", size: "XL", sizeByHeight: "XL", sizeByWeight: "L" } } });
+    const out = await run({ catalog: shop, viewing: null, history: said("cao 1m72 nặng 66kg mặc size XXL được không"), decision: decision({ intent: "size", product: blazer }) });
+    expect(textOf(out)).toContain("Size XL đã là size lớn nhất");
+    expect(out).toMatchObject({ reply: { quickReplies: ["Size XL"] } });
+  });
+
+  it("measurements outside the chart: no XXL, then the size offer", async () => {
+    const { run } = setup({ recommend_size: { ok: true, output: { status: "out_of_range", nearestSize: "XL", offCm: 20, offKg: 40 } } });
+    const out = await run({ catalog: shop, viewing: null, history: said("cao 1m95 nặng 110kg mặc size XXL"), decision: decision({ intent: "size", product: blazer }) });
+    expect(out).toMatchObject({ kind: "fixed", offer: "size_out_of_range", reply: { quickReplies: OFFER_QUICK_REPLIES } });
+    expect(textOf(out)).toContain("không có size XXL");
+    expect(textOf(out)).toContain(OFFER_QUESTION);
+  });
+
+  it("no product in focus: the sizes the whole shop sells", async () => {
+    const { run, runTool } = setup();
+    const out = await run({ catalog: shop, viewing: null, history: said("shop có size XXL không"), decision: decision({ intent: "stock", product: { kind: "none" } }) });
+    expect(runTool).not.toHaveBeenCalled();
+    expect(textOf(out)).toContain("shop không có size XXL");
+    expect(textOf(out)).toContain("S, M, L, XL");
+  });
+
+  it("a size the product sells goes the usual way; so do complaints and requests for a person", async () => {
+    const sold = setup({ recommend_size: { ok: true, output: { status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "M" } } });
+    expect(await sold.run({ catalog: shop, viewing: null, history: said("cao 1m58 nặng 50kg mặc size M được không"), decision: decision({ intent: "size", product: blazer }) }))
+      .toMatchObject({ kind: "write", sizeAdvice: { size: "M" } });
+    expect(await setup().run({ catalog: shop, viewing: null, history: said("size XXL không có thì cho gặp nhân viên"), decision: decision({ intent: "human", product: blazer }) }))
+      .toMatchObject({ kind: "handoff", reason: "asked_for_human" });
+  });
+
+  it("staff_draft: the same answer, a staff note when outside the chart", async () => {
+    const { run } = setup({ recommend_size: { ok: true, output: { status: "out_of_range", nearestSize: "XL", offCm: 20, offKg: 40 } } });
+    const out = await run({ mode: "staff_draft", catalog: shop, viewing: null, history: said("cao 1m95 nặng 110kg mặc size XXL"), decision: decision({ intent: "size", product: blazer }) });
+    expect(out).toMatchObject({ kind: "fixed" });
+    expect(out).not.toHaveProperty("offer");
+    expect(textOf(out)).toContain("không có size XXL");
+  });
+
+  it("Bug #2: 'Còn màu nào khác?' after black size S -> get_stock for size S in every color, both colors must be named", async () => {
+    const { run, runTool } = setup({
+      get_stock: (input) => ({
+        ok: true,
+        output: {
+          productId: BLAZER,
+          name: "Áo blazer dáng suông",
+          price: 459000,
+          variants: [variant("S", "Be", 5), variant("S", "Đen", 8)].filter((v) => !input.color || v.color === input.color),
+        },
+      }),
+    });
+    const history: HistoryMessage[] = [
+      { sender: "shopper", text: "áo blazer màu đen size S còn không" },
+      { sender: "ai", text: "Dạ, áo blazer dáng suông màu đen size S còn 8 chiếc ạ." },
+      { sender: "shopper", text: "Còn màu nào khác?" },
+    ];
+    for (const intent of ["stock", "product_detail", "unclear"] as const) {
+      runTool.mockClear();
+      const out = await run({ catalog: shop, viewing: null, history, decision: decision({ intent, product: blazer }) });
+      expect(runTool.mock.calls).toEqual([["get_stock", { productId: BLAZER, size: "S" }]]);
+      expect(out).toMatchObject({
+        kind: "write",
+        facts: { inStock: [{ size: "S", color: "Be", stock: 5 }, { size: "S", color: "Đen", stock: 8 }], colorsInStock: ["Be", "Đen"] },
+        mustMention: ["Be", "Đen"],
+        productIds: [BLAZER],
+      });
+    }
+  });
+
+  it("other colors with no size known: the whole product", async () => {
+    const { run, runTool } = setup({
+      get_stock: { ok: true, output: { productId: BLAZER, name: "Áo blazer dáng suông", price: 459000, variants: [variant("M", "Be", 2), variant("S", "Đen", 8)] } },
+    });
+    const out = await run({ catalog: shop, viewing: null, history: said("áo blazer màu đen đẹp quá", "có màu khác không"), decision: decision({ product: blazer }) });
+    expect(runTool.mock.calls).toEqual([["get_stock", { productId: BLAZER }]]);
+    expect(out).toMatchObject({ kind: "write", mustMention: ["Be", "Đen"] });
+  });
+});
