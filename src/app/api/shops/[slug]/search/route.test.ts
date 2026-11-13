@@ -23,7 +23,7 @@ vi.mock("@/lib/guard/search-limit", async (original) => ({
 const loadDocs = vi.fn<(shopId: string) => Promise<{ id: string }[]>>();
 vi.mock("@/lib/search/shop-docs", () => ({ loadSearchDocs: (shopId: string) => loadDocs(shopId) }));
 
-const search = vi.fn<(query: unknown) => Promise<{ productId: string; score: number }[]>>();
+const search = vi.fn<(query: unknown) => Promise<{ hits: { productId: string; score: number }[]; reranked: boolean }>>();
 let searchConfigured = true;
 vi.mock("@/lib/search/semantic-search", async (original) => ({
   ...(await original<typeof import("@/lib/search/semantic-search")>()),
@@ -58,11 +58,14 @@ beforeEach(() => {
   searchConfigured = true;
   takeSlot.mockReset().mockResolvedValue("ok");
   loadDocs.mockReset().mockResolvedValue([{ id: P1 }, { id: P2 }]);
-  search.mockReset().mockResolvedValue([
-    { productId: P2, score: 0.9 },
-    { productId: OTHER, score: 0.85 },
-    { productId: P1, score: 0.8 },
-  ]);
+  search.mockReset().mockResolvedValue({
+    hits: [
+      { productId: P2, score: 0.9 },
+      { productId: OTHER, score: 0.85 },
+      { productId: P1, score: 0.8 },
+    ],
+    reranked: true,
+  });
 });
 
 describe("POST /api/shops/[slug]/search", () => {
@@ -186,6 +189,27 @@ describe("POST /api/shops/[slug]/search", () => {
     const response = await post({ q: "váy be" });
     expect(response.status).toBe(200);
     expect(await body(response)).toEqual({ mode: "unavailable" });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("applies the floor of the query kind and score kind", async () => {
+    const hits = [
+      { productId: P1, score: 0.66 },
+      { productId: P2, score: 0.5 },
+    ];
+    search.mockResolvedValueOnce({ hits, reranked: true });
+    expect(await body(await post({ q: "váy be" }))).toEqual({ mode: "semantic", productIds: [P1, P2] });
+    search.mockResolvedValueOnce({ hits, reranked: true });
+    expect(await body(await post({ photo: new Blob([JPEG]) }))).toEqual({ mode: "semantic", productIds: [P1] });
+    search.mockResolvedValueOnce({ hits, reranked: false });
+    expect(await body(await post({ photo: new Blob([JPEG]) }))).toEqual({ mode: "semantic", productIds: [P1] });
+  });
+
+  it("cosine scores for a text search are not trusted: mode unavailable", async () => {
+    search.mockResolvedValueOnce({ hits: [{ productId: P1, score: 0.9 }], reranked: false });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await body(await post({ q: "váy be" }))).toEqual({ mode: "unavailable" });
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });

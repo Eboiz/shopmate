@@ -33,20 +33,21 @@ const search = mockSemanticSearch(async () => docs);
 
 describe("mockSemanticSearch", () => {
   it("ranks the matching doc first with score 1", async () => {
-    const hits = await search({ shopId: SHOP_ID, text: "vay be", photo: null, limit: 10 });
+    const { hits, reranked } = await search({ shopId: SHOP_ID, text: "vay be", photo: null, limit: 10 });
+    expect(reranked).toBe(true);
 
     expect(hits[0]).toEqual({ productId: docs[1].id, score: 1 });
   });
 
   it("returns hits below the floor when nothing matches", async () => {
-    const hits = await search({ shopId: SHOP_ID, text: "túi xách da", photo: null, limit: 10 });
+    const { hits } = await search({ shopId: SHOP_ID, text: "túi xách da", photo: null, limit: 10 });
 
     expect(hits).toHaveLength(docs.length);
     expect(hits.every((hit) => hit.score < 0.5)).toBe(true);
   });
 
   it("returns the first limit docs with descending scores for a photo only", async () => {
-    const hits = await search({ shopId: SHOP_ID, text: null, photo, limit: 3 });
+    const { hits } = await search({ shopId: SHOP_ID, text: null, photo, limit: 3 });
 
     expect(hits).toEqual([
       { productId: docs[0].id, score: 0.9 },

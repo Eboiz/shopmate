@@ -32,18 +32,21 @@ export function mockSemanticSearch(loadDocs: (shopId: string) => Promise<SearchD
     const words = query.text ? foldVietnamese(query.text).split(" ").filter(Boolean) : [];
 
     // Text wins over the photo: a photo with text is scored by its text only.
+    // The mock stands in for the reranked service, so the reranker floors apply.
     if (words.length > 0) {
-      return docs
+      const hits = docs
         .map((doc) => ({ productId: doc.id, score: textScore(doc, words) }))
         .sort((a, b) => b.score - a.score)
         .slice(0, query.limit);
+      return { hits, reranked: true };
     }
     if (query.photo) {
-      return docs.slice(0, query.limit).map((doc, index) => ({
+      const hits = docs.slice(0, query.limit).map((doc, index) => ({
         productId: doc.id,
         score: Number((PHOTO_TOP_SCORE - index * PHOTO_SCORE_STEP).toFixed(2)),
       }));
+      return { hits, reranked: true };
     }
-    return [];
+    return { hits: [], reranked: true };
   };
 }

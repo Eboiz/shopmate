@@ -60,7 +60,19 @@ describe("httpSemanticSearch", () => {
     const { fetchImpl } = fakeFetch(() => new Response(responseOk, { status: 200 }));
     const search = httpSemanticSearch(env, fetchImpl);
 
-    await expect(search(query)).resolves.toEqual(JSON.parse(responseOk).hits);
+    await expect(search(query)).resolves.toEqual({ hits: JSON.parse(responseOk).hits, reranked: true });
+  });
+
+  it("reads reranked from the response, and a response without it as cosine scores", async () => {
+    const plain = { ...JSON.parse(responseOk) };
+    delete plain.reranked;
+    for (const [body, reranked] of [
+      [{ ...plain, reranked: false }, false],
+      [plain, false],
+    ] as const) {
+      const search = httpSemanticSearch(env, fakeFetch(() => new Response(JSON.stringify(body), { status: 200 })).fetchImpl);
+      await expect(search(query)).resolves.toMatchObject({ reranked });
+    }
   });
 
   it("throws SemanticSearchUnavailable on non-2xx, invalid JSON and a body that fails the schema", async () => {
@@ -111,15 +123,16 @@ describe("semanticSearchFromEnv", () => {
   it("picks mock, http or null", async () => {
     const mock = semanticSearchFromEnv(processEnv({ SEARCH_EMBEDDER_MOCK: "1" }), loadDocs);
     expect(mock).not.toBeNull();
-    await expect(mock!({ ...query, text: "vay be" })).resolves.toEqual([
-      { productId: "22222222-2222-4222-8222-222222222201", score: 1 },
-    ]);
+    await expect(mock!({ ...query, text: "vay be" })).resolves.toEqual({
+      hits: [{ productId: "22222222-2222-4222-8222-222222222201", score: 1 }],
+      reranked: true,
+    });
 
     const { fetchImpl, calls } = fakeFetch(() => new Response(responseOk, { status: 200 }));
     vi.stubGlobal("fetch", fetchImpl);
     const http = semanticSearchFromEnv(processEnv(env), loadDocs);
     expect(http).not.toBeNull();
-    await expect(http!(query)).resolves.toEqual(JSON.parse(responseOk).hits);
+    await expect(http!(query)).resolves.toMatchObject({ hits: JSON.parse(responseOk).hits });
     expect(calls).toHaveLength(1);
 
     expect(semanticSearchFromEnv(processEnv({}), loadDocs)).toBeNull();
@@ -139,7 +152,7 @@ describe("semanticSearchFromEnv", () => {
       loadDocs,
     );
     expect(search).not.toBeNull();
-    await expect(search!(query)).resolves.toEqual(JSON.parse(responseOk).hits);
+    await expect(search!(query)).resolves.toMatchObject({ hits: JSON.parse(responseOk).hits });
     expect(calls).toHaveLength(1);
   });
 });

@@ -5,7 +5,7 @@ import { searchClientHash, takeSearchSlot } from "@/lib/guard/search-limit";
 import { clientIp } from "@/lib/guard/web-chat-limit";
 import { EMBEDDER_MAX_LIMIT, EMBEDDER_TEXT_MAX } from "@/lib/search/embedder-contract";
 import { MAX_PHOTO_BYTES, PHOTO_ERRORS, checkPhoto, type PhotoInput } from "@/lib/search/pb30-shim";
-import { pickResults } from "@/lib/search/rank";
+import { pickResults, scoreFloor } from "@/lib/search/rank";
 import { SEARCH_MIN_TEXT, searchErrors, type SearchResponse } from "@/lib/search/request";
 import { SemanticSearchUnavailable, semanticSearchFromEnv } from "@/lib/search/semantic-search";
 import { loadSearchDocs } from "@/lib/search/shop-docs";
@@ -63,19 +63,25 @@ export async function POST(request: NextRequest, ctx: Ctx) {
     const limit = await takeSearchSlot({ shopId: shop.id, clientHash: searchClientHash(clientIp(request.headers)) });
     if (limit !== "ok") return fail(searchErrors.rateLimited, 429);
 
-    const [docs, hits] = await Promise.all([
+    const [docs, result] = await Promise.all([
       loadSearchDocs(shop.id),
       search({ shopId: shop.id, text: text || null, photo, limit: EMBEDDER_MAX_LIMIT }).catch((error: unknown) => {
         if (error instanceof SemanticSearchUnavailable) return error;
         throw error;
       }),
     ]);
-    if (hits instanceof SemanticSearchUnavailable) {
-      console.warn("shop search: search service unavailable", hits.message);
+    if (result instanceof SemanticSearchUnavailable) {
+      console.warn("shop search: search service unavailable", result.message);
+      return answer({ mode: "unavailable" });
+    }
+    const floor = scoreFloor(photo ? "photo" : "description", result.reranked);
+    if (floor === null) {
+      // Cosine scores (reranker off or failed) have no calibrated text floor.
+      console.warn("shop search: description search got cosine scores, falling back to the instant filter");
       return answer({ mode: "unavailable" });
     }
 
-    const productIds = pickResults(hits, new Set(docs.map((doc) => doc.id)), photo ? "photo" : "description");
+    const productIds = pickResults(result.hits, new Set(docs.map((doc) => doc.id)), floor);
     return answer({ mode: "semantic", productIds });
   } catch (error) {
     console.error("shop search failed", error);

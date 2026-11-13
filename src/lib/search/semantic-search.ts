@@ -18,7 +18,10 @@ export type SemanticQuery = {
 
 export type SemanticHit = { productId: string; score: number };
 
-export type SemanticSearch = (query: SemanticQuery) => Promise<SemanticHit[]>;
+// `reranked` says which score scale the hits use (see rank.ts floors).
+export type SemanticResult = { hits: SemanticHit[]; reranked: boolean };
+
+export type SemanticSearch = (query: SemanticQuery) => Promise<SemanticResult>;
 
 export type { SearchDoc };
 
@@ -68,7 +71,7 @@ export function httpSemanticSearch(
       }
       const parsed = embedderSearchResponseSchema.safeParse(payload);
       if (!parsed.success) throw new SemanticSearchUnavailable("embedder returned an invalid response");
-      return parsed.data.hits;
+      return { hits: parsed.data.hits, reranked: parsed.data.reranked ?? false };
     } catch (error) {
       if (error instanceof SemanticSearchUnavailable) throw error;
       throw new SemanticSearchUnavailable(error instanceof Error ? error.message : "semantic search failed");

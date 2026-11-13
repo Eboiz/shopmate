@@ -47,6 +47,9 @@ export const embedderSearchResponseSchema = z.object({
   hits: z.array(z.object({ productId: z.string(), score: z.number() })),
   model: z.string(),
   dim: z.int(),
+  // true: scores are the reranker's (0..1); false or missing (older service,
+  // reranker off or failed): cosine scores, which need their own floors.
+  reranked: z.boolean().optional(),
 });
 
 export type EmbedderSearchResponse = z.output<typeof embedderSearchResponseSchema>;
