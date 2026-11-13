@@ -179,6 +179,14 @@
 
 ### Task 8: Integrate with PB-30 (blocked until PB-30 is merged into `main`)
 
+> **Status 2026-11-13.** Tasks 1–7 are done (Task 7 is wired into the shop page as PB-33 reworked it:
+> the grid's search bar, filters in the URL). The embedder moved out of this repo to
+> `shopmate-gpu-services` on Modal, which already serves text-only queries (C2) and the `reranked`
+> flag, so Steps 3–4 are done there. Step 5 is done early: `rank.ts` `SCORE_FLOORS` (description 0.47
+> reranked, calibrated on the deployed service; photo 0.65 / 0.55 from PB-30; no cosine description
+> floor). Left for when PB-30 is on `main`: Step 1 (rebase), Step 2 (swap the shim), Step 6 (verify on
+> the Vercel preview with the real service).
+
 **Files:**
 - Modify: `src/lib/search/pb30-shim.ts` (bodies → re-exports), `embedder/shopmate_embedder/formatting.py`, `embedder/shopmate_embedder/model.py`, `embedder/shopmate_embedder/api.py`, `embedder/tests/test_formatting.py`, `embedder/tests/test_api.py`, `src/lib/search/rank.ts`, `embedder/CALIBRATION.md`
 - Create: `embedder/tests/test_contract_fixtures.py`
