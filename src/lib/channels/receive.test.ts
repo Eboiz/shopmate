@@ -98,7 +98,7 @@ vi.mock("@/lib/chat/photo-store", () => ({
 const rateLimited = vi.fn<(target: { shopId: string; conversationId: string }) => Promise<boolean>>();
 vi.mock("@/lib/guard/rate-limit", () => ({ replyIfRateLimited: (target: { shopId: string; conversationId: string }) => rateLimited(target) }));
 
-const { receiveChannelMessage, HANDOFF_TEXT, PHOTO_HANDOFF_TEXT } = await import("./receive");
+const { receiveChannelMessage, HANDOFF_TEXT, PHOTO_HANDOFF_TEXT, PHOTO_NOT_KEPT_TEXT } = await import("./receive");
 
 const account = { id: "acc-a", shopId: "shop-a", channel: "messenger" as const };
 const answer: Reply = { text: "Dạ size M vừa bạn ạ", products: [], quickReplies: ["Size M màu Be"] };
@@ -258,9 +258,21 @@ describe("receiveChannelMessage", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const failing = vi.fn(async (): Promise<Uint8Array> => Promise.reject(new Error("timeout")));
     expect(await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "", photos: [failing, notAPhoto()] })).toBe("handed_off");
-    expect(shopperMessages()).toMatchObject([{ text: "", photo_paths: [] }]);
+    // Staff still see that a photo came, not an empty message.
+    expect(shopperMessages()).toMatchObject([{ text: PHOTO_NOT_KEPT_TEXT, photo_paths: [] }]);
     expect(engine).not.toHaveBeenCalled();
     expect(conversation().mode).toBe("needs_human");
+    expect(sent.map((s) => [s.reply.text, s.from])).toEqual([[PHOTO_HANDOFF_TEXT, "system"]]);
+    warn.mockRestore();
+  });
+
+  it("a photo the channel only names (WhatsApp media id) is stored as a note for staff, and the conversation goes to staff", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const unavailable = async (): Promise<Uint8Array> => Promise.reject(new Error("not downloaded"));
+    expect(
+      await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "", photos: [unavailable], photoRefs: ["whatsapp-media:M1"] }),
+    ).toBe("handed_off");
+    expect(shopperMessages()).toMatchObject([{ text: `${PHOTO_NOT_KEPT_TEXT} whatsapp-media:M1`, photo_paths: [] }]);
     expect(sent.map((s) => [s.reply.text, s.from])).toEqual([[PHOTO_HANDOFF_TEXT, "system"]]);
     warn.mockRestore();
   });

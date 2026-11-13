@@ -111,7 +111,8 @@ async function handleWhatsAppEvents(events: WhatsAppEvent[]) {
     }
     // A photo arrives as a media id. PB-30 downloads web, Messenger and Telegram
     // photos only, so a WhatsApp photo is "a photo that could not be kept": the
-    // conversation goes to staff with the photo notice, as before PB-30.
+    // conversation goes to staff with the photo notice, as before PB-30, and the
+    // stored text keeps the media id for staff.
     const incoming = {
       externalId: event.from,
       messageId: event.messageId,
@@ -119,6 +120,7 @@ async function handleWhatsAppEvents(events: WhatsAppEvent[]) {
         ? { text: event.text }
         : {
             text: "",
+            photoRefs: [`whatsapp-media:${event.mediaId}`],
             photos: [async () => {
               throw new Error(`whatsapp media ${event.mediaId} is not downloaded`);
             }],

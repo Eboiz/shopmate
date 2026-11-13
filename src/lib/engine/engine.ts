@@ -443,9 +443,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // PB-45: without Jev (or when it failed) a size the product or the shop doesn't
   // sell is still answered by the server, not by the tool loop. routeTurn does
-  // the same check with Jev's product.
+  // the same check with Jev's product. Not on a photo turn (PB-30): the size may
+  // be about the pictured item, which only the model can find.
   const jevSkipped = !deps.jev || route.fallbackReason === "jev_error";
-  if (!routed && jevSkipped && !orderInProgress && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
+  if (!routed && jevSkipped && !orderInProgress && photoPaths.length === 0 && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
     const catalog = await deps.store.catalog(ctx.shopId);
     const product = catalog.find((p) => p.id === tc.product?.id) ?? productCoveringMessage(lastText, catalog);
     routed = await unsoldSizeTurn(

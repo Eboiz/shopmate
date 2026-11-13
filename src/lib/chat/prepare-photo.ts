@@ -35,7 +35,10 @@ export async function preparePhoto(file: File): Promise<{ ok: true; blob: Blob }
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(bitmap.width * scale);
     canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const context = canvas.getContext("2d");
+    // No 2D canvas (blocked or out of memory): refuse rather than send a blank photo.
+    if (!context) return { ok: false, error: PHOTO_ERRORS.read };
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
     return blob ? { ok: true, blob } : { ok: false, error: PHOTO_ERRORS.read };
   } finally {

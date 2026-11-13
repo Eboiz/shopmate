@@ -477,6 +477,17 @@ describe("runEngine with a shopper photo (PB-30)", () => {
     expect(ctx.photos).toEqual([photo]);
   });
 
+  it("without Jev, a size asked about a photo goes to the model, not the size guard of the product on screen", async () => {
+    const { store, model, metrics, run } = setup(null, [
+      toolCalls(toolUse("search_products", { query: "áo sơ mi trắng", photo: 1 })),
+      finalJson({ text: "Dạ mẫu trong ảnh giống Áo sơ mi trắng, còn size XL ạ", productIds: [], quickReplies: [] }),
+    ]);
+    Object.assign(store, { loadPhotos: vi.fn(async () => [photo]) });
+    await run(input("size XL có không?", { history: [{ sender: "shopper", text: "size XL có không?", photoPaths: [PATH] }] }));
+    expect(metrics[0].route).not.toEqual({ path: "size_guard" });
+    expect(model.calls.length).toBeGreaterThan(0);
+  });
+
   it("a photo that can't be loaded: the turn still runs on the text, without images", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const { store, model, run } = setup(null, [finalJson({ text: "Dạ bạn gửi lại ảnh giúp mình nhé", productIds: [], quickReplies: [] })]);

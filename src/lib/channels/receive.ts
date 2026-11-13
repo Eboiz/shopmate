@@ -27,6 +27,9 @@ export type IncomingMessage = {
   // PB-30: the message's photos, fetched only once the message is known to be
   // new; stored in the chat-photos bucket, never the channel's URL (A10).
   photos?: PhotoSource[];
+  // The channel's own name for photos the server can't download (WhatsApp media
+  // ids): kept in the stored text so staff know what came.
+  photoRefs?: string[];
 };
 
 // Postgres unique_violation: web chat's (conversation_id, client_message_id) key.
@@ -34,6 +37,9 @@ const UNIQUE_VIOLATION = "23505";
 
 export const HISTORY_LIMIT = 20;
 export const HANDOFF_TEXT = "Cảm ơn bạn! Nhân viên shop sẽ trả lời bạn ngay.";
+// Stored as the shopper's text when a message had only photos and none could be
+// kept, so staff see that a photo came instead of an empty message.
+export const PHOTO_NOT_KEPT_TEXT = "[Khách gửi ảnh, không lưu được ảnh]";
 export const PHOTO_HANDOFF_TEXT = "Cảm ơn bạn! Nhân viên shop sẽ xem ảnh và trả lời bạn ngay.";
 
 const notice = (text: string): Reply => ({ text, products: [], quickReplies: [] });
@@ -107,11 +113,13 @@ export async function receiveChannelMessage(
     }
   }
 
+  const photosLost = sentPhotos.length > 0 && photoPaths.length === 0 && incoming.text.trim() === "";
+  const storedText = photosLost ? [PHOTO_NOT_KEPT_TEXT, ...(incoming.photoRefs ?? [])].join(" ") : incoming.text;
   const stored = await db.from("messages").insert({
     shop_id,
     conversation_id: conversation.id,
     sender: "shopper",
-    text: incoming.text,
+    text: storedText,
     photo_paths: photoPaths,
     client_message_id: account.channel === "web" ? incoming.messageId : null,
   });
@@ -161,7 +169,7 @@ export async function receiveChannelMessage(
   };
 
   // Nothing the AI can read: only photos, and none of them could be kept.
-  if (sentPhotos.length > 0 && photoPaths.length === 0 && incoming.text.trim() === "") {
+  if (photosLost) {
     return handOff(notice(PHOTO_HANDOFF_TEXT));
   }
 

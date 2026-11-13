@@ -193,7 +193,7 @@ describe("POST /api/webhooks/messenger (WhatsApp)", () => {
     await post(waDelivery({ messages: [{ from: "84901234567", id: "wamid.3", type: "image", image: { id: "MEDIA1" } }] }));
     await runAfter();
     const [message] = received.map((r) => r[1] as { text: string; photos: (() => Promise<Uint8Array>)[] });
-    expect(message).toMatchObject({ externalId: "84901234567", messageId: "wamid.3", text: "" });
+    expect(message).toMatchObject({ externalId: "84901234567", messageId: "wamid.3", text: "", photoRefs: ["whatsapp-media:MEDIA1"] });
     expect(message.photos).toHaveLength(1);
     await expect(message.photos[0]()).rejects.toThrow("whatsapp media MEDIA1 is not downloaded");
   });
