@@ -34,8 +34,8 @@ process.env.SUPABASE_SECRET_KEY ??= "sb_secret_unit_test";
 const { POST } = await import("./route");
 const { SemanticSearchUnavailable } = await import("@/lib/search/semantic-search");
 
-const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
-const GIF = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 2, 3]);
+const GIF = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 0, 1, 0, 0, 0]);
 
 async function post(fields: { q?: string; photo?: Blob }, slug = "may-boutique") {
   const form = new FormData();

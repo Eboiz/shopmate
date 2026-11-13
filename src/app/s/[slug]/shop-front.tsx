@@ -14,7 +14,6 @@ import type { ConversationMode } from "@/contract";
 import { chatStatus } from "@/lib/chat/chat-status";
 import { preparePhoto } from "@/lib/chat/prepare-photo";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
-import { preparePhoto } from "@/lib/search/pb30-shim";
 import { SEARCH_MIN_TEXT, searchErrors, searchResponseSchema } from "@/lib/search/request";
 import { applyResult, searchLabel, type SearchResult, type SearchState } from "@/lib/search/search-state";
 import { compareSizes } from "@/lib/size-order";
