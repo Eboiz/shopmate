@@ -1,6 +1,6 @@
 import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { createClient } from "@/lib/supabase/client";
-import { customerLabel } from "./inbox-filter";
+import { customerLabel, isUnnamed } from "./inbox-filter";
 
 // staff_id is set on staff messages: who on the team wrote it.
 export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string; staff_id: string | null };
@@ -47,7 +47,7 @@ export async function listLiveConversations(): Promise<InboxConversation[]> {
   return [...urgent.data, ...(other?.data ?? [])].map((conversation) => ({
     id: conversation.id,
     customerName: customerLabel(conversation.shoppers.display_name, conversation.shoppers.channel, conversation.id),
-    unnamed: !conversation.shoppers.display_name?.trim() || undefined,
+    unnamed: isUnnamed(conversation.shoppers.display_name) || undefined,
     channel: conversation.shoppers.channel,
     mode: conversation.mode,
     lastMessageAt: conversation.last_message_at,

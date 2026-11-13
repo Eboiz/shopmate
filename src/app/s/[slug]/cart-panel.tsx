@@ -119,11 +119,18 @@ export function CartPanel({ items, shippingPolicy, onQuantity, onRemove, onResto
           <footer className="border-t border-[#e3dfd8] px-5 py-4">
             {items.length >= CART_MAX_LINES && <p role="status" className="mb-3 bg-[#fff0eb] px-3 py-2 text-xs font-semibold leading-5 text-[#a83826]">Giỏ đã đủ {CART_MAX_LINES} món. Gửi đơn này trước rồi thêm tiếp nhé.</p>}
             <p className="flex justify-between text-base font-bold"><span>Tạm tính</span><span className="tabular-nums">{formatPrice(subtotal)}</span></p>
-            <p className="mt-1 text-xs leading-5 text-[#706d67]">
-              {shippingPolicy ? `Giao hàng: ${shippingPolicy}` : "Phí giao hàng: shop báo khi xác nhận đơn."}
-            </p>
-            <button type="button" onClick={onSend} className="mt-4 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#a83826]">Soạn tin đặt hàng →</button>
-            <p className="mt-2 text-xs leading-5 text-[#706d67]">Tin đặt hàng hiện sẵn trong chat, bấm Gửi để gửi cho shop. Shop kiểm tra tồn kho và xác nhận trước khi giao.</p>
+            {/* The policy can run long: folded away so the send button stays on a phone screen. */}
+            <details className="group mt-2 text-xs leading-5 text-[#706d67]">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 font-semibold text-[#474640] [&::-webkit-details-marker]:hidden">
+                Giao hàng và thanh toán
+                <Icon name="chevron" className="size-4 shrink-0 transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="max-h-40 space-y-2 overflow-y-auto pb-1">
+                <p className="whitespace-pre-line">{shippingPolicy ? `Giao hàng: ${shippingPolicy}` : "Phí giao hàng: shop báo khi xác nhận đơn."}</p>
+                <p>Tin đặt hàng hiện sẵn trong chat, bấm Gửi để gửi cho shop. Shop kiểm tra tồn kho và xác nhận trước khi giao.</p>
+              </div>
+            </details>
+            <button type="button" onClick={onSend} className="mt-2 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#c2412b] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#a83826]">Soạn tin đặt hàng →</button>
           </footer>
         )}
       </section>
