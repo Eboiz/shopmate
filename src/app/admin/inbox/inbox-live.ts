@@ -1,15 +1,28 @@
 import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { createClient } from "@/lib/supabase/client";
+import type { InboxFilter } from "./inbox-filter";
+import {
+  cursorArgs, filterArgs, toInboxConversation, toPage, type InboxCounts, type InboxCursor, type InboxPage,
+} from "./inbox-page";
 
-// photoUrls (PB-30): the shopper's photos, signed for an hour from the private
-// bucket (staff may read only their shop's folder); photoError when signing failed.
-export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string; photoUrls: string[]; photoError?: true };
-export const PHOTO_PREVIEW = "[Ảnh]";
-const preview = (m: { text: string; photo_paths: string[] } | undefined) =>
-  m ? m.text || (m.photo_paths.length > 0 ? PHOTO_PREVIEW : "") : undefined;
+// staff_id is set on staff messages: who on the team wrote it. photoUrls (PB-30):
+// the shopper's photos, signed for an hour from the private bucket (staff may
+// read only their shop's folder); photoError when signing failed.
+export type InboxMessage = {
+  id: string;
+  sender: MessageSender;
+  text: string;
+  created_at: string;
+  staff_id: string | null;
+  photoUrls: string[];
+  photoError?: true;
+};
+export { PHOTO_PREVIEW } from "./inbox-page";
 export type InboxConversation = {
   id: string;
   customerName: string;
+  // True when the shopper gave no name and customerName is a made-up label.
+  unnamed?: boolean;
   channel: Channel;
   mode: ConversationMode;
   lastMessageAt: string;
@@ -20,47 +33,55 @@ export type InboxConversation = {
   customerMessageAt?: string;
 };
 
-const conversationLimit = 50;
+export const pageSize = 50;
 export const historyLimit = 50;
 
-export async function listLiveConversations(): Promise<InboxConversation[]> {
-  const db = createClient();
-  const query = () => db.from("conversations")
-    .select("id, mode, last_message_at, shoppers!inner(channel, display_name), messages(text, photo_paths), customer_message:messages(text, photo_paths, created_at)")
+// One page of the shop's conversations matching the filter, searched on the
+// server so older conversations are found too (PB-41).
+export async function searchConversations(filter: InboxFilter, cursor?: InboxCursor | null, limit = pageSize): Promise<InboxPage> {
+  const { data, error } = await createClient().rpc("search_inbox", { ...filterArgs(filter), ...cursorArgs(cursor), p_limit: limit });
+  if (error) throw error;
+  return toPage(data, limit);
+}
+
+// How many conversations each mode tab holds under the search and channel.
+export async function countConversations(filter: Pick<InboxFilter, "query" | "channel">): Promise<InboxCounts> {
+  const { p_query, p_channel } = filterArgs({ ...filter, mode: "all" });
+  const { data, error } = await createClient().rpc("inbox_counts", { p_query, p_channel }).single();
+  if (error) throw error;
+  return { all: data.total, ai: data.ai, needs_human: data.needs_human, staff: data.staff };
+}
+
+// One conversation by id, for a ?c= link to a conversation outside the loaded pages.
+export async function getConversation(id: string): Promise<InboxConversation | null> {
+  const { data, error } = await createClient().from("conversations")
+    .select("id, mode, last_message_at, shoppers!inner(channel, display_name), messages(text), customer_message:messages(text, created_at)")
+    .eq("id", id)
     .eq("customer_message.sender", "shopper")
-    .order("last_message_at", { ascending: false })
-    .order("id")
     .order("created_at", { referencedTable: "messages", ascending: false })
     .order("id", { referencedTable: "messages", ascending: false })
     .limit(1, { referencedTable: "messages" })
     .order("created_at", { referencedTable: "customer_message", ascending: false })
     .order("id", { referencedTable: "customer_message", ascending: false })
     .limit(1, { referencedTable: "customer_message" })
-    .limit(conversationLimit);
-
-  // Keep the queue in front even when the shop has many newer AI conversations.
-  const urgent = await query().eq("mode", "needs_human");
-  if (urgent.error) throw urgent.error;
-  const remaining = conversationLimit - urgent.data.length;
-  const other = remaining ? await query().neq("mode", "needs_human").limit(remaining) : null;
-  if (other?.error) throw other.error;
-
-  return [...urgent.data, ...(other?.data ?? [])].map((conversation) => ({
-    id: conversation.id,
-    customerName: conversation.shoppers.display_name?.trim() || "Khách hàng",
-    channel: conversation.shoppers.channel,
-    mode: conversation.mode,
-    lastMessageAt: conversation.last_message_at,
-    latestMessage: preview(conversation.messages[0]),
-    customerMessage: preview(conversation.customer_message[0]) || undefined,
-    customerMessageAt: conversation.customer_message[0]?.created_at,
-  }));
+    .maybeSingle();
+  if (error) throw error;
+  return data && toInboxConversation({
+    id: data.id,
+    mode: data.mode,
+    channel: data.shoppers.channel,
+    display_name: data.shoppers.display_name,
+    last_message_at: data.last_message_at,
+    latest_message: data.messages[0]?.text ?? null,
+    customer_message: data.customer_message[0]?.text ?? null,
+    customer_message_at: data.customer_message[0]?.created_at ?? null,
+  });
 }
 
 export async function listInboxMessages(conversationId: string): Promise<InboxMessage[]> {
   const db = createClient();
   const { data, error } = await db.from("messages")
-    .select("id, sender, text, created_at, photo_paths")
+    .select("id, sender, text, created_at, staff_id, photo_paths")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
@@ -80,6 +101,14 @@ export async function listInboxMessages(conversationId: string): Promise<InboxMe
     const photoUrls = photo_paths.flatMap((p) => (signed.has(p) ? [signed.get(p)!] : []));
     return { ...message, photoUrls, ...(photo_paths.length > photoUrls.length || (signError && photo_paths.length > 0) ? { photoError: true as const } : {}) };
   });
+}
+
+// Names of the shop's team (RLS limits profiles to the signed-in user's shop),
+// so the inbox can say who is replying. A missing name stays out of the map.
+export async function listTeamNames(): Promise<Record<string, string>> {
+  const { data, error } = await createClient().from("profiles").select("id, full_name");
+  if (error) throw error;
+  return Object.fromEntries(data.flatMap(({ id, full_name }) => full_name?.trim() ? [[id, full_name.trim()]] : []));
 }
 
 export async function setLiveInboxMode(conversationId: string, mode: "ai" | "staff") {

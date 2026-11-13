@@ -38,6 +38,60 @@ export function groupRank(group: ProductGroup): number {
   return index === -1 ? PRODUCT_GROUPS.length : index;
 }
 
+// Shop page filters live in the URL (?nhom=vay&tim=linen&size=M&sap-xep=gia-tang),
+// so reload, back/forward and a shared link show the same list.
+export type ShopSort = "group" | "price-asc" | "price-desc";
+export type ShopFilters = { group: ProductGroup | ""; search: string; size: string; sort: ShopSort };
+
+const GROUP_SLUGS: Record<ProductGroup, string> = {
+  "Áo": "ao",
+  "Áo khoác": "ao-khoac",
+  "Váy & đầm": "vay",
+  "Chân váy": "chan-vay",
+  "Quần": "quan",
+  "Khác": "khac",
+};
+const SORT_SLUGS: Record<Exclude<ShopSort, "group">, string> = { "price-asc": "gia-tang", "price-desc": "gia-giam" };
+const SORT_BY_SLUG: Record<string, ShopSort> = { "gia-tang": "price-asc", "gia-giam": "price-desc" };
+const FILTER_KEYS = ["nhom", "tim", "size", "sap-xep"];
+
+export function searchFromQuery(params: Pick<URLSearchParams, "get">): string {
+  return params.get("tim") ?? "";
+}
+
+// Values the shop can't show (unknown slug, a group or size it has none of) read as "all".
+export function readShopFilters(
+  params: Pick<URLSearchParams, "get">,
+  available: { groups: readonly ProductGroup[]; sizes: readonly string[] },
+): ShopFilters {
+  const groupParam = params.get("nhom");
+  const sortParam = params.get("sap-xep") ?? "";
+  const sizeParam = params.get("size") ?? "";
+  return {
+    group: available.groups.find((group) => GROUP_SLUGS[group] === groupParam) ?? "",
+    search: searchFromQuery(params),
+    size: available.sizes.includes(sizeParam) ? sizeParam : "",
+    sort: Object.hasOwn(SORT_BY_SLUG, sortParam) ? SORT_BY_SLUG[sortParam] : "group",
+  };
+}
+
+// "?…" for the given filters, keeping any other parameter of `current`; "" when nothing is left.
+export function shopFilterQuery(filters: ShopFilters, current: URLSearchParams): string {
+  const params = new URLSearchParams(current);
+  for (const key of FILTER_KEYS) params.delete(key);
+  if (filters.group) params.set("nhom", GROUP_SLUGS[filters.group]);
+  if (filters.search.trim()) params.set("tim", filters.search);
+  if (filters.size) params.set("size", filters.size);
+  if (filters.sort !== "group") params.set("sap-xep", SORT_SLUGS[filters.sort]);
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+// The shop page showing one group, scrolled to the product grid (#san-pham).
+export function shopGroupHref(shopHref: string, group: ProductGroup): string {
+  return `${shopHref}${shopFilterQuery({ group, search: "", size: "", sort: "group" }, new URLSearchParams())}#san-pham`;
+}
+
 // Every word of the query must appear somewhere in the fields, in any order.
 export function matchesQuery(fields: Array<string | null | undefined>, query: string): boolean {
   const words = foldVietnamese(query).split(" ").filter(Boolean);

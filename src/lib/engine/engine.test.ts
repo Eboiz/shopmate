@@ -805,6 +805,63 @@ describe("runEngine", () => {
     });
   });
 
+  describe("PB-39: a reply saying data is missing while this turn's tools returned it (tool loop)", () => {
+    const ask = customerInput({ history: [{ sender: "shopper", text: "váy suông linen giá bao nhiêu, còn màu gì?" }] });
+    const stockCall = toolCalls(toolUse("get_stock", { productId: PRODUCT }));
+    const inStock = { ...stockOut, price: 289000, variants: [{ variantId: VARIANT, size: "M", color: "trắng", stock: 4 }] };
+    const lastUserText = (params: Anthropic.MessageCreateParamsNonStreaming) => {
+      const last = params.messages.at(-1)!;
+      return typeof last.content === "string" ? last.content : "";
+    };
+    const missing = "Dạ, giá và màu còn hàng thì mình chưa có thông tin cụ thể, để mình kiểm tra và cập nhật cho bạn nhé.";
+
+    it("is regenerated once with what the data has", async () => {
+      const good = "Dạ, váy giá 289.000đ, còn size M màu trắng ạ.";
+      const { handlers, model, run } = setup([stockCall, reply(missing), reply(good)]);
+      handlers.get_stock.mockResolvedValue(inStock);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(3);
+      expect(lastUserText(model.calls[2])).toContain("Kiểm tra tự động");
+      expect(lastUserText(model.calls[2])).toContain("giá");
+      expect(result.output.reply.text).toBe(good);
+    });
+
+    it("twice: the reply is written from the tool results, with the product card", async () => {
+      const { handlers, model, store, run } = setup([stockCall, reply(missing, [PRODUCT]), reply(missing, [PRODUCT])]);
+      handlers.get_stock.mockResolvedValue(inStock);
+      const result = await run(ask);
+      expect(model.calls).toHaveLength(3);
+      expect(result.output.reply.text).toContain("289.000đ");
+      expect(result.output.reply.text).toContain("size M màu trắng");
+      expect(result.output.reply.products).toEqual([card(PRODUCT)]);
+      expect(store.productCards).toHaveBeenCalledWith(SHOP_A, [PRODUCT]);
+      expect(result.handoffReason).toBeNull();
+    });
+
+    it("BOT-05: 'chưa có phí giao hàng' while get_policy(giao_hang) returned it -> retry, then the shop's text", async () => {
+      const shipping = "Phí ship đồng giá 30.000đ cho mọi đơn.";
+      const wrong = "Dạ, hiện shop chưa có thông tin về phí giao hàng ạ.";
+      const { handlers, model, run } = setup([
+        toolCalls(toolUse("get_policy", { kind: "giao_hang" })),
+        reply(wrong),
+        reply(wrong),
+      ]);
+      handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: shipping });
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "phí ship bao nhiêu?" }] }));
+      expect(model.calls).toHaveLength(3);
+      expect(result.output.reply.text).toContain(shipping);
+    });
+
+    it("a 'not in the policy' offer (PB-31) is not a false claim", async () => {
+      const text = `Dạ, chính sách giao hàng của shop chưa có thông tin về giao Chủ nhật ạ. ${OFFER_QUESTION}`;
+      const { handlers, model, run } = setup([toolCalls(toolUse("get_policy", { kind: "giao_hang" })), reply(text)]);
+      handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: "Phí ship 30.000đ" });
+      const result = await run(customerInput({ history: [{ sender: "shopper", text: "chủ nhật có giao không" }] }));
+      expect(model.calls).toHaveLength(2);
+      expect(result.output.reply.text).toBe(text);
+    });
+  });
+
   describe("PB-31: fewer handoffs (tool loop)", () => {
     it("the offer question is never repeated when the model wrote it mid-sentence in lower case", async () => {
       const text = "Dạ, mình không chia sẻ thông tin riêng của chủ shop ạ. Về hợp tác, bạn có muốn mình nhờ nhân viên shop trả lời thêm không?";

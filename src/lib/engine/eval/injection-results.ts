@@ -19,6 +19,10 @@ export type SavedRun = {
   outputTokens: number;
   // Every model call of the run, as the gateway counts it (injection-budget.ts).
   tokens: Usage;
+  // How the engine handled the turn (TurnMetrics.route.path): "router" when the
+  // Jev router decided it, as on production; "llm_loop" otherwise. Absent in
+  // results saved before 12/11.
+  route?: string | null;
 };
 
 export type SavedCase = {

@@ -4,6 +4,8 @@ import Image from "next/image";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { formatPrice } from "@/lib/format";
 import type { ShopProduct, SizeChartRow } from "@/lib/shop/types";
+import { Icon } from "@/components/ui/icon";
+import { HeaderSearch } from "./header-search";
 
 // Presentational blocks of the shop front. Every block that can start a
 // conversation calls `onAsk`; the chat itself lives in ShopFront.
@@ -53,13 +55,19 @@ type HeaderProps = {
   onOpenCart: () => void;
   onAsk: (text: string) => void;
   onChooseGroup: (name: string) => void;
+  products: ShopProduct[];
+  productHref: (productId: string) => string;
+  // The grid's search (the URL's "tim"); the header box shows it too.
+  search: string;
+  onSearch: (query: string) => void;
 };
 
-export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onChooseGroup }: HeaderProps) {
+export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onChooseGroup, products, productHref, search: gridSearch, onSearch }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const navLink = "inline-flex min-h-[72px] items-center border-b-2 border-transparent px-3.5 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:border-[#171717]";
   const choose = (name: string) => { setMenuOpen(false); onChooseGroup(name); };
   const ask = (text: string) => { setMenuOpen(false); onAsk(text); };
+  const search = (query: string) => { setMenuOpen(false); onSearch(query); };
 
   return (
     <header className="sticky top-0 z-30 border-b border-[#e3dfd8] bg-white">
@@ -69,9 +77,10 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
           onClick={() => setMenuOpen((value) => !value)}
           aria-expanded={menuOpen}
           aria-controls="shop-menu"
-          className="-ml-2 inline-flex min-h-11 items-center px-2 text-xs font-extrabold uppercase tracking-[.12em] lg:hidden"
+          aria-label={menuOpen ? "Đóng menu" : "Mở menu"}
+          className="-ml-2 inline-grid size-11 place-items-center lg:hidden"
         >
-          {menuOpen ? "Đóng" : "Menu"}
+          <Icon name={menuOpen ? "close" : "menu"} className={menuOpen ? "size-5" : "size-6"} />
         </button>
         <a href="#dau-trang" className="flex min-w-0 items-center gap-3">
           <Image src="/images/shop-avatar.jpg" alt="" width={36} height={36} className="size-9 shrink-0 object-cover" />
@@ -119,18 +128,16 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
-          <form onSubmit={(event) => { const text = readField(event, "q"); if (text) onAsk(text); }} className="hidden min-h-11 w-[280px] items-center gap-2 border-[1.5px] border-[#171717] bg-white pl-3 pr-1 focus-within:shadow-[0_0_0_3px_#c2412b40] lg:flex">
-            <input name="q" aria-label="Hỏi trợ lý AI" placeholder="Hỏi size, màu, phối đồ..." autoComplete="off" maxLength={1000} className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#706d67]" />
-            <button type="submit" className="min-h-8 bg-[#e9573f] px-3 text-[11px] font-extrabold uppercase tracking-[.1em] text-[#171717] hover:bg-[#c2412b] hover:text-white">Hỏi</button>
-          </form>
-          <button type="button" onClick={onOpenCart} className="hidden min-h-11 items-center gap-2 px-2 text-xs font-extrabold uppercase tracking-[.1em] hover:text-[#c2412b] sm:inline-flex">
-            Giỏ <span className="inline-grid h-5 min-w-5 place-items-center rounded-full bg-[#171717] px-1.5 text-[11px] tabular-nums text-white">{itemCount}</span>
+          <HeaderSearch products={products} productHref={productHref} value={gridSearch} onSearch={search} onAsk={ask} className="hidden w-[280px] lg:block" />
+          <button type="button" onClick={onOpenCart} aria-label={`Giỏ đặt hàng, ${itemCount} món`} title="Giỏ đặt hàng" className="hidden size-11 items-center justify-center transition-colors hover:text-[#c2412b] sm:inline-flex">
+            <span className="relative"><Icon name="cart" className="size-6" /><span className="absolute -right-1.5 -top-1 inline-grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[#e9573f] px-1 text-[10px] font-extrabold tabular-nums text-[#171717]">{itemCount}</span></span>
           </button>
         </div>
       </div>
 
       {menuOpen && (
         <nav id="shop-menu" aria-label="Danh mục" className="border-t border-[#e3dfd8] bg-white px-4 pb-4 sm:px-6 lg:hidden">
+          <HeaderSearch products={products} productHref={productHref} value={gridSearch} onSearch={search} onAsk={ask} className="mt-3" />
           <ul>
             {groups.map((group) => (
               <li key={group.name} className="border-b border-[#e3dfd8]">
@@ -145,17 +152,6 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
         </nav>
       )}
     </header>
-  );
-}
-
-export function AskRow({ onAsk }: { onAsk: (text: string) => void }) {
-  return (
-    <div className="border-b border-[#e3dfd8] bg-[#f5f3ef]">
-      <div className="mx-auto flex max-w-[1400px] items-center gap-2.5 overflow-x-auto px-4 py-2.5 [scrollbar-width:none] sm:px-6 lg:px-10">
-        <span className="mr-1 shrink-0 text-xs font-extrabold uppercase tracking-[.14em] text-[#706d67]">Khách hay hỏi</span>
-        {QUICK_ASKS.map((text) => <button key={text} type="button" onClick={() => onAsk(text)} className={chipClass}>{text}</button>)}
-      </div>
-    </div>
   );
 }
 
@@ -371,7 +367,7 @@ export function ShopFooter({ shopName, groups, policyItems, onChoose, onAsk }: F
       </div>
       <div className="mx-auto mt-12 flex max-w-[1400px] flex-wrap items-center justify-between gap-3 border-t border-[#e3dfd8] px-4 pt-5 text-xs text-[#706d67] sm:px-6 lg:px-10">
         <span>Được hỗ trợ bởi ShopMate</span>
-        <a href="#dau-trang" className="inline-flex min-h-11 items-center font-extrabold uppercase tracking-[.12em] text-[#171717] hover:text-[#c2412b]">Lên đầu trang</a>
+        <a href="#dau-trang" aria-label="Lên đầu trang" title="Lên đầu trang" className="inline-grid size-11 place-items-center border-[1.5px] border-[#171717] text-[#171717] transition-colors hover:bg-[#171717] hover:text-white"><Icon name="up" className="size-5" /></a>
       </div>
     </footer>
   );

@@ -2,10 +2,13 @@ import { after, type NextRequest } from "next/server";
 import { parseMessengerEvents, sendTypingOn, verifyMessengerSignature, type MessengerEvent } from "@/lib/channels/messenger";
 import { messengerPhoto } from "@/lib/channels/photo-download";
 import { receiveChannelMessage } from "@/lib/channels/receive";
+import { parseWhatsAppEvents, sendWhatsAppTyping, type WhatsAppEvent } from "@/lib/channels/whatsapp";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-// Messenger webhook (PB-15). Meta app > Messenger > Webhooks points here:
-// GET verifies the callback URL, POST delivers messages.
+// The Meta app's webhook: Messenger (PB-15) and WhatsApp (PB-27). Meta app >
+// Messenger > Webhooks and Meta app > WhatsApp > Configuration both point here:
+// GET verifies the callback URL, POST delivers messages. Both products sign with
+// the same app secret; the payload's `object` tells them apart.
 
 export function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
@@ -34,9 +37,14 @@ export async function POST(request: NextRequest) {
   } catch {
     return new Response(null, { status: 400 });
   }
+  // Answer Meta right away; Meta resends a delivery that isn't acknowledged quickly.
+  if (payload?.object === "whatsapp_business_account") {
+    const events = parseWhatsAppEvents(payload);
+    if (events.length > 0) after(() => handleWhatsAppEvents(events));
+    return new Response("EVENT_RECEIVED", { status: 200 });
+  }
   if (payload?.object !== "page") return new Response(null, { status: 404 });
 
-  // Answer Meta right away; Meta resends a delivery that isn't acknowledged quickly.
   const events = parseMessengerEvents(payload);
   if (events.length > 0) after(() => handleEvents(events));
   return new Response("EVENT_RECEIVED", { status: 200 });
@@ -78,6 +86,52 @@ async function handleEvents(events: MessengerEvent[]) {
       );
     } catch (error) {
       console.error(`messenger: message ${event.mid} failed`, error);
+    }
+  }
+}
+
+async function handleWhatsAppEvents(events: WhatsAppEvent[]) {
+  const phoneNumberIds = [...new Set(events.map((e) => e.phoneNumberId))];
+  const { data: accounts, error } = await createAdminClient()
+    .from("channel_accounts")
+    .select("id, shop_id, external_account_id, access_token")
+    .eq("channel", "whatsapp")
+    .in("external_account_id", phoneNumberIds);
+  if (error) {
+    console.error("whatsapp: channel account lookup failed", error.message);
+    return;
+  }
+
+  // One at a time, so a shopper's messages are handled in the order sent.
+  for (const event of events) {
+    const account = accounts.find((a) => a.external_account_id === event.phoneNumberId);
+    if (!account) {
+      console.warn(`whatsapp: unknown phone number ${event.phoneNumberId}, message ignored`);
+      continue;
+    }
+    // A photo arrives as a media id. PB-30 downloads web, Messenger and Telegram
+    // photos only, so a WhatsApp photo is "a photo that could not be kept": the
+    // conversation goes to staff with the photo notice, as before PB-30.
+    const incoming = {
+      externalId: event.from,
+      messageId: event.messageId,
+      ...(event.type === "text"
+        ? { text: event.text }
+        : {
+            text: "",
+            photos: [async () => {
+              throw new Error(`whatsapp media ${event.mediaId} is not downloaded`);
+            }],
+          }),
+    };
+    try {
+      await receiveChannelMessage(
+        { id: account.id, shopId: account.shop_id, channel: "whatsapp" },
+        incoming,
+        () => sendWhatsAppTyping(account.external_account_id, account.access_token, event.messageId),
+      );
+    } catch (error) {
+      console.error(`whatsapp: message ${event.messageId} failed`, error);
     }
   }
 }

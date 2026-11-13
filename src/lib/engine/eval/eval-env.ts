@@ -17,6 +17,21 @@ export const ANTHROPIC_VARS = [
 ] as const;
 // Same model as production (ANTHROPIC_MODEL on Vercel), used when no file or shell sets one.
 export const EVAL_DEFAULT_MODEL = "claude-haiku-5-5";
+// The Jev router (jev.ts), as on production. Copied from the env files like the
+// Anthropic ones; without OPENROUTER_API_KEY the engine falls back to the LLM loop.
+export const JEV_VARS = ["OPENROUTER_API_KEY", "OPENROUTER_API_URL", "JEV_MODEL"] as const;
+
+// The evals run like production unless the shell says otherwise: Haiku, and the
+// Jev router on (it is off under vitest by default; JEV_IN_TESTS=false turns it off).
+export function productionDefaults(
+  shell: Record<string, string | undefined>,
+  fromFiles: Record<string, string | undefined> = {},
+): { ANTHROPIC_MODEL: string; JEV_IN_TESTS: string } {
+  return {
+    ANTHROPIC_MODEL: shell.ANTHROPIC_MODEL?.trim() || fromFiles.ANTHROPIC_MODEL?.trim() || EVAL_DEFAULT_MODEL,
+    JEV_IN_TESTS: shell.JEV_IN_TESTS?.trim() || fromFiles.JEV_IN_TESTS?.trim() || "true",
+  };
+}
 // Removed from the inherited shell env before the local values are set.
 const SUPABASE_VAR = /^(NEXT_PUBLIC_SUPABASE_|SUPABASE_|DATABASE_URL$|POSTGRES)/;
 
@@ -54,13 +69,13 @@ export type EvalEnvInput = {
 export function buildPlanEnv({ shell, files }: Omit<EvalEnvInput, "status">): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(shell)) if (v !== undefined && !SUPABASE_VAR.test(k)) env[k] = v;
-  for (const name of ANTHROPIC_VARS) {
+  for (const name of [...ANTHROPIC_VARS, ...JEV_VARS]) {
     const fromShell = shell[name]?.trim();
     const fromFiles = files.map((f) => f[name]?.trim()).filter(Boolean).at(-1);
     const value = fromShell || fromFiles;
     if (value) env[name] = value;
   }
-  env.ANTHROPIC_MODEL ||= EVAL_DEFAULT_MODEL;
+  Object.assign(env, productionDefaults(shell, env));
   return env;
 }
 

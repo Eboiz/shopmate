@@ -5,6 +5,7 @@ import {
   PAIRING_EXISTS,
   POLICY_SAVE_FAILED,
   SAVE_FAILED,
+  SIZE_OVERLAP,
   writeErrorMessage,
 } from "./catalog-write-errors";
 
@@ -20,10 +21,16 @@ describe("writeErrorMessage", () => {
   it.each([
     ["42501", NOT_ALLOWED],
     ["23503", NOT_FOUND],
+    ["P0002", NOT_FOUND],
     ["08006", SAVE_FAILED],
     [undefined, SAVE_FAILED],
   ])("maps error code %j", (code, message) => {
     expect(writeErrorMessage({ code }, 0)).toBe(message);
+  });
+
+  it("explains overlapping size ranges only for the size chart write (PB-24)", () => {
+    expect(writeErrorMessage({ code: "23P01" }, 0, { overlap: SIZE_OVERLAP })).toBe(SIZE_OVERLAP);
+    expect(writeErrorMessage({ code: "23P01" }, 0)).toBe(SAVE_FAILED);
   });
 
   it("says a pairing already exists only for the pairing write", () => {

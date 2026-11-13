@@ -5,7 +5,7 @@ import { MAX_MESSAGE_LENGTH, chatErrors } from "@/lib/chat/request";
 const SHOP = { id: "shop-a", name: "Mây Boutique" };
 const PRODUCT = "11111111-1111-4111-8111-111111111111";
 
-const history = vi.fn<(...args: unknown[]) => Promise<unknown[]>>();
+const history = vi.fn<(...args: unknown[]) => Promise<{ messages: unknown[]; mode: string }>>();
 const productInShop = vi.fn<(...args: unknown[]) => Promise<boolean>>();
 vi.mock("@/lib/chat/web-chat", async (original) => ({
   ...(await original<typeof import("@/lib/chat/web-chat")>()),
@@ -57,7 +57,7 @@ const post = (body: unknown, { cookie, slug, ip }: { cookie?: string; slug?: str
 const valid = { text: "Váy này còn size M không?", productId: PRODUCT, clientMessageId: "c-1" };
 
 beforeEach(() => {
-  history.mockReset().mockResolvedValue([]);
+  history.mockReset().mockResolvedValue({ messages: [], mode: "ai" });
   productInShop.mockReset().mockResolvedValue(true);
   receive.mockReset().mockResolvedValue("answered");
   takeSlot.mockReset().mockResolvedValue("ok");
@@ -126,17 +126,25 @@ describe("GET /api/shops/[slug]/chat", () => {
   it("returns an empty conversation to a visitor without a cookie, without reading the database", async () => {
     const response = await get();
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ messages: [] });
+    expect(await response.json()).toEqual({ messages: [], mode: "ai" });
     expect(history).not.toHaveBeenCalled();
   });
 
   it("reads the conversation of the hashed cookie id in the slug's shop", async () => {
     const messages = [{ id: "m", sender: "ai", text: "Dạ", reply: null, createdAt: "2026-11-07T00:00:00Z" }];
-    history.mockResolvedValue(messages);
+    history.mockResolvedValue({ messages, mode: "ai" });
     const response = await get(TOKEN);
-    expect(await response.json()).toEqual({ messages });
+    expect(await response.json()).toEqual({ messages, mode: "ai" });
     expect(history).toHaveBeenCalledWith("shop-a", shopperExternalId(TOKEN));
     expect(shopperExternalId(TOKEN)).not.toBe(TOKEN);
+  });
+
+  it.each(["needs_human", "staff"])("returns the %s mode so the page shows the wait for staff (PB-42)", async (mode) => {
+    const messages = [{ id: "m", sender: "shopper", text: "Shop ơi", reply: null, createdAt: "2026-11-12T00:00:00Z" }];
+    history.mockResolvedValue({ messages, mode });
+    const response = await get(TOKEN);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ messages, mode });
   });
 
   it("ignores a cookie that we did not issue", async () => {
