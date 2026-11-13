@@ -1,19 +1,19 @@
 "use client";
 
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import type { ConversationMode, MessageSender } from "@/contract";
+import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { Button } from "@/components/ui/button";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { Icon } from "@/components/ui/icon";
 import { ChatSkeleton, LoadingRegion, Skeleton } from "@/components/ui/skeleton";
 import {
-  historyLimit, listInboxMessages, listLiveConversations, listTeamNames, setLiveInboxMode, subscribeInbox,
-  type InboxConversation, type InboxMessage,
+  countConversations, getConversation, historyLimit, listInboxMessages, listTeamNames, searchConversations, setLiveInboxMode,
+  subscribeInbox, type InboxConversation, type InboxMessage,
 } from "./inbox-live";
 import {
-  avatarInitial, channelLabels, countByMode, emptyFilter, filterConversations, formatListTime,
-  type ChannelFilter, type InboxFilter, type ModeFilter,
+  avatarInitial, channelLabels, emptyFilter, formatListTime, type ChannelFilter, type InboxFilter, type ModeFilter,
 } from "./inbox-filter";
+import { appendPage, mergeFirstPage, type InboxCounts, type InboxPage } from "./inbox-page";
 import { formatWaiting, overdueAfterMs, waitingMs } from "./waiting";
 
 const modeLabels: Record<ConversationMode, string> = {
@@ -67,11 +67,14 @@ const frameHeight = "h-[calc(100dvh-19rem)] min-h-[26rem] lg:h-[calc(100dvh-16re
 type InboxState =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; conversations: InboxConversation[] };
+  | ({ status: "ready" } & InboxPage);
 
 type SendMessageAction = (conversationId: string, text: string, requestId: string) => Promise<
   { ok: true } | { ok: false; messageId: string | null }
 >;
+
+// Wait this long after the last keystroke before searching the server.
+const searchDelayMs = 300;
 
 // `label` replaces the generic text, e.g. "Bạn đang trả lời" in the open conversation.
 function ModeBadge({ mode, label }: { mode: ConversationMode; label?: string }) {
@@ -96,14 +99,60 @@ export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId
   currentUserId?: string;
 }) {
   const [state, setState] = useState<InboxState>({ status: "loading" });
+  const [counts, setCounts] = useState<InboxCounts | null>(null);
+  const [filter, setFilter] = useState<InboxFilter>(emptyFilter);
+  // The search the list shows: filter.query once typing pauses.
+  const [query, setQuery] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Channels seen so far: the channel menu only offers channels the shop uses.
+  const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId ?? null);
+  // The open conversation when it is not in the loaded pages (an old ?c= link).
+  const [outside, setOutside] = useState<InboxConversation | null>(null);
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});
   const [historyVersion, setHistoryVersion] = useState(0);
   // Clock for "waiting since" labels: set when data arrives, then once a minute,
   // so render never reads the clock itself.
   const [now, setNow] = useState<number | null>(null);
+  // Every page-one load takes a new number; a reply for an older number is
+  // stale (the filter changed meanwhile) and is dropped. "Tải thêm" reads the
+  // number without taking one, so a newer page-one load also drops it.
+  const requestId = useRef(0);
+  const shownFilter = useRef<string | null>(null);
+  const searchFilter = useMemo<InboxFilter>(() => ({ query, mode: filter.mode, channel: filter.channel }), [query, filter.mode, filter.channel]);
+  const conversations = state.status === "ready" ? state.conversations : null;
+
+  // Page one and the tab counts for the current filter. Called from effects only:
+  // when the filter settles, on reload, and on every realtime change.
+  const loadFirstPage = useEffectEvent(() => {
+    const target = searchFilter;
+    const id = ++requestId.current;
+    const key = JSON.stringify(target);
+    // A reload or realtime change keeps the pages already loaded; a new filter starts over.
+    const keepPages = shownFilter.current === key;
+    Promise.all([searchConversations(target), countConversations(target)]).then(
+      ([page, nextCounts]) => {
+        if (id !== requestId.current) return;
+        shownFilter.current = key;
+        setState((current) => ({ status: "ready", ...(keepPages && current.status === "ready" ? mergeFirstPage(current, page) : page) }));
+        setCounts(nextCounts);
+        setChannels((current) => {
+          const seen = new Set([...current, ...page.conversations.map(({ channel }) => channel)]);
+          return seen.size === current.length ? current : [...seen];
+        });
+        setNow(Date.now());
+        setRefreshing(false);
+      },
+      () => {
+        if (id !== requestId.current) return;
+        setState((current) => current.status === "ready" ? current : { status: "error" });
+        setRefreshing(false);
+      },
+    );
+  });
+
   const onMessage = useEffectEvent((conversationId?: string) => {
     if (selectedId && (!conversationId || conversationId === selectedId)) {
       setHistoryVersion((version) => version + 1);
@@ -111,36 +160,24 @@ export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId
   });
 
   useEffect(() => {
+    if (filter.query === query) return;
+    const timer = setTimeout(() => setQuery(filter.query), searchDelayMs);
+    return () => clearTimeout(timer);
+  }, [filter.query, query]);
+
+  useEffect(() => {
+    loadFirstPage();
+  }, [searchFilter, attempt]);
+
+  useEffect(() => {
     let active = true;
-    let requestId = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
-
-    function refresh() {
-      const id = ++requestId;
-      void listLiveConversations().then(
-        (conversations) => {
-          if (active && id === requestId) {
-            setState({ status: "ready", conversations });
-            setNow(Date.now());
-            setRefreshing(false);
-          }
-        },
-        () => {
-          if (active && id === requestId) {
-            setState((current) => current.status === "ready" ? current : { status: "error" });
-            setRefreshing(false);
-          }
-        },
-      );
-    }
-
-    refresh();
     const unsubscribe = subscribeInbox(
       () => {
         if (!active || timer) return;
         timer = setTimeout(() => {
           timer = undefined;
-          refresh();
+          loadFirstPage();
         }, 80);
       },
       (conversationId) => { if (active) onMessage(conversationId); },
@@ -152,6 +189,16 @@ export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId
       unsubscribe();
     };
   }, [attempt]);
+
+  // A ?c= conversation outside the loaded pages is read on its own, again
+  // whenever the list reloads so its mode stays current.
+  const inList = Boolean(selectedId && conversations?.some(({ id }) => id === selectedId));
+  useEffect(() => {
+    if (!selectedId || !conversations || inList) return;
+    let active = true;
+    void getConversation(selectedId).then((conversation) => { if (active) setOutside(conversation); }, () => {});
+    return () => { active = false; };
+  }, [selectedId, conversations, inList]);
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 60_000);
@@ -181,6 +228,25 @@ export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId
     setHistoryVersion((version) => version + 1);
   }
 
+  function changeFilter(next: InboxFilter) {
+    setFilter(next);
+    // Clearing the search shows everything at once, without the typing delay.
+    if (!next.query.trim()) setQuery(next.query);
+  }
+
+  function loadMore() {
+    if (state.status !== "ready" || !state.nextCursor || loadingMore) return;
+    const id = requestId.current;
+    setLoadingMore(true);
+    searchConversations(searchFilter, state.nextCursor).then(
+      (page) => {
+        if (id === requestId.current) setState((current) => current.status === "ready" ? { status: "ready", ...appendPage(current, page) } : current);
+        setLoadingMore(false);
+      },
+      () => setLoadingMore(false),
+    );
+  }
+
   if (state.status === "loading") return <InboxSkeleton />;
 
   if (state.status === "error") {
@@ -197,8 +263,16 @@ export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId
   return (
     <InboxConversations
       conversations={state.conversations}
+      counts={counts}
+      channels={channels}
+      filter={filter}
+      onFilterChange={changeFilter}
+      searching={filter.query !== query}
+      hasMore={Boolean(state.nextCursor)}
+      loadingMore={loadingMore}
+      loadMore={loadMore}
       now={now}
-      selected={state.conversations.find(({ id }) => id === selectedId)}
+      selected={state.conversations.find(({ id }) => id === selectedId) ?? (outside?.id === selectedId ? outside : undefined)}
       onSelect={select}
       teamNames={teamNames}
       currentUserId={currentUserId}
@@ -220,8 +294,20 @@ function WaitingBadge({ since, now }: { since: string; now: number }) {
   );
 }
 
-function InboxConversations({ conversations, now, selected, onSelect, teamNames, currentUserId, historyVersion, refreshing, reload, sendMessageAction }: {
+function InboxConversations({
+  conversations, counts, channels, filter, onFilterChange, searching, hasMore, loadingMore, loadMore,
+  now, selected, onSelect, teamNames, currentUserId, historyVersion, refreshing, reload, sendMessageAction,
+}: {
   conversations: InboxConversation[];
+  counts: InboxCounts | null;
+  channels: Channel[];
+  filter: InboxFilter;
+  onFilterChange: (filter: InboxFilter) => void;
+  // True while typed text waits to be searched.
+  searching: boolean;
+  hasMore: boolean;
+  loadingMore: boolean;
+  loadMore: () => void;
   now: number | null;
   selected?: InboxConversation;
   onSelect: (id: string | null) => void;
@@ -232,12 +318,8 @@ function InboxConversations({ conversations, now, selected, onSelect, teamNames,
   reload: () => void;
   sendMessageAction?: SendMessageAction;
 }) {
-  const [filter, setFilter] = useState<InboxFilter>(emptyFilter);
-  const visible = useMemo(() => filterConversations(conversations, filter), [conversations, filter]);
-  const counts = useMemo(() => countByMode(conversations, filter), [conversations, filter]);
-  // Only offer the channels this shop actually has conversations on.
-  const channels = useMemo(() => [...new Set(conversations.map(({ channel }) => channel))], [conversations]);
   const filtered = filter.query.trim() !== "" || filter.mode !== "all" || filter.channel !== "all";
+  const setFilter = (change: Partial<InboxFilter>) => onFilterChange({ ...filter, ...change });
 
   return (
     <div className={`ui-card flex overflow-hidden p-0 ${frameHeight}`}>
@@ -246,7 +328,7 @@ function InboxConversations({ conversations, now, selected, onSelect, teamNames,
           <div className="flex items-center justify-between gap-2">
             <h2 className="flex items-center gap-2 text-lg font-bold">
               Đoạn chat
-              <span className="rounded-full bg-[#efebe4] px-2 py-0.5 text-xs font-semibold">{conversations.length}</span>
+              <span className="rounded-full bg-[#efebe4] px-2 py-0.5 text-xs font-semibold tabular-nums">{counts?.all ?? conversations.length}</span>
             </h2>
             <button
               type="button"
@@ -256,7 +338,7 @@ function InboxConversations({ conversations, now, selected, onSelect, teamNames,
               title="Làm mới"
               className="flex size-9 items-center justify-center rounded-full text-[#474640] transition-colors hover:bg-[#f5f3ef] disabled:opacity-60"
             >
-              <Icon name="refresh" className={`size-4 ${refreshing ? "animate-spin" : ""}`} />
+              <Icon name="refresh" className={`size-4 ${refreshing || searching ? "animate-spin" : ""}`} />
             </button>
           </div>
 
@@ -269,8 +351,8 @@ function InboxConversations({ conversations, now, selected, onSelect, teamNames,
                 aria-label="Tìm hội thoại"
                 placeholder="Tìm khách, tin nhắn…"
                 value={filter.query}
-                onChange={(event) => setFilter((current) => ({ ...current, query: event.target.value }))}
-                onKeyDown={(event) => { if (event.key === "Escape") setFilter((current) => ({ ...current, query: "" })); }}
+                onChange={(event) => setFilter({ query: event.target.value })}
+                onKeyDown={(event) => { if (event.key === "Escape") setFilter({ query: "" }); }}
                 className="h-10 w-full rounded-full border border-transparent bg-[#f0ede8] pl-9 pr-3 text-sm! outline-none transition-colors placeholder:text-[#66635d] focus:border-[#171717] focus:bg-white"
               />
             </div>
@@ -278,7 +360,7 @@ function InboxConversations({ conversations, now, selected, onSelect, teamNames,
               <select
                 aria-label="Lọc theo kênh"
                 value={filter.channel}
-                onChange={(event) => setFilter((current) => ({ ...current, channel: event.target.value as ChannelFilter }))}
+                onChange={(event) => setFilter({ channel: event.target.value as ChannelFilter })}
                 className="h-10 w-28 shrink-0 rounded-full border border-transparent bg-[#f0ede8] px-3 text-xs! font-semibold outline-none focus:border-[#171717] focus:bg-white"
               >
                 <option value="all">Mọi kênh</option>
@@ -293,20 +375,20 @@ function InboxConversations({ conversations, now, selected, onSelect, teamNames,
                 key={value}
                 type="button"
                 aria-pressed={filter.mode === value}
-                onClick={() => setFilter((current) => ({ ...current, mode: value }))}
+                onClick={() => setFilter({ mode: value })}
                 className="flex items-center gap-1 rounded-full border border-[#e3dfd8] px-2.5 py-1 text-xs! font-semibold transition-colors hover:border-[#171717] aria-pressed:border-[#171717] aria-pressed:bg-[#171717] aria-pressed:text-white"
               >
                 {label}
-                <span className="tabular-nums opacity-70">{counts[value]}</span>
+                {counts && <span className="tabular-nums opacity-70">{counts[value]}</span>}
               </button>
             ))}
           </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
-          {visible.length ? (
+          {conversations.length ? (
             <ul className="space-y-0.5">
-              {visible.map((conversation) => {
+              {conversations.map((conversation) => {
                 const waiting = conversation.mode === "needs_human";
                 return (
                   <li key={conversation.id}>
@@ -340,12 +422,19 @@ function InboxConversations({ conversations, now, selected, onSelect, teamNames,
                   </li>
                 );
               })}
+              {hasMore && (
+                <li className="p-2">
+                  <Button variant="secondary" className="w-full" loading={loadingMore} loadingText="Đang tải…" onClick={loadMore}>
+                    Tải thêm
+                  </Button>
+                </li>
+              )}
             </ul>
           ) : (
             <div className="flex flex-col items-center gap-3 px-4 py-12 text-center">
               <p className="font-semibold">{filtered ? "Không tìm thấy hội thoại phù hợp" : "Chưa có cuộc trò chuyện"}</p>
               <p className="text-sm text-[#706d67]">{filtered ? "Thử từ khóa khác hoặc bỏ bộ lọc." : "Tin nhắn của khách sẽ xuất hiện tại đây."}</p>
-              {filtered && <Button variant="secondary" onClick={() => setFilter(emptyFilter)}>Xóa bộ lọc</Button>}
+              {filtered && <Button variant="secondary" onClick={() => onFilterChange(emptyFilter)}>Xóa bộ lọc</Button>}
             </div>
           )}
         </div>

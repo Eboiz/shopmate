@@ -1,6 +1,9 @@
 import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { createClient } from "@/lib/supabase/client";
-import { customerLabel } from "./inbox-filter";
+import type { InboxFilter } from "./inbox-filter";
+import {
+  cursorArgs, filterArgs, toInboxConversation, toPage, type InboxCounts, type InboxCursor, type InboxPage,
+} from "./inbox-page";
 
 // staff_id is set on staff messages: who on the team wrote it.
 export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string; staff_id: string | null };
@@ -19,42 +22,49 @@ export type InboxConversation = {
   customerMessageAt?: string;
 };
 
-const conversationLimit = 50;
+export const pageSize = 50;
 export const historyLimit = 50;
 
-export async function listLiveConversations(): Promise<InboxConversation[]> {
-  const db = createClient();
-  const query = () => db.from("conversations")
+// One page of the shop's conversations matching the filter, searched on the
+// server so older conversations are found too (PB-41).
+export async function searchConversations(filter: InboxFilter, cursor?: InboxCursor | null, limit = pageSize): Promise<InboxPage> {
+  const { data, error } = await createClient().rpc("search_inbox", { ...filterArgs(filter), ...cursorArgs(cursor), p_limit: limit });
+  if (error) throw error;
+  return toPage(data, limit);
+}
+
+// How many conversations each mode tab holds under the search and channel.
+export async function countConversations(filter: Pick<InboxFilter, "query" | "channel">): Promise<InboxCounts> {
+  const { p_query, p_channel } = filterArgs({ ...filter, mode: "all" });
+  const { data, error } = await createClient().rpc("inbox_counts", { p_query, p_channel }).single();
+  if (error) throw error;
+  return { all: data.total, ai: data.ai, needs_human: data.needs_human, staff: data.staff };
+}
+
+// One conversation by id, for a ?c= link to a conversation outside the loaded pages.
+export async function getConversation(id: string): Promise<InboxConversation | null> {
+  const { data, error } = await createClient().from("conversations")
     .select("id, mode, last_message_at, shoppers!inner(channel, display_name), messages(text), customer_message:messages(text, created_at)")
+    .eq("id", id)
     .eq("customer_message.sender", "shopper")
-    .order("last_message_at", { ascending: false })
-    .order("id")
     .order("created_at", { referencedTable: "messages", ascending: false })
     .order("id", { referencedTable: "messages", ascending: false })
     .limit(1, { referencedTable: "messages" })
     .order("created_at", { referencedTable: "customer_message", ascending: false })
     .order("id", { referencedTable: "customer_message", ascending: false })
     .limit(1, { referencedTable: "customer_message" })
-    .limit(conversationLimit);
-
-  // Keep the queue in front even when the shop has many newer AI conversations.
-  const urgent = await query().eq("mode", "needs_human");
-  if (urgent.error) throw urgent.error;
-  const remaining = conversationLimit - urgent.data.length;
-  const other = remaining ? await query().neq("mode", "needs_human").limit(remaining) : null;
-  if (other?.error) throw other.error;
-
-  return [...urgent.data, ...(other?.data ?? [])].map((conversation) => ({
-    id: conversation.id,
-    customerName: customerLabel(conversation.shoppers.display_name, conversation.shoppers.channel, conversation.id),
-    unnamed: !conversation.shoppers.display_name?.trim() || undefined,
-    channel: conversation.shoppers.channel,
-    mode: conversation.mode,
-    lastMessageAt: conversation.last_message_at,
-    latestMessage: conversation.messages[0]?.text,
-    customerMessage: conversation.customer_message[0]?.text || undefined,
-    customerMessageAt: conversation.customer_message[0]?.created_at,
-  }));
+    .maybeSingle();
+  if (error) throw error;
+  return data && toInboxConversation({
+    id: data.id,
+    mode: data.mode,
+    channel: data.shoppers.channel,
+    display_name: data.shoppers.display_name,
+    last_message_at: data.last_message_at,
+    latest_message: data.messages[0]?.text ?? null,
+    customer_message: data.customer_message[0]?.text ?? null,
+    customer_message_at: data.customer_message[0]?.created_at ?? null,
+  });
 }
 
 export async function listInboxMessages(conversationId: string): Promise<InboxMessage[]> {
