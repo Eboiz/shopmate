@@ -520,7 +520,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           search={search}
           onSearch={searchProducts}
         />
-        <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
+        <ShopHero shopName={shopName} bannerUrl={catalog.shop.bannerUrl} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
 
         <section id="san-pham" aria-labelledby="san-pham-title" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -594,7 +594,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
         {groupLinks.length > 1 && <GroupTiles groups={groupLinks} onChoose={showGroup} onAsk={askText} />}
         <SizeBand chart={sizeChart} onAsk={askText} />
-        <ShopFooter shopName={shopName} groups={groupLinks} policyItems={policyItems} onChoose={showGroup} onAsk={askText} />
+        <ShopFooter shopName={shopName} contact={catalog.shop.contact} groups={groupLinks} policyItems={policyItems} onChoose={showGroup} onAsk={askText} />
         </>}
       </main>
 

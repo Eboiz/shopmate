@@ -13,7 +13,10 @@ export const shopProductSchema = z.object({
   id: z.uuid(),
   name: z.string().min(1),
   price: z.number().int().positive(),
+  // The card photo: the first of `images` (PB-32), else the product's image_url.
   imageUrl: z.string().nullable(),
+  // Every photo in order (PB-32); missing from older responses.
+  images: z.array(z.string()).optional(),
   category: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   colors: z.array(z.string()),
@@ -27,6 +30,12 @@ export const shopCatalogSchema = z.object({
     name: z.string().min(1),
     // The shop's own policy text; empty or missing when not filled in yet.
     policies: z.object({ returns: z.string(), shipping: z.string() }).partial().optional(),
+    // PB-32: contact details (null = not given, hidden) and the hero banner
+    // (null = the default photo). Optional so older responses still parse.
+    contact: z
+      .object({ address: z.string().nullable(), phone: z.string().nullable(), fanpageUrl: z.string().nullable() })
+      .optional(),
+    bannerUrl: z.string().nullable().optional(),
   }),
   products: z.array(shopProductSchema),
 });
