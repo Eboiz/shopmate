@@ -74,7 +74,18 @@ vi.mock("./send", () => ({
 }));
 
 const engine = vi.fn<() => Promise<EngineOutput>>();
-vi.mock("@/lib/engine/run", () => ({ runEngine: (...args: unknown[]) => engine(...(args as [])) }));
+// What runCustomerTurn adds to the engine's output (R3).
+let orderAttempted: boolean;
+let turnId: string | null;
+vi.mock("@/lib/engine/run", () => ({
+  runCustomerTurn: async (...args: unknown[]) => ({
+    output: await engine(...(args as [])),
+    orderAttempted,
+    turnLogged: Promise.resolve(turnId),
+  }),
+}));
+const markTurnSuperseded = vi.fn<(db: unknown, shopId: string, id: string) => Promise<void>>();
+vi.mock("@/lib/engine/store", () => ({ markTurnSuperseded: (...args: [unknown, string, string]) => markTurnSuperseded(...args) }));
 
 // PB-17: the limit itself is tested in src/lib/guard/rate-limit.test.ts; here only
 // that receive.ts asks it, and stops before the AI when it says no.
@@ -95,6 +106,9 @@ beforeEach(() => {
   sent.length = 0;
   sendResult = () => ({ ok: true, messageId: "m" });
   engine.mockReset().mockResolvedValue({ reply: answer, personalReplyNeeded: false });
+  orderAttempted = false;
+  turnId = "turn-1";
+  markTurnSuperseded.mockReset().mockResolvedValue(undefined);
   rateLimited.mockReset().mockResolvedValue(false);
 });
 
@@ -330,6 +344,30 @@ describe("only the newest shopper message gets a reply (R3)", () => {
     });
     expect(await receiveChannelMessage(account, text("mid-1", "Váy babydoll còn màu gì?"))).toBe("superseded");
     expect(sent).toEqual([]);
+    // Its logged turn is marked, so the next turn ignores its offer or quote.
+    expect(markTurnSuperseded).toHaveBeenCalledWith(expect.anything(), "shop-a", "turn-1");
+  });
+
+  it("a superseded turn whose log failed marks nothing", async () => {
+    turnId = null;
+    engine.mockImplementationOnce(async () => {
+      newerMessageArrives();
+      return { reply: answer, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1"))).toBe("superseded");
+    expect(markTurnSuperseded).not.toHaveBeenCalled();
+  });
+
+  it("a turn that wrote an order still sends its reply when the shopper wrote again, and is not marked", async () => {
+    const created: Reply = { text: "Dạ shop đã tạo đơn nháp cho bạn", products: [], quickReplies: [] };
+    orderAttempted = true;
+    engine.mockImplementationOnce(async () => {
+      newerMessageArrives("à cho mình hỏi thêm");
+      return { reply: created, personalReplyNeeded: false };
+    });
+    expect(await receiveChannelMessage(account, text("mid-1", "Xác nhận đơn"))).toBe("answered");
+    expect(sent).toEqual([{ conversationId: conversation().id, reply: created, from: "ai" }]);
+    expect(markTurnSuperseded).not.toHaveBeenCalled();
   });
 
   it("the newest turn still sends, with both messages in its history", async () => {
@@ -370,6 +408,7 @@ describe("only the newest shopper message gets a reply (R3)", () => {
       return { reply: closing, personalReplyNeeded: false };
     });
     expect(await receiveChannelMessage(account, text("mid-1", "Hàng bị rách, mình bực quá"))).toBe("handed_off");
+    expect(markTurnSuperseded).not.toHaveBeenCalled();
     expect(conversation().mode).toBe("needs_human");
     expect(sent.filter((m) => m.from === "system")).toEqual([{ conversationId: conversation().id, reply: closing, from: "system" }]);
   });

@@ -14,7 +14,9 @@ import { findShop, loadCatalog, loadHistory, productInShop, shopperExternalId } 
 // and the history the shop page polls shows all of them, for this shopper only.
 
 const engine = vi.fn<(input: EngineInput) => Promise<EngineOutput>>();
-vi.mock("@/lib/engine/run", () => ({ runEngine: (input: EngineInput) => engine(input) }));
+vi.mock("@/lib/engine/run", () => ({
+  runCustomerTurn: async (input: EngineInput) => ({ output: await engine(input), orderAttempted: false, turnLogged: Promise.resolve(null) }),
+}));
 
 const db = createAdminClient();
 const web = { channel: "web" as const, shopId: FX.a.shop };

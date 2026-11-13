@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { productCardSchema } from "@/contract";
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseStore } from "./store";
+import { createSupabaseStore, markTurnSuperseded } from "./store";
 import { FX, seedTwoShops } from "./test/two-shops";
 
 const db = createAdminClient();
@@ -70,6 +70,36 @@ describe("createSupabaseStore", () => {
       expect(await missed()).toBe(true);
       await turn([emptySearch], null, { productMiss: false });
       expect(await missed()).toBe(false);
+    });
+
+    it("skips turns whose reply was superseded (R3): the last turn the shopper saw decides", async () => {
+      const ids: string[] = [];
+      const turn = async (fields: { handoff_offer?: "size_out_of_range" | null; postcheck?: Json }) => {
+        const id = await store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls: [], ...fields });
+        ids.push(id);
+        return id;
+      };
+      const offer = () =>
+        store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null }).then((tc) => tc.previousHandoffOffer);
+      try {
+        await turn({ handoff_offer: null, postcheck: { productMiss: false } });
+        // The older turn finished last, with an offer the shopper never saw.
+        const late = await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false, numberCheck: { failed: [], retried: true } } });
+        expect(await offer()).toBe("size_out_of_range");
+        await markTurnSuperseded(db, FX.a.shop, late);
+        expect(await offer()).toBeNull();
+        // The mark keeps what postcheck already held.
+        const { data } = await db.from("ai_turns").select("postcheck").eq("id", late).single();
+        expect(data?.postcheck).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true }, superseded: true });
+        // Another shop's id is never marked.
+        const other = await store.insertTurn({ shop_id: FX.b.shop, conversation_id: FX.b.conversation, mode: "customer", latency_ms: 1, tool_calls: [], postcheck: {} });
+        ids.push(other);
+        await markTurnSuperseded(db, FX.a.shop, other);
+        const { data: otherRow } = await db.from("ai_turns").select("postcheck").eq("id", other).single();
+        expect(otherRow?.postcheck).toEqual({});
+      } finally {
+        await db.from("ai_turns").delete().in("id", ids);
+      }
     });
 
     it("returns nulls for an unknown conversation", async () => {

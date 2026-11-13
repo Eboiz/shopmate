@@ -54,6 +54,9 @@ export type EngineStore = {
 };
 
 const MAX_CARDS = 10;
+// Superseded turns are skipped (R3); a burst of more messages than this in one
+// turn's time leaves no state, the safe default.
+const RECENT_TURNS = 5;
 const PAIRED_BUTTONS = 3;
 
 // Every admin client reads the same database, so one cache per process is
@@ -95,16 +98,18 @@ export function createSupabaseStore(db: Db): EngineStore {
   }
 
   async function previousTurnState(shopId: string, conversationId: string) {
-    const { data, error } = await db
+    const { data: rows, error } = await db
       .from("ai_turns")
       .select("tool_calls, handoff_reason, postcheck, handoff_offer")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(RECENT_TURNS);
     if (error) throw new Error(`ai_turns: ${error.message}`);
+    // R3: a superseded turn's reply was never sent, so the shopper never saw its
+    // offer, quote or clarifying question; the last turn whose reply went out decides.
+    const data = rows.find((row) => postcheckLogSchema.safeParse(row.postcheck).data?.superseded !== true);
     if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
     // Rows the current engine wrote carry the guard's verdict in postcheck
@@ -189,4 +194,26 @@ export function createSupabaseStore(db: Db): EngineStore {
       return data.id;
     },
   };
+}
+
+// R3 (receive.ts): this turn's reply was not sent because the shopper wrote
+// again. Marked in postcheck, so the next turn ignores its offer, quote and
+// product miss (previousTurnState). A failure is logged, never thrown: the
+// shopper's newer turn answers either way.
+export async function markTurnSuperseded(db: Db, shopId: string, turnId: string): Promise<void> {
+  try {
+    const { data, error } = await db.from("ai_turns").select("postcheck").eq("id", turnId).eq("shop_id", shopId).single();
+    if (error) throw new Error(error.message);
+    // Kept as stored: fields this schema doesn't know (another branch's) stay.
+    const stored = data.postcheck;
+    const postcheck = stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    const { error: updateError } = await db
+      .from("ai_turns")
+      .update({ postcheck: { ...postcheck, superseded: true } })
+      .eq("id", turnId)
+      .eq("shop_id", shopId);
+    if (updateError) throw new Error(updateError.message);
+  } catch (e) {
+    console.error("engine: failed to mark the turn superseded", e);
+  }
 }

@@ -1,6 +1,7 @@
 import "server-only";
 import type { Channel, HistoryMessage, Reply } from "@/contract";
-import { runEngine } from "@/lib/engine/run";
+import { runCustomerTurn, type CustomerTurn } from "@/lib/engine/run";
+import { markTurnSuperseded } from "@/lib/engine/store";
 import type { Db } from "@/lib/engine/types";
 import { replyIfRateLimited } from "@/lib/guard/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -150,30 +151,38 @@ export async function receiveChannelMessage(
   const recent = must(historyRead, "history");
   const history: HistoryMessage[] = recent.reverse().map(({ sender, text }) => ({ sender, text }));
 
-  let reply: Reply;
+  let turn: CustomerTurn;
   try {
-    ({ reply } = await runEngine({
+    turn = await runCustomerTurn({
       mode: "customer",
       conversationId: conversation.id,
       history,
       productId: incoming.productId ?? null,
-    }));
+    });
   } catch (error) {
     console.error("engine failed, handing off", error);
     return handOff(notice(HANDOFF_TEXT));
   }
+  const reply = turn.output.reply;
 
   // R3: the shopper sent another message while this turn ran. That message's turn
-  // reads both and answers; this one sends nothing, so the shopper gets one reply.
-  // Side effects of this turn (a handoff) stay. Exception: when this turn moved
-  // the conversation from ai to needs_human, its closing message is still sent
-  // (below), because the newer turn then starts in needs_human and stays silent.
+  // reads both and answers; this one sends nothing, so the shopper gets one reply,
+  // and its logged turn is marked superseded so the next turn doesn't act on an
+  // offer or quote the shopper never saw. Side effects of this turn (a handoff)
+  // stay. Exceptions, whose reply is still sent: the turn wrote an order (the
+  // shopper confirmed it and must hear what happened, or the next turn may quote
+  // or write it again), or it moved the conversation from ai to needs_human (the
+  // closing message, below; the newer turn then starts in needs_human and stays silent).
   if (await newerShopperMessageExists(db, { shopId: shop_id, conversationId: conversation.id, messageId: storedMessage.id })) {
     const current = must(
       await db.from("conversations").select("mode").eq("id", conversation.id).eq("shop_id", shop_id).single(),
       "mode read",
     );
-    if (!(initialMode === "ai" && current.mode === "needs_human")) return "superseded";
+    if (!turn.orderAttempted && !(initialMode === "ai" && current.mode === "needs_human")) {
+      const turnId = await turn.turnLogged;
+      if (turnId) await markTurnSuperseded(db, shop_id, turnId);
+      return "superseded";
+    }
   }
 
   const sent = await sendToConversation(conversation.id, reply, { from: "ai" });

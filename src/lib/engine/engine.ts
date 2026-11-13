@@ -127,6 +127,10 @@ export type EngineResult = {
   output: EngineOutput;
   handoffReason: HandoffReason | null;
   turnLogged: Promise<string | null>;
+  // The turn called create_draft_order with a valid order, so its reply says
+  // what happened to that order: the channel sends it even when the shopper
+  // has written again meanwhile (receive.ts, R3).
+  orderAttempted: boolean;
 };
 
 // Runs fn over items with at most `concurrency` at a time; results come back in
@@ -282,6 +286,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       output: { reply: { text: PERSONAL_REPLY_TEXT, products: [], quickReplies: [] }, personalReplyNeeded: true },
       handoffReason: null,
       turnLogged: Promise.resolve(null),
+      orderAttempted: false,
     };
   }
   // ONE read for everything needed before the model call.
@@ -1195,7 +1200,8 @@ ${missingRetryNote(claims)}`;
       }),
       handoffReason: handoff,
       turnLogged,
+      orderAttempted: createAttempted,
     };
   }
-  return { output, handoffReason: handoff, turnLogged };
+  return { output, handoffReason: handoff, turnLogged, orderAttempted: createAttempted };
 }

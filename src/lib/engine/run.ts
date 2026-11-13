@@ -16,6 +16,17 @@ export async function runEngine(input: EngineInput): Promise<EngineOutput> {
   return finish(await runEngineTurn(input));
 }
 
+// A customer turn for the channels (receive.ts): the reply, plus what R3 needs
+// when a newer shopper message arrived meanwhile (send the reply anyway after
+// an order write, else mark the logged turn superseded).
+export type CustomerTurn = Pick<EngineResult, "output" | "orderAttempted" | "turnLogged">;
+
+export async function runCustomerTurn(input: Extract<EngineInput, { mode: "customer" }>): Promise<CustomerTurn> {
+  const result = await runEngineTurn(input);
+  finish(result);
+  return { output: result.output, orderAttempted: result.orderAttempted, turnLogged: result.turnLogged };
+}
+
 // The reply assistant (PB-20). The input carries no shop; it comes from the
 // signed-in staff member's profile (requireStaff), never from the request.
 // Redirects to the login page when nobody is signed in.
