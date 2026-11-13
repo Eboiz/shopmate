@@ -63,14 +63,16 @@ test.describe("with the local database", () => {
     expect(conversation.messages.filter((m) => m.sender === "shopper").map((m) => m.text)).toEqual(["tin 1", "tin 2"]);
   });
 
-  test("a photo goes to staff with a notice, keeping its link", async ({ request }) => {
+  // PB-30: the server downloads the photo; one it can't keep (here: example.com
+  // answers 404) is stored as a note, never the channel's link (A10).
+  test("a photo that can't be downloaded goes to staff with a notice", async ({ request }) => {
     const psid = uid("psid");
     await postMessenger(
       request,
       messengerBody([{ sender: { id: psid }, message: { mid: uid("mid"), attachments: [{ type: "image", payload: { url: "https://example.com/a.jpg" } }] } }]),
     );
     const conversation = await waitForConversation("messenger", psid, (c) => c.mode === "needs_human");
-    expect(conversation.messages[0]).toEqual({ sender: "shopper", text: "[Khách gửi ảnh] https://example.com/a.jpg" });
+    expect(conversation.messages[0]).toEqual({ sender: "shopper", text: "[Khách gửi ảnh, không lưu được ảnh]" });
     expect(conversation.messages.at(-1)?.sender).toBe("system");
   });
 
