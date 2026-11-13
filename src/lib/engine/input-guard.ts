@@ -48,10 +48,10 @@ export const GUARD_THRESHOLDS: Record<GuardCategory, number> = {
   harmful: 0.6,
 };
 
+// Sent for injection and leak. Abuse and harmful requests are handed to staff
+// instead (engine.ts, PB-14), so they have no refusal text.
 export const GUARD_REFUSAL_TEXT =
   "Dạ, mình chỉ hỗ trợ được về sản phẩm, size, đơn hàng và chính sách của shop thôi ạ. Bạn cần tư vấn món nào thì cứ nhắn mình nhé!";
-export const GUARD_ABUSE_TEXT =
-  "Dạ, mình ở đây để hỗ trợ bạn mua sắm. Nếu bạn cần tư vấn sản phẩm, size hay đơn hàng thì cứ nhắn mình nhé!";
 
 export type GuardResult = {
   scores: Record<GuardCategory, number>;
@@ -60,9 +60,6 @@ export type GuardResult = {
   ms: number;
   cost: number | null;
 };
-
-export const guardRefusal = (category: GuardCategory): string =>
-  category === "abuse" ? GUARD_ABUSE_TEXT : GUARD_REFUSAL_TEXT;
 
 const speaker = (sender: HistoryMessage["sender"]) =>
   sender === "shopper" ? "shopper" : sender === "ai" ? "assistant" : sender;

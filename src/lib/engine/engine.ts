@@ -23,7 +23,7 @@ import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } f
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
-import { checkShopperMessage, guardRefusal, type GuardResult } from "./input-guard";
+import { checkShopperMessage, GUARD_REFUSAL_TEXT, type GuardResult } from "./input-guard";
 import { createLangfuseSink } from "./langfuse";
 import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
 import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
@@ -388,7 +388,21 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     if (!guardStarted) return null;
     guard ??= await guardStarted;
     if ("error" in guard || !guard.blocked) return null;
-    return { kind: "fixed", reply: { text: guardRefusal(guard.blocked), products: [], quickReplies: [] } };
+    // Abuse or a harmful request goes to staff at once (PB-14: complaint or a
+    // request for a person hands off): "bot ngu vcl, cho gặp nhân viên", "đm 2
+    // tuần chưa tới hàng" must reach the shop, not only get a refusal.
+    if (guard.blocked === "abuse" || guard.blocked === "harmful") {
+      const reason = asksForHuman(lastText) ? "asked_for_human" : "complaint";
+      const r = await runTool("handoff_to_staff", { reason });
+      return { kind: "handoff", reason, sizeStatus: null, viaTool: r.ok };
+    }
+    // An order in progress keeps its quote: the refused turn logs the last
+    // turn's quote_order again (previousTurnState reads only the newest row),
+    // so "Ok xác nhận đơn" after a refused message still creates the order.
+    if (previousQuote) {
+      logs.push({ name: "quote_order", input: { items: previousQuote.items }, output: previousQuote.quote });
+    }
+    return { kind: "fixed", reply: { text: GUARD_REFUSAL_TEXT, products: [], quickReplies: [] } };
   };
 
   // PB-14: a complaint hands off at once, decided by the server like PB-20 does

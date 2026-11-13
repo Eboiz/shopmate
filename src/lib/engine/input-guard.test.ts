@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { blockedCategory, checkShopperMessage, GUARD_ABUSE_TEXT, GUARD_REFUSAL_TEXT, guardRefusal, GUARD_THRESHOLDS } from "./input-guard";
+import { blockedCategory, checkShopperMessage, GUARD_THRESHOLDS } from "./input-guard";
 import type { JevClient, JevRequest, JevResponse } from "./jev";
 
 const low = { injection: 0.01, leak: 0.01, abuse: 0.01, harmful: 0.01 };
@@ -51,9 +51,3 @@ describe("checkShopperMessage", () => {
   });
 });
 
-describe("guardRefusal", () => {
-  it("has a calmer text for abuse, one text for the rest", () => {
-    expect(guardRefusal("abuse")).toBe(GUARD_ABUSE_TEXT);
-    for (const c of ["injection", "leak", "harmful"] as const) expect(guardRefusal(c)).toBe(GUARD_REFUSAL_TEXT);
-  });
-});
