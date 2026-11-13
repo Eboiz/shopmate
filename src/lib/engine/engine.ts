@@ -23,7 +23,7 @@ import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } f
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
-import { checkShopperMessage, GUARD_REFUSAL_TEXT, GUARD_THRESHOLDS, type GuardResult, withoutRefusedExchanges } from "./input-guard";
+import { checkShopperMessage, GUARD_REFUSAL_TEXT, GUARD_THRESHOLDS, type GuardResult } from "./input-guard";
 import { createLangfuseSink } from "./langfuse";
 import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
 import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
@@ -263,12 +263,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     })
     : null;
 
-  // A message the guard refused never steers a later turn: its exchange (the
-  // shopper's message(s) and the refusal) is left out of the history this turn
-  // reads, for the model as for the order checks (contact details, confirmation).
-  // The guard above still saw it, so a repeated attack keeps its context.
-  const input: EngineInput = mode === "customer" ? { ...parsed, history: withoutRefusedExchanges(parsed.history) } : parsed;
-
+  const input = parsed;
   if (mode === "staff_draft" && !deps.staffShopId) throw new EngineError("staff_shop_not_resolved");
   // PB-20: a complaint gets "reply personally", not a draft. Decided by the server
   // before any model call, so it costs nothing and logs no turn.

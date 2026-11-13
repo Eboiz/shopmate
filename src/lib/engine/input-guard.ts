@@ -109,8 +109,10 @@ export async function checkShopperMessage(
 }
 
 // The history without the exchanges the guard refused: each GUARD_REFUSAL_TEXT
-// reply and the shopper messages it answered (those after the AI message before
-// it). Abuse and harmful requests are handed off, so only refusals are dropped.
+// reply and the shopper messages right before it. Found by position, not by
+// message id, so it may drop a message sent just before the refusal was stored,
+// or keep one when a refusal was never stored (needs_human): use it only where
+// dropping too much is safe (the order's contact details, order-flow.ts).
 export function withoutRefusedExchanges(history: HistoryMessage[]): HistoryMessage[] {
   const out: HistoryMessage[] = [];
   for (const message of history) {
