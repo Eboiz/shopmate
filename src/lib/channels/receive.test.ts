@@ -146,6 +146,17 @@ describe("receiveChannelMessage", () => {
     expect(sent).toHaveLength(1);
   });
 
+  it("answers a WhatsApp message delivered twice only once (same wamid, PB-27)", async () => {
+    const whatsapp = { id: "acc-wa", shopId: "shop-a", channel: "whatsapp" as const };
+    const message = { externalId: "84901234567", messageId: "wamid.HBgL1", text: "Váy còn size M không?" };
+    expect(await receiveChannelMessage(whatsapp, message)).toBe("answered");
+    expect(await receiveChannelMessage(whatsapp, message)).toBe("duplicate");
+    expect(tables.channel_events).toMatchObject([{ channel_account_id: "acc-wa", external_message_id: "wamid.HBgL1", shop_id: "shop-a" }]);
+    expect(tables.shoppers).toMatchObject([{ channel: "whatsapp", external_id: "84901234567", channel_account_id: "acc-wa" }]);
+    expect(engine).toHaveBeenCalledOnce();
+    expect(sent).toHaveLength(1);
+  });
+
   it("keeps one conversation per shopper and sends the history oldest first", async () => {
     await receiveChannelMessage(account, text("mid-1", "câu 1"));
     tables.messages.push({ id: "ai-1", shop_id: "shop-a", conversation_id: conversation().id, sender: "ai", text: "trả lời 1", created_at: String(++nextId).padStart(4, "0") });

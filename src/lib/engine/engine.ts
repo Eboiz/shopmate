@@ -38,9 +38,10 @@ import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstoo
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { ASK_PAIRING_PRODUCT_TEXT, isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
-import { isCatalogQuestion } from "./product-match";
+import { isCatalogQuestion, productCoveringMessage } from "./product-match";
 import { filterQuickReplies, type QuickReply } from "./quick-replies";
-import { catalogOverview, groupListing, isGroupName, routeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { catalogOverview, groupListing, isGroupName, routeTurn, unsoldSizeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { missedMentions, mustMentionNote, sizesNamedIn } from "./size-request";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -527,6 +528,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
   }
 
+  // PB-45: without Jev (or when it failed) a size the product or the shop doesn't
+  // sell is still answered by the server, not by the tool loop. routeTurn does
+  // the same check with Jev's product.
+  const jevSkipped = !deps.jev || route.fallbackReason === "jev_error";
+  if (!routed && jevSkipped && !orderInProgress && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
+    const catalog = await deps.store.catalog(ctx.shopId);
+    const product = catalog.find((p) => p.id === tc.product?.id) ?? productCoveringMessage(lastText, catalog);
+    routed = await unsoldSizeTurn(
+      { mode, history: input.history, catalog, runTool, cards: (ids) => deps.store.productCards(ctx.shopId, ids) },
+      product,
+    );
+    if (routed) route = { path: "size_guard" };
+  }
+
   if (routed) {
     switch (routed.kind) {
       case "handoff":
@@ -624,6 +639,22 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
             }
             reply = {
               text: sizeFallbackText(write.sizeAdvice),
+              products: await deps.store.productCards(ctx.shopId, write.productIds),
+              quickReplies: [],
+            };
+            break;
+          }
+          // PB-45: every color in stock must be named ("Còn màu nào khác?"):
+          // one more try, then the reply written from get_stock.
+          const missed = missedMentions(parsed.reply.text, write.mustMention ?? []);
+          if (missed.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${mustMentionNote(missed)}`;
+              continue;
+            }
+            reply = {
+              text: dataReplyText(logs, null) ?? FALLBACK_TEXT,
               products: await deps.store.productCards(ctx.shopId, write.productIds),
               quickReplies: [],
             };

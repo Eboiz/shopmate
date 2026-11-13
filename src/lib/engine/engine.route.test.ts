@@ -533,3 +533,70 @@ describe("runEngine with Jev routing", () => {
     expect(viaLoop.output.reply.quickReplies).toEqual(["Áo sơ mi trắng", "Chân váy chữ A"]);
   });
 });
+
+describe("PB-45: sizes the shop doesn't sell, and every color in stock", () => {
+  const XXL = "mình cao 1m58 nặng 50kg nhưng muốn mặc size XXL cho rộng như cái mền được không?";
+  const reply = (text: string) => finalJson({ text, productIds: [], quickReplies: [] });
+  const systemOf = (call: { system?: unknown }) => (call.system as { text: string }[]).map((b) => b.text).join("\n");
+
+  it("Bot #1 with Jev: the server says there is no XXL and gives recommend_size; no model call, no stock lookup", async () => {
+    const { model, handlers, run } = setup(jevSaying({ intent: { type: "choice", choice: "size", confidence: 0.95 } }), []);
+    handlers.recommend_size.mockResolvedValue({ status: "ok", size: "S", sizeByHeight: "S", sizeByWeight: "S" });
+    const result = await run(input(XXL));
+    expect(model.calls).toHaveLength(0);
+    expect(handlers.get_stock).not.toHaveBeenCalled();
+    expect(result.output.reply.text).toContain("không có size XXL, chỉ có các size S, M");
+    expect(result.output.reply.text).toContain("size S là vừa");
+    expect(result.output.reply.text).toContain("size M");
+    expect(result.output.reply.products.map((p) => p.productId)).toEqual([VAY]);
+  });
+
+  it("Bot #1 without Jev: the same answer, before the tool loop", async () => {
+    const { model, handlers, metrics, run } = setup(null, []);
+    handlers.recommend_size.mockResolvedValue({ status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "S" });
+    const result = await run(input(XXL));
+    expect(model.calls).toHaveLength(0);
+    expect(result.output.reply.text).toContain("không có size XXL");
+    expect(result.output.reply.text).toContain("Size M đã là size lớn nhất");
+    expect(metrics[0].route).toEqual({ path: "size_guard" });
+  });
+
+  describe("Bug #2: 'Còn màu nào khác?'", () => {
+    const history = [
+      { sender: "shopper" as const, text: "váy màu trắng size M còn không" },
+      { sender: "ai" as const, text: "Dạ, váy màu trắng size M còn 4 chiếc ạ." },
+      { sender: "shopper" as const, text: "Còn màu nào khác?" },
+    ];
+    const bothColors = (handlers: { get_stock: ReturnType<typeof vi.fn> }) =>
+      handlers.get_stock.mockResolvedValue({
+        productId: VAY,
+        name: "Váy suông linen",
+        price: 389000,
+        variants: [
+          { variantId: VARIANT, size: "M", color: "Be", stock: 7 },
+          { variantId: OTHER, size: "M", color: "Trắng", stock: 4 },
+        ],
+      });
+
+    it("get_stock without the earlier color; a reply leaving a color out is regenerated once", async () => {
+      const good = "Dạ, size M còn màu Be 7 chiếc và màu Trắng 4 chiếc, giá 389.000đ ạ.";
+      const s = setup(jevSaying({}), [reply("Dạ, hiện mình chỉ thấy màu trắng size M còn 4 chiếc ạ."), reply(good)]);
+      bothColors(s.handlers);
+      const result = await s.run(input("Còn màu nào khác?", { history }));
+      expect(s.handlers.get_stock).toHaveBeenCalledWith({ productId: VAY, size: "M" }, expect.anything(), expect.anything());
+      expect(s.model.calls).toHaveLength(2);
+      expect(systemOf(s.model.calls[1])).toContain("bỏ sót Be");
+      expect(result.output.reply.text).toBe(good);
+    });
+
+    it("left out twice: the reply is written from get_stock, every color in it", async () => {
+      const only = "Dạ, hiện mình chỉ thấy màu trắng size M còn 4 chiếc ạ.";
+      const s = setup(jevSaying({}), [reply(only), reply(only)]);
+      bothColors(s.handlers);
+      const result = await s.run(input("Còn màu nào khác?", { history }));
+      expect(result.output.reply.text).toContain("size M màu Be");
+      expect(result.output.reply.text).toContain("size M màu Trắng");
+      expect(result.output.reply.products.map((p) => p.productId)).toEqual([VAY]);
+    });
+  });
+});

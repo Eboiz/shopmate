@@ -89,10 +89,10 @@ The database holds two shops, each with an eval copy (`<slug>-eval`, PB-10):
 
 | `--data` | Shop | Data | Accounts (`.env.local`) | Chat channels |
 | --- | --- | --- | --- | --- |
-| `demo` (default) | Hạnh Boutique, `hanh-boutique` | the PO's workbook and its 60 test questions (PB-28) | `DEMO_OWNER_*`, `DEMO_STAFF_*` | Messenger, Telegram |
+| `demo` (default) | Hạnh Boutique, `hanh-boutique` | the PO's workbook and its 60 test questions (PB-28) | `DEMO_OWNER_*`, `DEMO_STAFF_*` | Messenger, Telegram, WhatsApp |
 | `may-boutique` | Mây Boutique, `may-boutique` | 60 products SP01-SP60 (PR #41) | `MAY_BOUTIQUE_OWNER_*`, `MAY_BOUTIQUE_STAFF_*` | web chat only |
 
-A Facebook Page or Telegram bot belongs to one shop, so only `demo` stores channels. Photos are stored in Storage by product code, so the two data sets never share a code.
+A Facebook Page, Telegram bot or WhatsApp number belongs to one shop, so only `demo` stores channels. Photos are stored in Storage by product code, so the two data sets never share a code.
 
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
 
@@ -109,7 +109,7 @@ pnpm db:seed --target=shared --confirm=<ref>   # the team's project; <ref> is th
 pnpm db:seed --target=shared --confirm=<ref> --accounts=existing # reuse the existing owner/staff accounts and credentials
 pnpm db:seed --data=may-boutique [--target=shared --confirm=<ref>]  # the second shop, Mây Boutique
 pnpm db:seed --check [--data=may-boutique]     # only check the CSV files
-pnpm db:seed --only=channels                   # only the chat channel accounts (PB-15, PB-21), safe on the shared project
+pnpm db:seed --only=channels                   # only the chat channel accounts (PB-15, PB-21, PB-27), safe on the shared project
 ```
 
 - It writes the PO catalog to `hanh-boutique` (demo) and `hanh-boutique-eval` (PB-10 eval runs, so their draft orders never mix with the demo). It also creates the accounts in `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` and `DEMO_STAFF_EMAIL` / `DEMO_STAFF_PASSWORD` (`.env.local`) as owner and staff of the demo shop. `--accounts=existing` verifies and reuses their existing profiles and credentials.
@@ -137,6 +137,21 @@ Shoppers message the demo shop's Facebook Page; the webhook `/api/webhooks/messe
 6. Vercel (Production and Preview): add `META_APP_SECRET` and `META_VERIFY_TOKEN`. The Page token is read from the database, not from Vercel.
 7. App > Messenger API Settings > Configure webhooks: Callback URL `https://<deployment>/api/webhooks/messenger`, Verify token = `META_VERIFY_TOKEN`, **Verify and save**. Then next to the Page, **Add subscriptions**: `messages`, `messaging_postbacks`.
 8. App roles > Roles > Add people > Tester for each teammate; they accept at developers.facebook.com/requests.
+
+## WhatsApp channel (PB-27)
+
+Shoppers message the demo shop's WhatsApp number; deliveries come to the same webhook as Messenger, `/api/webhooks/messenger`, signed with the same app secret, and are told apart by `object = whatsapp_business_account`. The reply is the same as on web chat: text, then each product as a photo with its name, price and sizes as the caption. Quick replies become reply buttons on the last message (up to 3, the last product photo as their header), or a list ("Chọn nhanh") when there are more; tapping one sends its title as the shopper's message. A photo hands the conversation to staff; stickers, voice notes and delivery/read statuses are ignored. Before the number is verified, the Cloud API test number can only message the recipients added in the Meta app.
+
+**Code:** `src/app/api/webhooks/messenger/route.ts` (signature check, `object` dispatch, phone number lookup in `channel_accounts`, `after()`), `src/lib/channels/whatsapp.ts` (payload parsing, Cloud API sending, read receipt with typing indicator). Messages go through the shared `src/lib/channels/receive.ts` (dedupe by WhatsApp message id `wamid…`), and `sendToConversation` reaches WhatsApp through `adapters.whatsapp`, so orders (PB-11, PB-12) and staff replies (PB-13) work there too.
+
+**Set it up again** (the Meta app and its webhook from the Messenger section):
+
+1. Meta app > Add product > **WhatsApp** > Set up. Meta creates a test business account and a test phone number.
+2. WhatsApp > API Setup: under **To**, add each teammate's phone number and confirm it with the code WhatsApp sends (at most 5 recipients). Copy the **Phone number ID** of the test number (not the number itself) and generate an access token. The token on this page expires after 24 hours; for longer tests, Business Settings > Users > System users > Generate token with `whatsapp_business_messaging` and `whatsapp_business_management`, and assign the app and the WhatsApp account to the system user.
+3. `.env.local`: `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN` (`META_APP_SECRET` and `META_VERIFY_TOKEN` are the Messenger ones).
+4. Store the number in the database: `pnpm db:seed --only=channels --target=shared --confirm=<ref>` (or local without the flags). It upserts the `channel_accounts` row (`channel = whatsapp`, `external_account_id` = phone number ID, `access_token`); run it again after changing the token. Nothing new goes to Vercel: the token is read from the database.
+5. WhatsApp > Configuration > Webhook > Edit: Callback URL `https://<deployment>/api/webhooks/messenger`, Verify token = `META_VERIFY_TOKEN`, **Verify and save**. Then under Webhook fields, **Subscribe** to `messages`.
+6. From a recipient phone, send a message to the test number (WhatsApp > API Setup shows it). A message to an unknown phone number ID shows `whatsapp: unknown phone number …` in the Vercel logs; a refused send (for example a recipient not in the list) shows `whatsapp: message … not delivered` or `whatsapp_send_failed`.
 
 ## Telegram channel (PB-21)
 
