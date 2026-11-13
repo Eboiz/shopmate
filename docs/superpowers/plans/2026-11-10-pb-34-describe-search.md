@@ -120,7 +120,7 @@
 ### Task 5: Search rate limit (Data)
 
 **Files:**
-- Create: `supabase/migrations/20261110090000_pb34_search_limit.sql`, `supabase/tests/pb34_search_limit.test.sql`
+- Create: `supabase/migrations/20261113210000_pb34_search_limit.sql`, `supabase/tests/pb34_search_limit.test.sql`
 - Create: `src/lib/guard/search-limit.ts`, `src/lib/guard/search-limit.test.ts`
 - Modify: `src/contract/database.types.ts` (regenerated)
 
