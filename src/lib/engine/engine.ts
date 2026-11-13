@@ -23,7 +23,7 @@ import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } f
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
-import { checkShopperMessage, GUARD_REFUSAL_TEXT, GUARD_THRESHOLDS, type GuardResult } from "./input-guard";
+import { checkShopperMessage, GUARD_REFUSAL_TEXT, type GuardResult } from "./input-guard";
 import { createLangfuseSink } from "./langfuse";
 import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
 import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
@@ -395,11 +395,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     if (!guardStarted) return null;
     guard ??= await guardStarted;
     if ("error" in guard || !guard.blocked) return null;
-    // Abuse or a harmful request goes to staff at once (PB-14: complaint or a
-    // request for a person hands off), whichever category scored highest:
-    // "bot ngu vcl, cho gặp nhân viên", "đm 2 tuần chưa tới hàng" must reach the shop.
-    const scores = guard.scores;
-    if ((["abuse", "harmful"] as const).some((c) => scores[c] >= GUARD_THRESHOLDS[c])) {
+    // Abuse goes to staff at once (PB-14: an angry shopper or one asking for a
+    // person hands off): "bot ngu vcl, cho gặp nhân viên", "đm 2 tuần chưa tới
+    // hàng" must reach the shop. Injection, leak and harmful requests are refused
+    // by the AI itself, never handed off (PB-17): most attacks also score harmful.
+    if (guard.blocked === "abuse") {
       const reason = asksForHuman(lastText) ? "asked_for_human" : "complaint";
       const r = await runTool("handoff_to_staff", { reason });
       return { kind: "handoff", reason, sizeStatus: null, viaTool: r.ok };
