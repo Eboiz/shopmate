@@ -13,6 +13,9 @@ const MAX_SUGGESTIONS = 5;
 type Props = {
   products: ShopProduct[];
   productHref: (productId: string) => string;
+  // The grid's search. The box shows it whenever it changes ("Xóa bộ lọc",
+  // back/forward, the grid's own search box) and keeps the shopper's typing in between.
+  value: string;
   // Shows every match in the product grid.
   onSearch: (query: string) => void;
   // Nothing matched: let the shopper ask the AI instead.
@@ -22,8 +25,13 @@ type Props = {
 
 // The header search finds products: matches drop down as the shopper types,
 // and Enter (or "Xem tất cả") filters the product grid below.
-export function HeaderSearch({ products, productHref, onSearch, onAsk, className = "" }: Props) {
-  const [query, setQuery] = useState("");
+export function HeaderSearch({ products, productHref, value, onSearch, onAsk, className = "" }: Props) {
+  const [query, setQuery] = useState(value);
+  const [shownValue, setShownValue] = useState(value);
+  if (value !== shownValue) {
+    setShownValue(value);
+    setQuery(value);
+  }
   const [open, setOpen] = useState(false);
   const trimmed = query.trim();
   const matches = trimmed

@@ -57,10 +57,12 @@ type HeaderProps = {
   onChooseGroup: (name: string) => void;
   products: ShopProduct[];
   productHref: (productId: string) => string;
+  // The grid's search (the URL's "tim"); the header box shows it too.
+  search: string;
   onSearch: (query: string) => void;
 };
 
-export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onChooseGroup, products, productHref, onSearch }: HeaderProps) {
+export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onChooseGroup, products, productHref, search: gridSearch, onSearch }: HeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const navLink = "inline-flex min-h-[72px] items-center border-b-2 border-transparent px-3.5 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:border-[#171717]";
   const choose = (name: string) => { setMenuOpen(false); onChooseGroup(name); };
@@ -126,7 +128,7 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
         </nav>
 
         <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
-          <HeaderSearch products={products} productHref={productHref} onSearch={search} onAsk={ask} className="hidden w-[280px] lg:block" />
+          <HeaderSearch products={products} productHref={productHref} value={gridSearch} onSearch={search} onAsk={ask} className="hidden w-[280px] lg:block" />
           <button type="button" onClick={onOpenCart} aria-label={`Giỏ đặt hàng, ${itemCount} món`} title="Giỏ đặt hàng" className="hidden size-11 items-center justify-center transition-colors hover:text-[#c2412b] sm:inline-flex">
             <span className="relative"><Icon name="cart" className="size-6" /><span className="absolute -right-1.5 -top-1 inline-grid h-[18px] min-w-[18px] place-items-center rounded-full bg-[#e9573f] px-1 text-[10px] font-extrabold tabular-nums text-[#171717]">{itemCount}</span></span>
           </button>
@@ -135,7 +137,7 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
 
       {menuOpen && (
         <nav id="shop-menu" aria-label="Danh mục" className="border-t border-[#e3dfd8] bg-white px-4 pb-4 sm:px-6 lg:hidden">
-          <HeaderSearch products={products} productHref={productHref} onSearch={search} onAsk={ask} className="mt-3" />
+          <HeaderSearch products={products} productHref={productHref} value={gridSearch} onSearch={search} onAsk={ask} className="mt-3" />
           <ul>
             {groups.map((group) => (
               <li key={group.name} className="border-b border-[#e3dfd8]">
