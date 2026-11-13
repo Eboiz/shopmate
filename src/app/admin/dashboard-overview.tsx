@@ -8,13 +8,19 @@ import { LoadingRegion, Skeleton } from "@/components/ui/skeleton";
 import { formatPrice } from "@/lib/format";
 import { LOW_STOCK } from "@/lib/stock";
 import { createClient } from "@/lib/supabase/client";
-import { avatarInitial, channelLabels } from "./inbox/inbox-filter";
-import { listLiveConversations, type InboxConversation } from "./inbox/inbox-live";
+import { avatarInitial, channelLabels, emptyFilter } from "./inbox/inbox-filter";
+import { countConversations, searchConversations, type InboxConversation } from "./inbox/inbox-live";
 import { formatWaiting, waitingMs } from "./inbox/waiting";
 import { listDraftOrders, type DraftOrder } from "./orders/orders-data";
 
+// The dashboard lists this many waiting shoppers; the inbox has the rest.
+const urgentShown = 4;
+
 type DashboardData = {
+  // The newest needs_human conversations, at most urgentShown.
   conversations: InboxConversation[] | null;
+  // Every needs_human conversation of the shop, counted on the server.
+  urgentCount?: number | null;
   orders: DraftOrder[] | null;
   // Variants with LOW_STOCK or fewer left, out of stock included.
   lowStock: number | null;
@@ -49,10 +55,16 @@ export function DashboardOverview({ previewData }: DashboardOverviewProps) {
   useEffect(() => {
     if (previewData) return;
     let active = true;
-    Promise.allSettled([listLiveConversations(), listDraftOrders(), countLowStock()]).then(([inbox, orders, lowStock]) => {
+    Promise.allSettled([
+      searchConversations({ ...emptyFilter, mode: "needs_human" }, null, urgentShown),
+      countConversations(emptyFilter),
+      listDraftOrders(),
+      countLowStock(),
+    ]).then(([inbox, inboxCounts, orders, lowStock]) => {
       if (!active) return;
       setData({
-        conversations: inbox.status === "fulfilled" ? inbox.value : null,
+        conversations: inbox.status === "fulfilled" ? inbox.value.conversations : null,
+        urgentCount: inboxCounts.status === "fulfilled" ? inboxCounts.value.needs_human : null,
         orders: orders.status === "fulfilled" ? orders.value : null,
         lowStock: lowStock.status === "fulfilled" ? lowStock.value : null,
         now: Date.now(),
@@ -66,13 +78,15 @@ export function DashboardOverview({ previewData }: DashboardOverviewProps) {
   const orders = data?.orders;
   const now = data?.now ?? null;
   const urgent = conversations?.filter(({ mode }) => mode === "needs_human") ?? [];
+  // Previews pass no count: they show every conversation they list.
+  const urgentCount = data?.urgentCount === undefined ? (conversations ? urgent.length : null) : data.urgentCount;
   const total = orders?.reduce((sum, order) => sum + order.total, 0);
   const oldestOrder = orders?.reduce<string | undefined>((oldest, order) => (!oldest || order.createdAt < oldest ? order.createdAt : oldest), undefined);
   const stats: { label: string; value: string; detail: string; icon: IconName; href: string }[] = [
     {
       label: "Cần hỗ trợ",
-      value: conversations ? String(urgent.length) : "—",
-      detail: urgent.length ? "Khách đang chờ người thật trả lời" : "Không khách nào đang chờ",
+      value: urgentCount === null ? "—" : String(urgentCount),
+      detail: urgentCount ?? urgent.length ? "Khách đang chờ người thật trả lời" : "Không khách nào đang chờ",
       icon: "chat",
       href: "/admin/inbox",
     },
@@ -132,7 +146,7 @@ export function DashboardOverview({ previewData }: DashboardOverviewProps) {
           <div className="flex items-center justify-between gap-3 border-b border-[#e3dfd8] px-5 py-5 sm:px-6">
             <h2 className="text-lg font-bold">Khách cần bạn hỗ trợ</h2>
             <Link className="shrink-0 text-sm font-semibold text-[#c2412b] underline-offset-4 hover:underline" href="/admin/inbox">
-              {urgent.length > 4 ? `Xem cả ${urgent.length} hội thoại` : "Mở hộp thư"}
+              {urgentCount && urgentCount > urgentShown ? `Xem cả ${urgentCount} hội thoại` : "Mở hộp thư"}
             </Link>
           </div>
           {loading ? (
@@ -149,7 +163,7 @@ export function DashboardOverview({ previewData }: DashboardOverviewProps) {
             </div>
           ) : (
             <ul className="divide-y divide-[#e3dfd8]">
-              {urgent.slice(0, 4).map((conversation) => (
+              {urgent.slice(0, urgentShown).map((conversation) => (
                 <li key={conversation.id}>
                   <Link href={`/admin/inbox?c=${conversation.id}`} className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[#f5f3ef] sm:px-6">
                     <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#efebe4] font-bold text-[#171717]">{avatarInitial(conversation)}</span>

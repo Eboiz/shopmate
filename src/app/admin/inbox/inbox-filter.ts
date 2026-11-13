@@ -39,30 +39,6 @@ export function foldSearch(text: string) {
   return text.toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").replace(/đ/g, "d").trim();
 }
 
-function matchesQuery(conversation: InboxConversation, query: string) {
-  if (!query) return true;
-  return [conversation.customerName, conversation.customerMessage, conversation.latestMessage]
-    .some((text) => text && foldSearch(text).includes(query));
-}
-
-export function filterConversations(conversations: InboxConversation[], filter: InboxFilter) {
-  const query = foldSearch(filter.query);
-  return conversations.filter((conversation) =>
-    (filter.mode === "all" || conversation.mode === filter.mode)
-    && (filter.channel === "all" || conversation.channel === filter.channel)
-    && matchesQuery(conversation, query));
-}
-
-// How many conversations each mode chip would show, given the other filters.
-export function countByMode(conversations: InboxConversation[], filter: InboxFilter): Record<ModeFilter, number> {
-  const counts: Record<ModeFilter, number> = { all: 0, ai: 0, needs_human: 0, staff: 0 };
-  for (const conversation of filterConversations(conversations, { ...filter, mode: "all" })) {
-    counts.all += 1;
-    counts[conversation.mode] += 1;
-  }
-  return counts;
-}
-
 const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" });
 const timeOfDay = new Intl.DateTimeFormat("vi-VN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Ho_Chi_Minh" });
 const dayOfYear = new Intl.DateTimeFormat("vi-VN", { day: "numeric", month: "numeric", timeZone: "Asia/Ho_Chi_Minh" });
