@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { buildLearnSystemPrompt, buildLearnUserMessage, LEARNING_PROMPT_VERSION } from "./prompt";
+import { buildGapsSystemPrompt, buildLearnSystemPrompt, buildLearnUserMessage, LEARNING_PROMPT_VERSION } from "./prompt";
 
 describe("learning prompt", () => {
-  it("is versioned v1.1", () => {
-    expect(LEARNING_PROMPT_VERSION).toBe("v1.1");
-    expect(buildLearnSystemPrompt()).toContain("v1.1");
+  it("is versioned v1.2", () => {
+    expect(LEARNING_PROMPT_VERSION).toBe("v1.2");
+    expect(buildLearnSystemPrompt()).toContain("v1.2");
+  });
+
+  it("spells out the gaps JSON shape (the gateway doesn't enforce the schema)", () => {
+    const prompt = buildGapsSystemPrompt();
+    expect(prompt).toContain('{"topics": [{"title", "policyKind", "refs", "draft"}]}');
+    expect(prompt).not.toContain("theo schema");
   });
 
   it("marks a policy the shop has not written", () => {

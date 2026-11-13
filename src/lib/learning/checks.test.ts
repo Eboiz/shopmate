@@ -6,6 +6,8 @@ import {
   hasOneOffMarker,
   hasVagueMarker,
   numbersBacked,
+  mentionsAmount,
+  mentionsProductData,
   redactPersonal,
   ruleSupported,
 } from "./checks";
@@ -114,3 +116,46 @@ describe("ruleSupported", () => {
     expect(ruleSupported("Shop bán sỉ cho đại lý ở mọi tỉnh thành.", "có", "Dạ có ạ")).toBe(false);
   });
 });
+
+describe("ruleSupported negation", () => {
+  it("reads the negation from the staff's whole sentence, not only the evidence", () => {
+    const reply = "Dạ shop không cho kiểm hàng trước khi nhận ạ. Đơn trên 500.000đ được freeship.";
+    expect(ruleSupported("Shop cho kiểm hàng trước khi nhận.", "cho kiểm hàng trước khi nhận", reply)).toBe(false);
+  });
+  it("doesn't take a negation from another sentence", () => {
+    const reply = "Dạ không ạ. Shop cho kiểm hàng trước khi nhận ạ";
+    expect(ruleSupported("Shop cho kiểm hàng trước khi nhận.", "shop cho kiểm hàng trước khi nhận", reply)).toBe(true);
+  });
+});
+
+describe("mentionsProductData", () => {
+  it.each(["Mẫu này còn 3 cái.", "Còn size S.", "1m60 50kg mặc size M.", "Váy hoa giá 350k.", "Váy hoa chất voan, màu đỏ.", "Áo này form rộng."])(
+    "finds %s",
+    (rule) => expect(mentionsProductData(rule)).toBe(true),
+  );
+  it.each([
+    "Shop cho đổi size trong 7 ngày.",
+    "Hết size thì shop hoàn tiền.",
+    "Đơn giá trị từ 500k được freeship.",
+    "Áo sale không đổi trả.",
+    "Đổi trong vài ngày.",
+    "Shop đảm bảo chất lượng, hàng đẹp chất vải tốt.",
+    "Áo lỗi chất lượng được đổi trong 7 ngày.",
+    "Hết mẫu thì shop hoàn tiền.",
+    "Shop giảm giá 50k cho đơn đầu.",
+    "Đơn trên 10kg tính thêm phí ship.",
+    "Nội thành quận 1 giao trong ngày.",
+  ])("leaves %s alone", (rule) => expect(mentionsProductData(rule)).toBe(false));
+});
+
+describe("mentionsAmount", () => {
+  it("finds money", () => {
+    expect(mentionsAmount("Phí ship nội thành 30k.")).toBe(true);
+    expect(mentionsAmount("Phí ship 25.000đ.")).toBe(true);
+    expect(mentionsAmount("Phí ship 20 nghìn.")).toBe(true);
+  });
+  it("leaves day counts and districts alone", () => {
+    expect(mentionsAmount("Nội thành quận 1 giao trong 2-3 ngày.")).toBe(false);
+  });
+});
+
