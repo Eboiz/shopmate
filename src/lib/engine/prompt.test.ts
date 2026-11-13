@@ -28,6 +28,20 @@ describe("prompt", () => {
     expect(p).not.toContain(SHOP_A);
   });
 
+  it("PB-39: no promised update, no 'chưa có thông tin' when the data has it, shipping questions read giao_hang", () => {
+    for (const mode of ["customer", "staff_draft"] as const) {
+      const p = buildStablePrompt(mode);
+      expect(p).toContain("Không hứa \"để mình kiểm tra và cập nhật\"");
+      expect(p).toContain("không nói là chưa có thông tin");
+      expect(p).toContain("phí ship");
+      expect(p).toContain("tin nhắn mới nhất");
+      expect(p).toContain("recommend_size và get_stock");
+    }
+    const reply = buildReplyStablePrompt("customer");
+    expect(reply).toContain("Không hứa \"để mình kiểm tra và cập nhật\"");
+    expect(reply).toContain("không nói là chưa có thông tin");
+  });
+
   it("forbids orders and handoff only in staff_draft", () => {
     expect(buildStablePrompt("staff_draft")).toContain(NO_ORDERS);
     expect(buildStablePrompt("customer")).not.toContain(NO_ORDERS);
@@ -36,7 +50,7 @@ describe("prompt", () => {
 
   it("customer prompt has the handoff and no-promise rules; staff_draft has no handoff", () => {
     const customer = buildStablePrompt("customer");
-    expect(PROMPT_VERSION).toBe("v1.5");
+    expect(PROMPT_VERSION).toBe("v1.6");
     for (const needle of ["Không hứa hẹn", "policy_not_covered", "no_chart", "asked_for_human", "not_covered_by_data", "misunderstood_twice"]) expect(customer).toContain(needle);
     expect(buildStablePrompt("staff_draft")).not.toContain("handoff_to_staff");
   });

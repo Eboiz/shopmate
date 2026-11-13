@@ -10,12 +10,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { ProductCard } from "@/components/ui/product-card";
 import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
+import type { ConversationMode } from "@/contract";
+import { chatStatus } from "@/lib/chat/chat-status";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { compareSizes } from "@/lib/size-order";
 import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, readShopFilters, searchFromQuery, shopFilterQuery, type ProductGroup, type ShopFilters, type ShopSort } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
-import { cartCount, cartMessage, useCart, type CartItem } from "./cart";
-import { cartItemFor, onlyChoice, productOptions, QuickAdd } from "./quick-add";
+import { cartCount, cartMessage, stockChangeMessage, useCart, variantStock, type CartItem } from "./cart";
+import { onlyChoice, productOptions } from "./product-options";
+import { cartItemFor, QuickAdd } from "./quick-add";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
@@ -50,6 +53,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // The conversation's mode from the last poll (PB-42): outside `ai` no AI
+  // turn runs, so the chat says it is waiting for staff instead of typing.
+  const [mode, setMode] = useState<ConversationMode>("ai");
   // The message being sent, shown straight away: POST only answers once the
   // whole AI turn is done, which can take several seconds. knownIds are the
   // messages already on screen, so the stored copy can replace this one.
@@ -126,7 +132,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       const data = chatHistorySchema.parse(await response.json());
       if (sequence !== refreshSequence.current) return;
       setMessages(data.messages);
-      if (data.messages.some((message) => message.sender !== "shopper" && !previousReplies.current.has(message.id))) {
+      setMode(data.mode);
+      if (data.mode !== "ai" || data.messages.some((message) => message.sender !== "shopper" && !previousReplies.current.has(message.id))) {
         setAwaitingReply(false);
       }
       setError("");
@@ -211,11 +218,34 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [cartNotice, setCartNotice] = useState<{ text: string; added: boolean } | null>(null);
   // The cart panel gives focus back to the button that opened it.
   const cartOpenerRef = useRef<HTMLElement | null>(null);
+  // Lines the stock check changed (capped or sold out), shown inside the cart.
+  const [stockNotice, setStockNotice] = useState("");
+  const { reconcile } = cart;
+  const checkStock = useCallback((products: ShopProduct[]): boolean => {
+    const changes = reconcile((item) => variantStock(products, item));
+    if (changes.length) setStockNotice(stockChangeMessage(changes));
+    return changes.length === 0;
+  }, [reconcile]);
   const openCart = useCallback(() => {
     cartOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setCartNotice(null);
+    setStockNotice("");
     setCartOpen(true);
-  }, []);
+    // A basket saved earlier may hold more than the shop has now: check it
+    // against the loaded catalog at once, then against fresh stock.
+    if (catalog) checkStock(catalog.products);
+    if (previewCatalog) return;
+    fetch(catalogEndpoint, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const fresh = shopCatalogSchema.parse(await response.json());
+        setCatalog(fresh);
+        checkStock(fresh.products);
+      })
+      .catch(() => {
+        // The loaded catalog was already checked; the shop confirms stock anyway.
+      });
+  }, [catalog, catalogEndpoint, checkStock, previewCatalog]);
   const closeCart = useCallback(() => {
     setCartOpen(false);
     const opener = cartOpenerRef.current;
@@ -257,6 +287,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   function sendCart() {
     if (cart.items.length === 0) return;
+    // Last check before the order leaves: a change keeps the cart open so the
+    // shopper sees the new quantities first.
+    if (catalog && !checkStock(catalog.products)) return;
     const message = cartMessage(cart.items);
     cartMessageRef.current = message;
     setSelected(null);
@@ -303,7 +336,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         cartMessageRef.current = null;
         cart.clear();
       }
-      setAwaitingReply(true);
+      // Only an `ai` conversation answers; with staff the poll shows the wait.
+      if (mode === "ai") setAwaitingReply(true);
       await refresh();
     } catch {
       setAwaitingReply(false);
@@ -350,6 +384,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // Hidden once a poll brings back the stored copy of the same message.
   const showOutgoing = outgoing !== null && !messages.some((message) =>
     message.sender === "shopper" && message.text === outgoing.text && !outgoing.knownIds.has(message.id));
+  const status = chatStatus(messages, mode, sending, awaitingReply);
   if (catalogLoading) {
     return <main className="flex flex-1 flex-col">{detailProductId ? <ProductDetailSkeleton /> : <ShopFrontSkeleton />}</main>;
   }
@@ -442,6 +477,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     <CartPanel
       items={cart.items}
       shippingPolicy={policies?.shipping || undefined}
+      stockNotice={stockNotice}
       onQuantity={cart.setQuantity}
       onRemove={cart.remove}
       onRestore={cart.restore}
@@ -616,10 +652,11 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
               <div className="space-y-5"><div className="ui-card overflow-hidden"><Image src="/images/chat-welcome.jpg" alt="" width={840} height={360} sizes="(max-width: 640px) 100vw, 420px" className="aspect-[7/3] w-full object-cover" /><div className="p-5"><h3 className="text-lg font-bold">Xin chào! Mình giúp gì cho bạn?</h3><p className="mt-2 text-sm leading-6 text-[#706d67]">Hỏi về sản phẩm, size, màu sắc hoặc một set đồ hợp với bạn.</p></div></div><div><p className="mb-3 text-xs font-semibold text-[#706d67]">Gợi ý câu hỏi</p><div className="flex flex-wrap gap-2">{["Shop còn size M không?", "Tư vấn size giúp mình", "Gợi ý phối đồ"].map((text) => <button key={text} type="button" onClick={() => void send(text)} disabled={sending || loading} className="inline-flex min-h-11 items-center rounded-full border border-[#8f8a82] bg-white px-4 text-sm font-semibold transition-colors hover:border-[#171717] disabled:opacity-50">{text}</button>)}</div></div></div>
             ) : (
               <div className="space-y-4">
-                {messages.map((message) => (
+                {messages.map((message, index) => (
                   <div key={message.id} className={message.sender === "shopper" ? "ml-8" : "mr-8"}>
                     <p className="mb-1 text-xs text-[#706d67]">
                       {senderLabel[message.sender]}
+                      {status === "waiting_staff" && index === messages.length - 1 && " · Đã gửi"}
                     </p>
                     <div className={`break-words rounded-xl p-3 text-sm leading-6 ${message.sender === "shopper" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white text-[#171717]"}`}>
                       {message.reply?.text || message.text}
@@ -649,9 +686,14 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 )}
               </div>
             )}
-            {(sending || awaitingReply) && (
+            {status === "typing" && (
               <p role="status" className="mt-4 inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-[#e3dfd8] bg-white px-3 py-2 text-sm text-[#706d67]">
                 <TypingDots /> Shop đang trả lời…
+              </p>
+            )}
+            {status === "waiting_staff" && (
+              <p role="status" className="mt-4 inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-[#e3dfd8] bg-white px-3 py-2 text-sm text-[#706d67]">
+                <span className="sr-only">Đã gửi. </span>Đang chờ nhân viên shop trả lời
               </p>
             )}
             <div ref={endRef} />
@@ -660,9 +702,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           <div className="border-t border-[#e3dfd8] bg-white p-3">
             {previewCatalog && <p className="mb-2 text-xs text-[#706d67]">Bản xem thử giao diện — chưa kết nối chat.</p>}
             {lastReply && lastReply.quickReplies.length > 0 && (
-              <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+              <div className="mb-2 flex flex-wrap gap-2">
                 {lastReply.quickReplies.map((text) => (
-                  <Button key={text} variant="secondary" className="shrink-0 text-sm" disabled={sending} onClick={() => void send(text)}>
+                  <Button key={text} variant="secondary" className="min-h-11 max-w-full whitespace-normal break-words text-left text-sm" disabled={sending} onClick={() => void send(text)}>
                     {text}
                   </Button>
                 ))}

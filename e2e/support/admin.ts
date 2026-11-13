@@ -20,19 +20,23 @@ export async function signIn(page: Page, role: "owner" | "staff", next = "/admin
 }
 
 // Stock of one variant as the products page (PB-16) shows it. Staff can view it,
-// so the test needs no database key and also works against a preview.
+// so the test needs no database key and also works against a preview. Products
+// are folded cards; staff see a read-only color × size table whose cells start
+// with a screen-reader label "Tồn kho: M / Đen: ".
 export async function readStock(page: Page, product: string, size: string, color: string) {
-  await page.goto("/admin/products");
-  const section = page.locator("section", { has: page.getByRole("heading", { name: product, exact: true }) });
-  return Number(await section.getByLabel(`Tồn kho: ${size} / ${color}`).inputValue());
+  await page.goto(`/admin/products?q=${encodeURIComponent(product)}`);
+  const card = page.locator("details", { has: page.getByText(product, { exact: true }) }).first();
+  await card.locator("summary").click();
+  const cell = card.getByRole("cell", { name: `Tồn kho: ${size} / ${color}:` });
+  return Number((await cell.textContent())?.split(":").at(-1)?.trim());
 }
 
 // Opens /admin/orders and waits until the list has loaded (or says it is empty):
 // counting before that sees 0 orders (review #13).
 export async function openDraftOrders(page: Page) {
   await page.goto("/admin/orders");
-  const list = page.getByRole("list", { name: "Đơn nháp" });
-  const empty = page.getByText("Không có đơn nháp", { exact: true });
+  const list = page.getByRole("list", { name: "Đơn chờ xác nhận" });
+  const empty = page.getByText("Không có đơn chờ xác nhận", { exact: true });
   await expect(list.or(empty)).toBeVisible({ timeout: 30_000 });
   return list;
 }
