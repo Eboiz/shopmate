@@ -150,6 +150,44 @@ describe("routeTurn", () => {
     expect((out as { task: string }).task).toContain("lớn hơn");
   });
 
+  it("PB-39 BOT-01: size + price + colors in one message -> recommend_size and get_stock, both in the facts", async () => {
+    const { run, runTool } = setup({
+      recommend_size: { ok: true, output: { status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "M" } },
+      get_stock: {
+        ok: true,
+        output: { productId: VAY, name: "Váy suông linen", price: 289000, variants: [variant("M", "Trắng", 4), variant("L", "Be", 0)] },
+      },
+    });
+    const out = await run({
+      decision: decision({ intent: "size" }),
+      history: said("Mình muốn mua váy suông linen, cao 160cm nặng 50kg. Tư vấn size và báo giá, màu còn hàng giúp mình."),
+    });
+    expect(runTool.mock.calls.map((c) => c[0])).toEqual(["recommend_size", "get_stock"]);
+    expect(runTool).toHaveBeenCalledWith("get_stock", { productId: VAY });
+    expect(out).toMatchObject({
+      kind: "write",
+      sizeAdvice: { size: "M" },
+      facts: { size: "M", price: 289000, inStock: [{ size: "M", color: "Trắng", stock: 4 }] },
+      productIds: [VAY],
+    });
+    expect((out as { task: string }).task).toContain("giá");
+  });
+
+  it("PB-39: a size question that doesn't ask price or stock runs only recommend_size", async () => {
+    const { run, runTool } = setup({ recommend_size: { ok: true, output: { status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "M" } } });
+    await run({ decision: decision({ intent: "size" }), history: said("cao 1m60 nặng 50kg mặc size nào") });
+    expect(runTool.mock.calls.map((c) => c[0])).toEqual(["recommend_size"]);
+  });
+
+  it("PB-39: still missing a measurement but asking the price -> the price is in the facts too", async () => {
+    const { run, runTool } = setup({
+      get_stock: { ok: true, output: { productId: VAY, name: "Váy suông linen", price: 289000, variants: [variant("M", "Trắng", 4)] } },
+    });
+    const out = await run({ decision: decision({ intent: "size" }), history: said("cao 1m60 thì mặc size nào, giá bao nhiêu") });
+    expect(runTool).toHaveBeenCalledWith("get_stock", { productId: VAY });
+    expect(out).toMatchObject({ kind: "write", facts: { heightCm: 160, weightKg: null, price: 289000 } });
+  });
+
   it("size out of the chart: customer is offered staff (PB-31), staff gets a note", async () => {
     const out = { recommend_size: { ok: true, output: { status: "out_of_range", nearestSize: "L", offCm: 38, offKg: 90 } } };
     const customer = setup(out);
@@ -362,6 +400,39 @@ describe("routeTurn", () => {
         expect(await run({ catalog: shop, history: said(text), decision: decision({ intent: "human", product: blazer }) }), text)
           .toMatchObject({ kind: "handoff", reason: "asked_for_human" });
       }
+    });
+
+    it("PB-39 BOT-05: 'phí ship bao nhiêu?' reads giao_hang even when Jev picks doi_tra (earlier turns were about returns)", async () => {
+      const shipping = { kind: "giao_hang", content: "Phí ship đồng giá 30.000đ cho mọi đơn." };
+      const history: HistoryMessage[] = [
+        { sender: "shopper", text: "mặc không vừa thì đổi được không" },
+        { sender: "ai", text: "Dạ, shop hỗ trợ đổi trong 7 ngày ạ." },
+        { sender: "staff", text: "Dạ chị đã kiểm tra đơn của bạn rồi nha" },
+        { sender: "shopper", text: "phí ship bao nhiêu?" },
+      ];
+      for (const intent of ["policy", "stock", "unclear", "product_detail"] as const) {
+        const { run, runTool } = setup({ get_policy: { ok: true, output: shipping } });
+        const out = await run({ history, decision: decision({ intent, policyKind: "doi_tra" }) });
+        expect(runTool.mock.calls, intent).toEqual([["get_policy", { kind: "giao_hang" }]]);
+        expect(out, intent).toMatchObject({ kind: "write", facts: { policy: shipping } });
+      }
+    });
+
+    it("PB-39: other shipping wordings, with and without diacritics", async () => {
+      for (const text of ["tiền ship về Hà Nội nhiêu shop", "ship bao lâu thì nhận được", "phi van chuyen la bao nhieu", "có freeship không"]) {
+        const { run, runTool } = setup({ get_policy: { ok: true, output: { kind: "giao_hang", content: "Giao 2-4 ngày" } } });
+        await run({ history: said(text), decision: decision({ intent: "policy", policyKind: "doi_tra" }) });
+        expect(runTool, text).toHaveBeenCalledWith("get_policy", { kind: "giao_hang" });
+      }
+    });
+
+    it("PB-39: a returns question that mentions shipping stays doi_tra; a stock question about a product is not moved", async () => {
+      const returns = setup({ get_policy: { ok: true, output: { kind: "doi_tra", content: "Đổi trong 7 ngày" } } });
+      await returns.run({ history: said("đổi hàng thì ai trả phí ship"), decision: decision({ intent: "policy", policyKind: "doi_tra" }) });
+      expect(returns.runTool).toHaveBeenCalledWith("get_policy", { kind: "doi_tra" });
+      const stock = setup({ get_stock: { ok: true, output: { productId: VAY, name: "Váy", price: 1, variants: [] } } });
+      await stock.run({ history: said("váy này còn size M không, ship được không"), decision: decision({ intent: "stock" }) });
+      expect(stock.runTool).not.toHaveBeenCalledWith("get_policy", expect.anything());
     });
 
     it("review: 'đổi màu khác cho mình xem' is a stock question, not the returns policy", async () => {
