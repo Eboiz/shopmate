@@ -90,9 +90,23 @@ describe("gapOfTurn (PB-35a: which turns record a question the AI couldn't answe
     }
   });
 
-  it("records product_not_found when the product search missed twice (PB-36)", () => {
+  it("records product_not_found when the product search missed twice or found no exact match (PB-36)", () => {
     expect(gapOfTurn(turn({ question: "có áo da không", handoff: "misunderstood_twice", productMissedTwice: true }))?.reason).toBe("product_not_found");
     expect(gapOfTurn(turn({ question: "có áo da không", handoff: "product_not_found" }))?.reason).toBe("product_not_found");
+    const closeSearch: ToolCallLog = { name: "search_products", input: { query: "áo khoác da", limit: 5 }, output: { match: "close", products: [{ productId: "p1" }] } };
+    expect(gapOfTurn(turn({ question: "có áo khoác da đen không", logs: [closeSearch] }))?.reason).toBe("product_not_found");
+    const noneSearch: ToolCallLog = { name: "search_products", input: { query: "mũ len", limit: 5 }, output: { match: "none", products: [] } };
+    expect(gapOfTurn(turn({ question: "shop có bán mũ len không", logs: [noneSearch] }))?.reason).toBe("product_not_found");
+    expect(gapOfTurn(turn({ question: "có áo khoác da không", offerMade: "not_covered_by_data", logs: [noneSearch] }))?.reason).toBe("product_not_found");
+    expect(gapOfTurn(turn({ question: "có áo sơ mi không", logs: [search(["p1"])] }))).toBeNull();
+  });
+
+  it("a search with no exact match keeps the offer's reason when staff was offered for a policy or a found product", () => {
+    const closeSearch: ToolCallLog = { name: "search_products", input: { query: "áo blazer co giãn", limit: 5 }, output: { match: "close", products: [{ productId: "p1" }] } };
+    expect(gapOfTurn(turn({ question: "áo blazer có co giãn không", offerMade: "not_covered_by_data", logs: [closeSearch] }))).toEqual({
+      reason: "not_covered_by_data", question: "áo blazer có co giãn không", productId: "p1",
+    });
+    expect(gapOfTurn(turn({ question: "áo blazer đổi được không", offerMade: "policy_not_covered", logs: [closeSearch, policy()] }))?.reason).toBe("policy_not_covered");
   });
 
   it("only records customer turns, and caps the question at 500 characters", () => {

@@ -94,7 +94,7 @@ function Avatar({ conversation, size = "size-11" }: { conversation: InboxConvers
 
 export function StaffInbox({ sendMessageAction, initialSelectedId, currentUserId }: {
   sendMessageAction?: SendMessageAction;
-  // From ?c= in the URL: links from orders and the dashboard open one conversation.
+  // From ?c= in the URL: links from orders, the dashboard, and "AI đã học" open one conversation.
   initialSelectedId?: string;
   currentUserId?: string;
 }) {

@@ -36,6 +36,15 @@ export const GAP_WINDOW_DAYS = 7;
 export const gapWindowStart = () => new Date(Date.now() - GAP_WINDOW_DAYS * 86_400_000).toISOString();
 export const LEARNABLE_GAP_REASONS = ["policy_not_covered", "not_covered_by_data"] as const satisfies readonly GapReason[];
 
+function searchFoundNoExactMatch(logs: ToolCallLog[]): boolean {
+  const searches = logs.filter((l) => l.name === "search_products" && !l.error);
+  if (searches.length === 0) return false;
+  return !searches.some((l) => {
+    const out = l.output as { match?: unknown; products?: unknown } | undefined;
+    return out?.match === "exact" && Array.isArray(out.products) && out.products.length > 0;
+  });
+}
+
 export function gapOfTurn(turn: GapTurn): Gap | null {
   const question = turn.question.trim().slice(0, QUESTION_MAX);
   if (turn.mode !== "customer" || turn.offerAnswer !== null || !question) return null;
@@ -43,7 +52,16 @@ export function gapOfTurn(turn: GapTurn): Gap | null {
   if (turn.productMissedTwice || turn.handoff === "product_not_found") {
     return { reason: "product_not_found", question, productId: null };
   }
-  if (turn.handoff !== null || turn.offerMade === null || turn.offerMade === "size_out_of_range") return null;
+  if (turn.handoff !== null) return null;
+  // A search with no exact match is a missing item only when the AI offered no
+  // staff, or offered it because the search found nothing at all. A turn the AI
+  // offered staff for a policy, or for a detail of a product it did find ("áo
+  // blazer có co giãn không" -> close), keeps that reason, so PB-35a learns it.
+  if (searchFoundNoExactMatch(turn.logs)
+    && (turn.offerMade === null || (turn.offerMade === "not_covered_by_data" && searchedProducts(turn.logs).length === 0))) {
+    return { reason: "product_not_found", question, productId: null };
+  }
+  if (turn.offerMade === null || turn.offerMade === "size_out_of_range") return null;
 
   const ok = (name: ToolCallLog["name"]) => turn.logs.some((log) => log.name === name && !log.error);
   if (ok("recommend_size")) return null;

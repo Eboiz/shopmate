@@ -3,9 +3,9 @@ import { gapsModelOutputSchema } from "./gaps";
 import { buildGapsSystemPrompt, buildLearnSystemPrompt, buildLearnUserMessage, LEARNING_PROMPT_VERSION } from "./prompt";
 
 describe("learning prompt", () => {
-  it("is versioned v1.2", () => {
-    expect(LEARNING_PROMPT_VERSION).toBe("v1.2");
-    expect(buildLearnSystemPrompt()).toContain("v1.2");
+  it("is versioned v1.3", () => {
+    expect(LEARNING_PROMPT_VERSION).toBe("v1.3");
+    expect(buildLearnSystemPrompt()).toContain("v1.3");
   });
 
   it("spells out the gaps JSON shape (the gateway doesn't enforce the schema)", () => {

@@ -3,7 +3,7 @@ import { sendStaffMessage } from "./actions";
 import { StaffInbox } from "./staff-inbox";
 
 // Rendered inside the Suspense boundary of the admin layout. ?c= opens one
-// conversation (links from orders and the dashboard).
+// conversation (links from orders, the dashboard, and "AI đã học").
 export default async function InboxPage({ searchParams }: PageProps<"/admin/inbox">) {
   const { c } = await searchParams;
   const { userId } = await requireStaff();

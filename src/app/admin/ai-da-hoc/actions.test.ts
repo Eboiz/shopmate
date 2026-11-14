@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { GapTopicProposal } from "@/contract";
+import type { GapTopicProposal, MissingItemProposal } from "@/contract";
 import { NOT_ALLOWED } from "@/lib/catalog-write-errors";
 
 const SHOP = "a0000000-0000-4000-8000-000000000001";
@@ -49,7 +49,11 @@ const decide = {
 vi.mock("@/lib/learning/decide", () => decide);
 
 const analyzeGaps = vi.fn();
-vi.mock("@/lib/learning", () => ({ analyzeGaps: (...args: unknown[]) => analyzeGaps(...args) }));
+const analyzeMissingItems = vi.fn();
+vi.mock("@/lib/learning", () => ({
+  analyzeGaps: (...args: unknown[]) => analyzeGaps(...args),
+  analyzeMissingItems: (...args: unknown[]) => analyzeMissingItems(...args),
+}));
 vi.mock("@/lib/engine/anthropic-model", () => ({ createDefaultModel: () => "model" }));
 
 const actions = await import("./actions");
@@ -84,6 +88,7 @@ beforeEach(() => {
   decide.dismissGaps.mockResolvedValue(1);
   decide.insertFromDraft.mockResolvedValue("ok");
   analyzeGaps.mockReset();
+  analyzeMissingItems.mockReset();
   gapRows = [];
   gapFilters = [];
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -199,5 +204,52 @@ describe("draftTopics (Soạn câu trả lời)", () => {
     gapRows = [gap(GAP1, "open")];
     analyzeGaps.mockRejectedValue(new Error("analyzeGaps: invalid model output"));
     expect(await actions.draftTopics()).toEqual({ ok: false, error: "Chưa soạn được, thử lại" });
+  });
+});
+
+describe("analyzeMissingItemsAction (PB-36)", () => {
+  const missingRow = (id: string, question: string) => ({
+    id,
+    conversation_id: CONV,
+    reason: "product_not_found",
+    question,
+    status: "open",
+  });
+
+  const itemProposal = (questionIds: string[]): MissingItemProposal => ({
+    item: "Áo khoác da màu đen",
+    questionIds,
+    conversationCount: 2,
+    sampleQuestions: ["Có áo khoác da đen không?"],
+    closestProducts: [],
+  });
+
+  it("allows staff to analyze missing item requests (read-only insight)", async () => {
+    gapRows = [missingRow(GAP1, "Có áo khoác da đen không?"), missingRow(GAP2, "Tìm áo da đen")];
+    const items = [itemProposal([GAP1, GAP2])];
+    analyzeMissingItems.mockResolvedValue(items);
+
+    const result = await actions.analyzeMissingItemsAction();
+
+    expect(gapFilters).toContainEqual(["shop_id", SHOP]);
+    expect(gapFilters).toContainEqual(["status", "open"]);
+    expect(gapFilters).toContainEqual(["reason", "product_not_found"]);
+    expect(analyzeMissingItems).toHaveBeenCalledWith(
+      gapRows.map((g) => ({ id: g.id, conversationId: CONV, reason: "product_not_found", question: g.question })),
+      expect.objectContaining({ model: "model", searchCatalog: expect.any(Function) }),
+    );
+    expect(result).toEqual({ ok: true, items });
+  });
+
+  it("skips the model when no missing item requests are open", async () => {
+    gapRows = [];
+    expect(await actions.analyzeMissingItemsAction()).toEqual({ ok: true, items: [] });
+    expect(analyzeMissingItems).not.toHaveBeenCalled();
+  });
+
+  it("returns a retry message when analysis fails", async () => {
+    gapRows = [missingRow(GAP1, "Có áo khoác da đen không?")];
+    analyzeMissingItems.mockRejectedValue(new Error("missing_items_unreadable"));
+    expect(await actions.analyzeMissingItemsAction()).toEqual({ ok: false, error: "Chưa phân tích được, thử lại" });
   });
 });
