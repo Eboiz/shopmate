@@ -1,3 +1,4 @@
+import { activeProductFacts, withFacts } from "../learned-facts";
 import { rankProducts } from "../product-match";
 import { sortSizes } from "../text";
 import type { ToolHandler } from "../types";
@@ -16,14 +17,11 @@ export const searchProducts: ToolHandler<"search_products"> = async (input, ctx,
   if (products.length === 0) return { match, products: [] };
 
   // Colors and sizes of every variant, in stock or not: stock is get_stock's job.
-  const { data: variants, error: variantError } = await db
-    .from("variants")
-    .select("product_id, size, color")
-    .eq("shop_id", ctx.shopId)
-    .in(
-      "product_id",
-      products.map((p) => p.id),
-    );
+  const ids = products.map((p) => p.id);
+  const [{ data: variants, error: variantError }, facts] = await Promise.all([
+    db.from("variants").select("product_id, size, color").eq("shop_id", ctx.shopId).in("product_id", ids),
+    activeProductFacts(db, ctx.shopId, ids),
+  ]);
   if (variantError) throw new Error(`variants: ${variantError.message}`);
 
   return {
@@ -36,7 +34,7 @@ export const searchProducts: ToolHandler<"search_products"> = async (input, ctx,
         category: p.category,
         price: p.price,
         imageUrl: p.image_url,
-        description: p.description,
+        description: withFacts(p.description, facts.get(p.id) ?? []),
         colors: [...new Set(own.map((v) => v.color))],
         sizes: sortSizes(own.map((v) => v.size)),
       };

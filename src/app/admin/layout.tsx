@@ -19,8 +19,22 @@ export default function AdminLayout({ children }: LayoutProps<"/admin">) {
 async function AdminGate({ children }: { children: ReactNode }) {
   const user = await requireUser();
   const staff = await findStaffProfile();
+  // Not awaited: the nav streams the badge in, the page doesn't wait for it.
+  const pendingFacts = staff ? countPendingFacts(staff.shopId).catch(() => 0) : undefined;
   const shopName = staff ? await readShopName(staff.shopId) : undefined;
-  return <AdminShell email={user.email ?? ""} shopName={shopName} showNav={Boolean(staff)}>{staff ? children : <NoShopNotice />}</AdminShell>;
+  return <AdminShell email={user.email ?? ""} shopName={shopName} showNav={Boolean(staff)} pendingFacts={pendingFacts}>{staff ? children : <NoShopNotice />}</AdminShell>;
+}
+
+// PB-35a: the nav badge. A failed count shows no badge rather than breaking every page.
+async function countPendingFacts(shopId: string): Promise<number> {
+  const supabase = await createClient();
+  const { count, error } = await supabase
+    .from("learned_facts")
+    .select("id", { count: "exact", head: true })
+    .eq("shop_id", shopId)
+    .eq("status", "pending");
+  if (error) console.error("PB-35a pending count failed", error.message);
+  return count ?? 0;
 }
 
 // The shop name for the header. A failed read only hides it.

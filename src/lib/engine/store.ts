@@ -1,5 +1,7 @@
 import { quickReplySchema, toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import type { Gap } from "./data-gap";
 import type { CatalogItem } from "./jev";
+import { activeProductFacts, withFacts } from "./learned-facts";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
 import { postcheckLogSchema } from "./postcheck-log";
@@ -28,6 +30,9 @@ export type TurnContext = {
   // PB-31: the previous AI turn offered staff for this reason (soft handoff) and
   // did not hand off. A "yes" now hands off with it. Missing means no offer.
   previousHandoffOffer?: HandoffReason | null;
+  // PB-35a: the previous customer turn's ai_turns id, so "Không cần" marks the gap
+  // that turn recorded and no other.
+  previousTurnId?: string | null;
 };
 
 export type EngineStore = {
@@ -52,6 +57,10 @@ export type EngineStore = {
   orderForQuote?(ctx: ToolContext, quoteKey: string, supersede: boolean): Promise<{ status: "created"; orderId: string; total: number } | null>;
   // Runs AFTER the reply is returned (see runEngine); returns the row id.
   insertTurn(row: TablesInsert<"ai_turns">): Promise<string>;
+  // PB-35a: a question the AI couldn't answer (data_gaps), and "Không cần" to the
+  // offer of staff that followed it. Optional: fakes in tests may leave them out.
+  recordGap?(ctx: ToolContext, gap: Gap, turnId: string): Promise<void>;
+  declineGap?(ctx: ToolContext, offerTurnId: string): Promise<void>;
   // PB-10: every product of the shop with its colors and sizes, for the Jev
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
@@ -75,13 +84,15 @@ async function loadCatalog(db: Db, shopId: string): Promise<CatalogItem[]> {
   ]);
   if (products.error) throw new Error(`products: ${products.error.message}`);
   if (variants.error) throw new Error(`variants: ${variants.error.message}`);
+  // PB-35a: the router answers product_detail from this description too.
+  const facts = await activeProductFacts(db, shopId, products.data.map((p) => p.id));
   return products.data.map((p) => {
     const own = variants.data.filter((v) => v.product_id === p.id);
     return {
       id: p.id,
       name: p.name,
       category: p.category,
-      description: p.description,
+      description: withFacts(p.description, facts.get(p.id) ?? []),
       price: p.price,
       colors: [...new Set(own.map((v) => v.color))],
       sizes: sortSizes(own.map((v) => v.size)),
@@ -92,14 +103,13 @@ async function loadCatalog(db: Db, shopId: string): Promise<CatalogItem[]> {
 export function createSupabaseStore(db: Db): EngineStore {
   async function product(shopId: string, productId: string | null) {
     if (productId === null) return null;
-    const { data, error } = await db
-      .from("products")
-      .select("id, name, description")
-      .eq("id", productId)
-      .eq("shop_id", shopId)
-      .maybeSingle();
+    const [{ data, error }, facts] = await Promise.all([
+      db.from("products").select("id, name, description").eq("id", productId).eq("shop_id", shopId).maybeSingle(),
+      activeProductFacts(db, shopId, [productId]),
+    ]);
     if (error) throw new Error(`products: ${error.message}`);
-    return data;
+    if (!data) return null;
+    return { ...data, description: withFacts(data.description, facts.get(data.id) ?? []) };
   }
 
   async function previousTurnState(shopId: string, conversationId: string) {
@@ -126,7 +136,7 @@ export function createSupabaseStore(db: Db): EngineStore {
       const postcheck = postcheckLogSchema.safeParse(row.postcheck).data;
       return postcheck?.superseded !== true && postcheck?.pending !== true;
     });
-    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
+    if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null, previousTurnId: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
     // Rows the current engine wrote carry the guard's verdict in postcheck
     // (PB-05 AC3); older rows have none and fall back to the tool_calls shape.
@@ -144,6 +154,7 @@ export function createSupabaseStore(db: Db): EngineStore {
       previousTurnMissedProduct: missedProduct,
       previousQuote: quote && !orderWritten ? { ...quote, quoteId: data.id } : null,
       previousHandoffOffer: data.handoff_offer,
+      previousTurnId: data.id,
     };
   }
 
@@ -234,6 +245,24 @@ export function createSupabaseStore(db: Db): EngineStore {
       const { data, error } = await db.from("ai_turns").insert(row).select("id").single();
       if (error) throw new Error(`ai_turns: ${error.message}`);
       return data.id;
+    },
+
+    async recordGap(ctx, gap, turnId) {
+      if (ctx.conversationId === null) return;
+      const { error } = await db.from("data_gaps").insert({
+        shop_id: ctx.shopId,
+        conversation_id: ctx.conversationId,
+        ai_turn_id: turnId,
+        reason: gap.reason,
+        question: gap.question,
+        product_id: gap.productId,
+      });
+      if (error) throw new Error(`data_gaps: ${error.message}`);
+    },
+
+    async declineGap(ctx, offerTurnId) {
+      const { error } = await db.from("data_gaps").update({ soft_declined: true }).eq("ai_turn_id", offerTurnId).eq("shop_id", ctx.shopId);
+      if (error) throw new Error(`data_gaps: ${error.message}`);
     },
   };
 }

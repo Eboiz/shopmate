@@ -15,6 +15,7 @@ import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createDefaultModel } from "./anthropic-model";
 import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
+import { gapOfTurn } from "./data-gap";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffer } from "./refusal-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
@@ -1475,6 +1476,29 @@ ${missingRetryNote(claims)}`;
     console.error("engine: metrics sink failed", e);
   }
 
+  // PB-35a: a question the AI couldn't answer from the shop's data is recorded with
+  // this turn's id; "Không cần" marks the gap the previous (offer) turn recorded.
+  // Never fails the turn.
+  async function recordGap(turnId: string) {
+    try {
+      const gap = gapOfTurn({
+        mode,
+        question: lastText,
+        handoff,
+        offerMade: offerMade as OfferReason | null,
+        offerAnswer: answer,
+        productMissedTwice,
+        logs,
+        productId: tc.product?.id ?? null,
+        intent: route.path === "router" ? (route.intent ?? null) : null,
+      });
+      if (gap) await deps.store.recordGap?.(ctx, gap, turnId);
+      if (answer === "no" && tc.previousTurnId) await deps.store.declineGap?.(ctx, tc.previousTurnId);
+    } catch (e) {
+      console.error("engine: failed to write data_gaps", e);
+    }
+  }
+
   const turnRow = (async () => {
     try {
       return await deps.store.insertTurn({
@@ -1504,7 +1528,10 @@ ${missingRetryNote(claims)}`;
       return null;
     }
   })();
-  const turnLogged = Promise.all([turnRow, sinkDone]).then(([row]) => row);
+  // PB-35a: data_gaps needs the turn's id, so it waits for the row; turnLogged
+  // (after()) covers it too.
+  const gapDone = turnRow.then((id) => (id ? recordGap(id) : undefined), () => {});
+  const turnLogged = Promise.all([turnRow, sinkDone, gapDone]).then(([row]) => row);
 
   // The summary is only confirmable once its quote is logged; the metrics sink
   // (turnLogged) is not waited for.
