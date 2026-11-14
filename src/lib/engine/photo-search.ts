@@ -24,9 +24,12 @@ const TEXT_MAX = 200;
 // 0.26-0.53; non-clothing photos 0.13-0.27. A score can't tell "this exact
 // product" from "the same kind of product", so no score is ever exact
 // (developer decision 2026-11-12): the AI shows up to 3 products and asks.
-// 0.65 sits in the gap between the same kind and other kinds. Cosine scores
-// overlapped too (2026-11-10: 0.672 vs 0.687); their floor is a guess.
-export const PHOTO_SIMILAR_MIN = { reranked: 0.65, cosine: 0.55 } as const;
+// 0.65 sat in the gap between the same kind and other kinds; lowered to 0.5 for
+// the demo (developer decision 2026-11-14) so more look-alikes show, accepting
+// that other kinds of item near the top of their range (up to 0.53) may show
+// too. Cosine scores overlapped (2026-11-10: 0.672 vs 0.687); their floor is a
+// guess.
+export const PHOTO_SIMILAR_MIN = { reranked: 0.5, cosine: 0.55 } as const;
 
 export type PhotoHit = { productId: string; score: number };
 // Always "similar": a photo never proves the exact product (see above).
