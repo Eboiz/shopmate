@@ -45,9 +45,7 @@ pending("PB-07/17 guardrails", [
 pending("PB-11/12 ordering and confirmation", [
   "ordering in the chat creates one draft order with name, phone and address",
   "an invalid phone number is asked again, no order is created",
-  "staff confirm a draft order and stock goes down by the quantity",
   "staff cancel a draft order and stock does not change",
-  "two staff confirming the same order at once decrease stock once",
   "confirming when stock is too low is refused with the item named",
   "the shopper gets a message on their channel when the order is confirmed or cancelled",
   "staff of one shop cannot see or confirm another shop's orders",
