@@ -1,11 +1,13 @@
-import { toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { quickReplySchema, toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
 import type { Gap } from "./data-gap";
 import type { CatalogItem } from "./jev";
 import { activeProductFacts, withFacts } from "./learned-facts";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
+import { postcheckLogSchema } from "./postcheck-log";
 import { sortSizes } from "./text";
 import { setAiMode, setNeedsHuman } from "./tools/handoff-to-staff";
+import { cachedCatalog } from "./turn-cache";
 import type { Db } from "./types";
 
 export type TurnContextArgs = {
@@ -18,8 +20,9 @@ export type TurnContext = {
   conversation: { shopId: string; mode: ConversationMode } | null; // always null in staff_draft
   // description (PB-31): the shop's text, for details questions on the tool loop.
   product: { id: string; name: string; description?: string | null } | null;
-  // customer only: the conversation's previous AI turn searched for a product and
-  // found nothing (see searchMissed), and did not hand off. Missing means false.
+  // customer only: the conversation's previous AI turn missed the product (its
+  // ai_turns.postcheck.productMiss, or searchMissed for older rows) and did not
+  // hand off. Missing means false.
   previousTurnMissedProduct?: boolean;
   // Last customer turn's quote, used only after its summary was shown to the
   // shopper. The engine checks the next shopper message before allowing a write.
@@ -54,9 +57,40 @@ export type EngineStore = {
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
   catalog?(shopId: string): Promise<CatalogItem[]>;
+  // PB-31 AC12: up to 3 names of products the shop declared pairings for, as the
+  // buttons under "phối cùng sản phẩm nào?". Only names that fit a quick reply.
+  pairedProductNames?(shopId: string): Promise<string[]>;
 };
 
 const MAX_CARDS = 10;
+const PAIRED_BUTTONS = 3;
+
+// Every admin client reads the same database, so one cache per process is
+// enough; it keeps the first store's client for its loads.
+let sharedCatalog: ((shopId: string) => Promise<CatalogItem[]>) | null = null;
+
+async function loadCatalog(db: Db, shopId: string): Promise<CatalogItem[]> {
+  const [products, variants] = await Promise.all([
+    db.from("products").select("id, name, category, description, price").eq("shop_id", shopId).order("name"),
+    db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
+  ]);
+  if (products.error) throw new Error(`products: ${products.error.message}`);
+  if (variants.error) throw new Error(`variants: ${variants.error.message}`);
+  // PB-35a: the router answers product_detail from learned facts too.
+  const facts = await activeProductFacts(db, shopId, products.data.map((p) => p.id));
+  return products.data.map((p) => {
+    const own = variants.data.filter((v) => v.product_id === p.id);
+    return {
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      description: withFacts(p.description, facts.get(p.id) ?? []),
+      price: p.price,
+      colors: [...new Set(own.map((v) => v.color))],
+      sizes: sortSizes(own.map((v) => v.size)),
+    };
+  });
+}
 
 export function createSupabaseStore(db: Db): EngineStore {
   async function product(shopId: string, productId: string | null) {
@@ -71,20 +105,37 @@ export function createSupabaseStore(db: Db): EngineStore {
   }
 
   async function previousTurnState(shopId: string, conversationId: string) {
-    const { data, error } = await db
+    const { data: rows, error } = await db
       .from("ai_turns")
-      .select("id, tool_calls, handoff_reason, handoff_offer")
+      .select("id, tool_calls, handoff_reason, postcheck, handoff_offer")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
+      // R3: pending and superseded rows are filtered in the query, so any number
+      // of them never pushes the last delivered turn out of the limit.
+      .is("postcheck->>pending", null)
+      .is("postcheck->>superseded", null)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
     if (error) throw new Error(`ai_turns: ${error.message}`);
+    // R3: a superseded turn's reply was never sent, so the shopper never saw its
+    // offer, quote or clarifying question, and a pending one's may not be; the
+    // last turn whose reply went out decides. (Filtered above; checked again here.)
+    const data = rows.find((row) => {
+      const postcheck = postcheckLogSchema.safeParse(row.postcheck).data;
+      return postcheck?.superseded !== true && postcheck?.pending !== true;
+    });
     if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null, previousTurnId: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
+    // Rows the current engine wrote carry the guard's verdict in postcheck
+    // (PB-05 AC3); older rows have none and fall back to the tool_calls shape.
+    const postcheck = postcheckLogSchema.safeParse(data.postcheck);
+    const missedProduct =
+      postcheck.success && postcheck.data.productMiss !== undefined
+        ? postcheck.data.productMiss
+        : logs.success && searchMissed(logs.data);
     return {
-      previousTurnMissedProduct: logs.success && searchMissed(logs.data),
+      previousTurnMissedProduct: missedProduct,
       previousQuote: logs.success ? latestQuote(logs.data) : null,
       previousHandoffOffer: data.handoff_offer,
       previousTurnId: data.id,
@@ -137,26 +188,17 @@ export function createSupabaseStore(db: Db): EngineStore {
         .slice(0, MAX_CARDS);
     },
 
-    async catalog(shopId) {
-      const [products, variants] = await Promise.all([
-        db.from("products").select("id, name, category, description").eq("shop_id", shopId).order("name"),
-        db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
-      ]);
-      if (products.error) throw new Error(`products: ${products.error.message}`);
-      if (variants.error) throw new Error(`variants: ${variants.error.message}`);
-      // PB-35a: the router answers product_detail from this description too.
-      const facts = await activeProductFacts(db, shopId, products.data.map((p) => p.id));
-      return products.data.map((p) => {
-        const own = variants.data.filter((v) => v.product_id === p.id);
-        return {
-          id: p.id,
-          name: p.name,
-          category: p.category,
-          description: withFacts(p.description, facts.get(p.id) ?? []),
-          colors: [...new Set(own.map((v) => v.color))],
-          sizes: sortSizes(own.map((v) => v.size)),
-        };
-      });
+    // F5: one read per shop every 30 s per process (names, colours, sizes only).
+    catalog: (shopId) => (sharedCatalog ??= cachedCatalog((id) => loadCatalog(db, id)))(shopId),
+
+    async pairedProductNames(shopId) {
+      const { data: pairs, error } = await db.from("pairings").select("product_a_id, product_b_id").eq("shop_id", shopId);
+      if (error) throw new Error(`pairings: ${error.message}`);
+      const ids = [...new Set(pairs.flatMap((p) => [p.product_a_id, p.product_b_id]))];
+      if (ids.length === 0) return [];
+      const { data: products, error: productError } = await db.from("products").select("name").eq("shop_id", shopId).in("id", ids).order("name");
+      if (productError) throw new Error(`products: ${productError.message}`);
+      return products.map((p) => p.name.trim()).filter((name) => quickReplySchema.safeParse(name).success).slice(0, PAIRED_BUTTONS);
     },
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),
@@ -186,4 +228,33 @@ export function createSupabaseStore(db: Db): EngineStore {
       if (error) throw new Error(`data_gaps: ${error.message}`);
     },
   };
+}
+
+// R3 (receive.ts): a channel turn is logged pending (engine.ts); the channel
+// marks it "delivered" (the reply went out, the next turn reads its state) or
+// "superseded" (never sent: the next turn skips it). Other postcheck fields are
+// kept as stored. Tried twice; a failure is logged, never thrown: the row then
+// stays pending, which the next turn skips (the safe side).
+export async function markTurn(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded"): Promise<boolean> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (await markOnce(db, shopId, turnId, outcome, attempt === 2)) return true;
+  }
+  return false;
+}
+
+async function markOnce(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded", last: boolean): Promise<boolean> {
+  try {
+    const { data, error } = await db.from("ai_turns").select("postcheck").eq("id", turnId).eq("shop_id", shopId).single();
+    if (error) throw new Error(error.message);
+    const stored = data.postcheck;
+    const rest = { ...(stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : {}) };
+    delete rest.pending;
+    const postcheck = outcome === "superseded" ? { ...rest, superseded: true } : rest;
+    const { error: updateError } = await db.from("ai_turns").update({ postcheck }).eq("id", turnId).eq("shop_id", shopId);
+    if (updateError) throw new Error(updateError.message);
+    return true;
+  } catch (e) {
+    if (last) console.error(`engine: failed to mark the turn ${outcome}`, e);
+    return false;
+  }
 }

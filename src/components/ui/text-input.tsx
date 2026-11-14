@@ -16,7 +16,7 @@ export function TextInput({ label, error, className = "", ...props }: TextInputP
       <input
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        className={`ui-field min-h-11 px-3 py-2 text-base aria-invalid:border-red-600 ${className}`}
+        className={`ui-field min-h-11 px-3 py-2 text-base aria-invalid:border-[#b2382a] ${className}`}
         {...props}
       />
       {error && <ErrorMessage id={errorId}>{error}</ErrorMessage>}

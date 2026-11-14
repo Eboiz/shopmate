@@ -59,7 +59,8 @@ export type TurnMetrics = {
     // "offer_answer" (PB-31): the shopper answered a staff offer with yes/no.
     // "catalog" (PB-31): "shop có gì", answered from the catalog by the server.
     // "complaint" (PB-14): a complaint the server recognized, handed off with no model call.
-    path: "router" | "llm_loop" | "offer_answer" | "catalog" | "complaint";
+    // "size_guard" (PB-45): without Jev, a size the shop doesn't sell answered by the server.
+    path: "router" | "llm_loop" | "offer_answer" | "catalog" | "complaint" | "size_guard";
     fallbackReason?: string;
     jevModel?: string;
     jevMs?: number;

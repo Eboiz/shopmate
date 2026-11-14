@@ -2,21 +2,27 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { ProductCard } from "@/components/ui/product-card";
 import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
+import type { ConversationMode } from "@/contract";
+import { chatStatus } from "@/lib/chat/chat-status";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { compareSizes } from "@/lib/size-order";
-import { firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, type ProductGroup } from "@/lib/shop/catalog-view";
+import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, readShopFilters, searchFromQuery, shopFilterQuery, type ProductGroup, type ShopFilters, type ShopSort } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
-import { cartCount, cartMessage, useCart } from "./cart";
+import { cartCount, cartMessage, stockChangeMessage, useCart, variantStock, type CartItem } from "./cart";
+import { onlyChoice, productOptions } from "./product-options";
+import { cartItemFor, QuickAdd } from "./quick-add";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
-import { AskRow, GroupTiles, ShopFooter, ShopHeader, ShopHero, ShopMarquee, SizeBand, type GroupLink } from "./storefront-sections";
+import { GroupTiles, ShopFooter, ShopHeader, ShopHero, ShopMarquee, SizeBand, type GroupLink } from "./storefront-sections";
 
 type Props = { slug: string; previewCatalog?: ShopCatalog; detailProductId?: string };
 
@@ -29,11 +35,12 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [catalogNotFound, setCatalogNotFound] = useState(false);
   const [catalogRetry, setCatalogRetry] = useState(0);
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("group");
-  const [group, setGroup] = useState<ProductGroup | "">("");
-  const [sizeFilter, setSizeFilter] = useState("");
-  const [shown, setShown] = useState(PAGE_SIZE);
+  // Filters live in the URL. The search box keeps its own state: Next updates
+  // useSearchParams inside a transition, which would drop keystrokes.
+  const searchParams = useSearchParams();
+  const [search, setSearch] = useState(() => searchFromQuery(searchParams));
+  // How many products "Xem thêm" has revealed, for one set of filters.
+  const [more, setMore] = useState({ key: "", count: PAGE_SIZE });
   const [cartOpen, setCartOpen] = useState(false);
   const cart = useCart(slug);
   // The order message the cart put in the chat; the cart empties once it is sent.
@@ -46,6 +53,13 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  // The conversation's mode from the last poll (PB-42): outside `ai` no AI
+  // turn runs, so the chat says it is waiting for staff instead of typing.
+  const [mode, setMode] = useState<ConversationMode>("ai");
+  // The message being sent, shown straight away: POST only answers once the
+  // whole AI turn is done, which can take several seconds. knownIds are the
+  // messages already on screen, so the stored copy can replace this one.
+  const [outgoing, setOutgoing] = useState<{ text: string; knownIds: Set<string> } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,6 +80,24 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   useEffect(() => {
     if (detailProductId && !catalogLoading) window.scrollTo({ top: 0, behavior: "instant" });
   }, [detailProductId, catalogLoading]);
+
+  // A link to "#san-pham" (the detail page's group breadcrumb) lands before the
+  // catalog has loaded, so the grid isn't there for the browser to scroll to yet.
+  const hashScrolled = useRef(false);
+  useEffect(() => {
+    if (detailProductId || catalogLoading || hashScrolled.current) return;
+    hashScrolled.current = true;
+    if (window.location.hash === "#san-pham") document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
+  }, [detailProductId, catalogLoading]);
+
+  // The search box takes the URL's search on back/forward, and when a link
+  // brings back this page, which Next keeps alive (Activity) with its old state.
+  useLayoutEffect(() => {
+    const syncSearch = () => setSearch(searchFromQuery(new URLSearchParams(window.location.search)));
+    syncSearch();
+    window.addEventListener("popstate", syncSearch);
+    return () => window.removeEventListener("popstate", syncSearch);
+  }, []);
 
   useEffect(() => {
     if (previewCatalog) return;
@@ -100,7 +132,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       const data = chatHistorySchema.parse(await response.json());
       if (sequence !== refreshSequence.current) return;
       setMessages(data.messages);
-      if (data.messages.some((message) => message.sender !== "shopper" && !previousReplies.current.has(message.id))) {
+      setMode(data.mode);
+      if (data.mode !== "ai" || data.messages.some((message) => message.sender !== "shopper" && !previousReplies.current.has(message.id))) {
         setAwaitingReply(false);
       }
       setError("");
@@ -125,7 +158,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   useEffect(() => {
     if (open) endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open, sending]);
+  }, [messages, open, sending, outgoing]);
 
   useEffect(() => {
     if (!open) return;
@@ -180,18 +213,71 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     return () => observer.disconnect();
   }, [catalog, catalogLoading, detailProductId]);
 
+  // A toast left over from "Thêm vào giỏ" would sit on top of the cart's send
+  // button on phones, so opening the cart clears it.
+  const [cartNotice, setCartNotice] = useState<{ text: string; added: boolean } | null>(null);
   // The cart panel gives focus back to the button that opened it.
   const cartOpenerRef = useRef<HTMLElement | null>(null);
+  // Lines the stock check changed (capped or sold out), shown inside the cart.
+  const [stockNotice, setStockNotice] = useState("");
+  const { reconcile } = cart;
+  const checkStock = useCallback((products: ShopProduct[]): boolean => {
+    const changes = reconcile((item) => variantStock(products, item));
+    if (changes.length) setStockNotice(stockChangeMessage(changes));
+    return changes.length === 0;
+  }, [reconcile]);
   const openCart = useCallback(() => {
     cartOpenerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCartNotice(null);
+    setStockNotice("");
     setCartOpen(true);
-  }, []);
+    // A basket saved earlier may hold more than the shop has now: check it
+    // against the loaded catalog at once, then against fresh stock.
+    if (catalog) checkStock(catalog.products);
+    if (previewCatalog) return;
+    fetch(catalogEndpoint, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const fresh = shopCatalogSchema.parse(await response.json());
+        setCatalog(fresh);
+        checkStock(fresh.products);
+      })
+      .catch(() => {
+        // The loaded catalog was already checked; the shop confirms stock anyway.
+      });
+  }, [catalog, catalogEndpoint, checkStock, previewCatalog]);
   const closeCart = useCallback(() => {
     setCartOpen(false);
     const opener = cartOpenerRef.current;
     cartOpenerRef.current = null;
     if (opener?.isConnected) window.setTimeout(() => opener.focus({ preventScroll: true }), 0);
   }, []);
+
+  // "Thêm vào giỏ" on a product card: adds at once when there is one colour
+  // and size, otherwise asks for them in a small dialog.
+  const [quickAdd, setQuickAdd] = useState<ShopProduct | null>(null);
+  const closeQuickAdd = useCallback(() => setQuickAdd(null), []);
+  const addToCart = useCallback((item: CartItem, maxQuantity: number) => {
+    const added = cart.add(item, maxQuantity);
+    const details = [item.color && displayColor(item.color), item.size && `size ${item.size}`].filter(Boolean).join(", ");
+    setCartNotice(added
+      ? { text: `Đã thêm ${item.name}${details ? ` (${details})` : ""} vào giỏ.`, added: true }
+      : { text: "Giỏ đã đủ 10 món. Gửi đơn này trước rồi thêm tiếp nhé.", added: false });
+  }, [cart]);
+  function quickAddProduct(product: ShopProduct) {
+    const choice = onlyChoice(product);
+    if (choice) {
+      const { stockOf } = productOptions(product);
+      addToCart(cartItemFor(product, choice.color, choice.size), stockOf(choice.color, choice.size));
+    } else {
+      setQuickAdd(product);
+    }
+  }
+  useEffect(() => {
+    if (!cartNotice) return;
+    const timer = window.setTimeout(() => setCartNotice(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [cartNotice]);
 
   function askAbout(product: ShopProduct, initialMessage?: string) {
     setSelected(product);
@@ -201,6 +287,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   function sendCart() {
     if (cart.items.length === 0) return;
+    // Last check before the order leaves: a change keeps the cart open so the
+    // shopper sees the new quantities first.
+    if (catalog && !checkStock(catalog.products)) return;
     const message = cartMessage(cart.items);
     cartMessageRef.current = message;
     setSelected(null);
@@ -226,6 +315,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       : crypto.randomUUID();
     pendingSend.current = { text: message, productId, clientMessageId };
     previousReplies.current = new Set(messages.filter((item) => item.sender !== "shopper").map((item) => item.id));
+    setOutgoing({ text: message, knownIds: new Set(messages.map((item) => item.id)) });
+    setDraft("");
     let responseError = "";
     try {
       const response = await fetch(endpoint, {
@@ -245,14 +336,17 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         cartMessageRef.current = null;
         cart.clear();
       }
-      setDraft("");
-      setAwaitingReply(true);
+      // Only an `ai` conversation answers; with staff the poll shows the wait.
+      if (mode === "ai") setAwaitingReply(true);
       await refresh();
     } catch {
       setAwaitingReply(false);
+      // Hand the text back so "Gửi" retries it with the same clientMessageId.
+      setDraft((current) => current || message);
       setSendError(responseError || "Chưa gửi được tin nhắn. Vui lòng kiểm tra kết nối và thử lại.");
       await refresh();
     } finally {
+      setOutgoing(null);
       setSending(false);
       // Tapping Gửi or a suggestion moved focus off the field; put it back so
       // the next message can be typed straight away.
@@ -287,6 +381,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   }, [open, loading, sending]);
 
   const lastReply = messages.at(-1)?.reply;
+  // Hidden once a poll brings back the stored copy of the same message.
+  const showOutgoing = outgoing !== null && !messages.some((message) =>
+    message.sender === "shopper" && message.text === outgoing.text && !outgoing.knownIds.has(message.id));
+  const status = chatStatus(messages, mode, sending, awaitingReply);
   if (catalogLoading) {
     return <main className="flex flex-1 flex-col">{detailProductId ? <ProductDetailSkeleton /> : <ShopFrontSkeleton />}</main>;
   }
@@ -325,6 +423,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   for (const item of grouped) groupCounts.set(item.group, (groupCounts.get(item.group) ?? 0) + 1);
   const groupChips = ([...PRODUCT_GROUPS, OTHER_GROUP] as ProductGroup[]).filter((name) => groupCounts.has(name));
   const allSizes = [...new Set(products.flatMap((product) => product.sizesInStock))].sort(compareSizes);
+  const { group, size: sizeFilter, sort } = readShopFilters(searchParams, { groups: groupChips, sizes: allSizes });
   const filtered = grouped
     .filter((item) => !group || item.group === group)
     .filter((item) => !sizeFilter || item.product.sizesInStock.includes(sizeFilter))
@@ -335,20 +434,21 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       return groupRank(a.group) - groupRank(b.group) || a.index - b.index;
     })
     .map((item) => item.product);
+  // Any filter change starts the list again from the first page.
+  const filterKey = [group, sizeFilter, sort, search].join("|");
+  const shown = more.key === filterKey ? more.count : PAGE_SIZE;
   const visibleProducts = filtered.slice(0, shown);
   const filtering = group !== "" || sizeFilter !== "" || search.trim() !== "";
-  // Any filter change starts the list again from the first page.
-  const filterBy = <T,>(set: (value: T) => void) => (value: T) => { set(value); setShown(PAGE_SIZE); };
-  const chooseGroup = filterBy(setGroup);
-  const chooseSize = filterBy(setSizeFilter);
-  const chooseSearch = filterBy(setSearch);
-  const chooseSort = filterBy(setSort);
-  function clearFilters() {
-    setGroup("");
-    setSizeFilter("");
-    setSearch("");
-    setShown(PAGE_SIZE);
+  // A choice adds a history entry (back undoes it); typing in the search box replaces it.
+  function setFilters(change: Partial<ShopFilters>, history: "push" | "replace" = "push") {
+    const next = { group, size: sizeFilter, sort, search, ...change };
+    const { pathname, search: query, hash } = window.location;
+    const url = `${pathname}${shopFilterQuery(next, new URLSearchParams(query))}${hash}`;
+    // Choosing the filter already shown adds no history entry.
+    if (url !== `${pathname}${query}${hash}`) window.history[history === "push" ? "pushState" : "replaceState"](null, "", url);
+    if (change.search !== undefined) setSearch(change.search);
   }
+  const clearFilters = () => setFilters({ group: "", size: "", search: "" });
   const groupLinks: GroupLink[] = groupChips.map((name) => ({
     name,
     count: groupCounts.get(name) ?? 0,
@@ -356,8 +456,12 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   }));
   // Menus, tiles and the footer pick a group and bring the grid into view.
   function showGroup(name: string) {
-    chooseGroup(name as ProductGroup);
-    setSearch("");
+    setFilters({ group: name as ProductGroup, search: "" });
+    document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
+  }
+  // The header search shows all its matches in the grid, across every group.
+  function searchProducts(query: string) {
+    setFilters({ group: "", size: "", search: query });
     document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
   }
   const inStock = products.filter((product) => product.sizesInStock.length > 0);
@@ -373,8 +477,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     <CartPanel
       items={cart.items}
       shippingPolicy={policies?.shipping || undefined}
+      stockNotice={stockNotice}
       onQuantity={cart.setQuantity}
       onRemove={cart.remove}
+      onRestore={cart.restore}
       onSend={sendCart}
       onClose={closeCart}
     />
@@ -382,7 +488,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   return (
     <>
-      <main ref={mainRef} className="flex-1">
+      <main ref={mainRef} className={`flex-1 ${detailProductId ? "" : "shop-has-bar"}`}>
         {detailProductId ? detailProduct ? (
           <ProductDetailView
             key={detailProduct.id}
@@ -402,8 +508,18 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           </section>
         ) : <>
         <ShopMarquee items={marqueeItems} />
-        <ShopHeader shopName={shopName} groups={groupLinks} itemCount={itemCount} onOpenCart={openCart} onAsk={askText} onChooseGroup={showGroup} />
-        <AskRow onAsk={askText} />
+        <ShopHeader
+          shopName={shopName}
+          groups={groupLinks}
+          itemCount={itemCount}
+          onOpenCart={openCart}
+          onAsk={askText}
+          onChooseGroup={showGroup}
+          products={products}
+          productHref={(productId) => `${shopHref}/p/${encodeURIComponent(productId)}`}
+          search={search}
+          onSearch={searchProducts}
+        />
         <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
 
         <section id="san-pham" aria-labelledby="san-pham-title" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
@@ -416,17 +532,17 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
               {groupTabs.length > 2 && (
                 <div role="group" aria-label="Nhóm sản phẩm" className="-mx-4 flex gap-6 overflow-x-auto border-b border-[#e3dfd8] px-4 [scrollbar-width:none] sm:mx-0 sm:px-0">
                   {groupTabs.map((tab) => (
-                    <button key={tab.label} type="button" aria-pressed={group === tab.name} onClick={() => chooseGroup(tab.name)} className={`-mb-px inline-flex min-h-12 shrink-0 items-center gap-1.5 border-b-2 text-xs font-extrabold uppercase tracking-[.12em] transition-colors ${group === tab.name ? "border-[#171717] text-[#171717]" : "border-transparent text-[#706d67] hover:text-[#171717]"}`}>
+                    <button key={tab.label} type="button" aria-pressed={group === tab.name} onClick={() => setFilters({ group: tab.name })} className={`-mb-px inline-flex min-h-12 shrink-0 items-center gap-1.5 border-b-2 text-xs font-extrabold uppercase tracking-[.12em] transition-colors ${group === tab.name ? "border-[#171717] text-[#171717]" : "border-transparent text-[#706d67] hover:text-[#171717]"}`}>
                       {tab.label} <span className="font-semibold tabular-nums tracking-normal">{tab.count}</span>
                     </button>
                   ))}
                 </div>
               )}
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-80"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => chooseSearch(event.target.value)} placeholder="Tìm theo tên, nhóm, màu..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label>
+                <label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-80"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => setFilters({ search: event.target.value }, "replace")} placeholder="Tìm theo tên, nhóm, màu..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label>
                 <div className="flex flex-wrap gap-3">
-                  {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => chooseSize(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
-                  <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => chooseSort(event.target.value)} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="group">Theo nhóm</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label>
+                  {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => setFilters({ size: event.target.value })} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
+                  <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => setFilters({ sort: event.target.value as ShopSort })} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="group">Theo nhóm</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label>
                 </div>
               </div>
             </div>
@@ -452,16 +568,23 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                     colors={product.colors}
                     sizesInStock={product.sizesInStock}
                     action={(
-                      <button type="button" onClick={() => askAbout(product)} aria-label={`Hỏi về mẫu này: ${product.name}`} className="inline-flex min-h-10 w-full items-center justify-center whitespace-nowrap border border-[#171717] px-2 text-[11px] font-extrabold uppercase tracking-[.04em] sm:tracking-[.1em] transition-colors hover:bg-[#171717] hover:text-white">
-                        Hỏi về mẫu này
-                      </button>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => askAbout(product)} aria-label={`Hỏi về mẫu này: ${product.name}`} className="inline-flex min-h-10 min-w-0 flex-1 items-center justify-center whitespace-nowrap border border-[#171717] px-2 text-[11px] font-extrabold uppercase tracking-[.04em] sm:tracking-[.1em] transition-colors hover:bg-[#171717] hover:text-white">
+                          <span className="sm:hidden">Hỏi shop</span><span className="hidden sm:inline">Hỏi về mẫu này</span>
+                        </button>
+                        {product.sizesInStock.length > 0 && (
+                          <button type="button" onClick={() => quickAddProduct(product)} aria-label={`Thêm vào giỏ: ${product.name}`} title="Thêm vào giỏ" className="inline-grid size-10 shrink-0 place-items-center bg-[#e9573f] text-[#171717] transition-colors hover:bg-[#171717] hover:text-white">
+                            <Icon name="cart" className="size-5" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   />
                 ))}
               </div>
               {filtered.length > visibleProducts.length && (
                 <div className="mt-10 flex flex-col items-center gap-2">
-                  <button type="button" onClick={() => setShown((value) => value + PAGE_SIZE)} className="inline-flex min-h-12 items-center border-[1.5px] border-[#171717] px-6 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
+                  <button type="button" onClick={() => setMore({ key: filterKey, count: shown + PAGE_SIZE })} className="inline-flex min-h-12 items-center border-[1.5px] border-[#171717] px-6 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
                   <p className="text-xs tabular-nums text-[#706d67]">Đang xem {visibleProducts.length} / {filtered.length}</p>
                 </div>
               )}
@@ -476,9 +599,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       </main>
 
       {!detailProductId && (
-        <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
+        <div className="shop-bar fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
           <button ref={mobileChatRef} type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap bg-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em] text-white"><span aria-hidden="true" className="size-[7px] rounded-full bg-[#4cc47a]" />Chat với shop</button>
-          <button type="button" onClick={openCart} className="inline-flex min-h-12 items-center justify-center whitespace-nowrap border-[1.5px] border-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em]">Giỏ đặt ({itemCount})</button>
+          <button type="button" onClick={openCart} aria-label={`Giỏ đặt hàng, ${itemCount} món`} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap border-[1.5px] border-[#171717] px-3 text-sm font-extrabold tabular-nums"><Icon name="cart" className="size-5" />{itemCount}</button>
         </div>
       )}
 
@@ -495,13 +618,20 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       )}
 
       {cartPanel}
+      {quickAdd && <QuickAdd product={quickAdd} onAdd={(item, maxQuantity) => { setQuickAdd(null); addToCart(item, maxQuantity); }} onClose={closeQuickAdd} />}
+      {cartNotice && (
+        <div role="status" className="fixed inset-x-4 bottom-24 z-50 mx-auto flex max-w-sm items-center gap-3 bg-[#171717] py-2 pl-4 pr-2 text-sm text-white shadow-[0_16px_35px_-12px_#171717aa] sm:bottom-6">
+          <p className="min-w-0 flex-1">{cartNotice.text}</p>
+          {cartNotice.added && <button type="button" onClick={() => { setCartNotice(null); openCart(); }} className="min-h-10 shrink-0 bg-[#e9573f] px-3 text-[11px] font-extrabold uppercase tracking-[.1em] text-[#171717] hover:bg-white">Xem giỏ</button>}
+        </div>
+      )}
 
       {open && (
         <section role="dialog" aria-label="Trò chuyện với shop" className="ui-drawer fixed inset-0 z-50 flex h-dvh w-full flex-col overflow-hidden bg-white shadow-[-24px_0_60px_-30px_#17171780] sm:left-auto sm:w-[440px] sm:border-l sm:border-[#171717]">
           <header className="flex items-center gap-3 bg-[#171717] px-4 py-4 text-white">
             <Image src="/images/shop-avatar.jpg" alt="" width={40} height={40} className="size-10 shrink-0 object-cover" />
             <div className="min-w-0 flex-1"><h2 className="truncate font-bold">{shopName}</h2><p className="text-xs text-[#bbb8b2]">Trợ lý AI trả lời ngay · nhân viên hỗ trợ khi cần</p></div>
-            <button type="button" className="flex min-h-11 shrink-0 items-center justify-center border border-[#ffffff66] px-3 text-xs font-extrabold uppercase tracking-[.1em] transition-colors hover:bg-white hover:text-[#171717]" onClick={() => setOpen(false)} aria-label="Đóng trò chuyện">Đóng</button>
+            <button type="button" className="inline-grid size-11 shrink-0 place-items-center border border-[#ffffff66] transition-colors hover:bg-white hover:text-[#171717]" onClick={() => setOpen(false)} aria-label="Đóng trò chuyện"><Icon name="close" className="size-4" /></button>
           </header>
 
           {selected && (
@@ -518,14 +648,15 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f3ef] px-4 py-5">
             {loading ? (
               <LoadingRegion label="Đang tải cuộc trò chuyện…"><ChatSkeleton /></LoadingRegion>
-            ) : messages.length === 0 ? (
+            ) : messages.length === 0 && !showOutgoing ? (
               <div className="space-y-5"><div className="ui-card overflow-hidden"><Image src="/images/chat-welcome.jpg" alt="" width={840} height={360} sizes="(max-width: 640px) 100vw, 420px" className="aspect-[7/3] w-full object-cover" /><div className="p-5"><h3 className="text-lg font-bold">Xin chào! Mình giúp gì cho bạn?</h3><p className="mt-2 text-sm leading-6 text-[#706d67]">Hỏi về sản phẩm, size, màu sắc hoặc một set đồ hợp với bạn.</p></div></div><div><p className="mb-3 text-xs font-semibold text-[#706d67]">Gợi ý câu hỏi</p><div className="flex flex-wrap gap-2">{["Shop còn size M không?", "Tư vấn size giúp mình", "Gợi ý phối đồ"].map((text) => <button key={text} type="button" onClick={() => void send(text)} disabled={sending || loading} className="inline-flex min-h-11 items-center rounded-full border border-[#8f8a82] bg-white px-4 text-sm font-semibold transition-colors hover:border-[#171717] disabled:opacity-50">{text}</button>)}</div></div></div>
             ) : (
               <div className="space-y-4">
-                {messages.map((message) => (
+                {messages.map((message, index) => (
                   <div key={message.id} className={message.sender === "shopper" ? "ml-8" : "mr-8"}>
                     <p className="mb-1 text-xs text-[#706d67]">
                       {senderLabel[message.sender]}
+                      {status === "waiting_staff" && index === messages.length - 1 && " · Đã gửi"}
                     </p>
                     <div className={`break-words rounded-xl p-3 text-sm leading-6 ${message.sender === "shopper" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white text-[#171717]"}`}>
                       {message.reply?.text || message.text}
@@ -547,11 +678,22 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                     )}
                   </div>
                 ))}
+                {showOutgoing && outgoing && (
+                  <div className="ml-8">
+                    <p className="mb-1 text-xs text-[#706d67]">{senderLabel.shopper} · Đang gửi…</p>
+                    <div className="break-words rounded-xl rounded-br-sm bg-[#171717] p-3 text-sm leading-6 text-white opacity-80">{outgoing.text}</div>
+                  </div>
+                )}
               </div>
             )}
-            {(sending || awaitingReply) && (
+            {status === "typing" && (
               <p role="status" className="mt-4 inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-[#e3dfd8] bg-white px-3 py-2 text-sm text-[#706d67]">
                 <TypingDots /> Shop đang trả lời…
+              </p>
+            )}
+            {status === "waiting_staff" && (
+              <p role="status" className="mt-4 inline-flex items-center gap-2 rounded-xl rounded-bl-sm border border-[#e3dfd8] bg-white px-3 py-2 text-sm text-[#706d67]">
+                <span className="sr-only">Đã gửi. </span>Đang chờ nhân viên shop trả lời
               </p>
             )}
             <div ref={endRef} />
@@ -560,9 +702,9 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           <div className="border-t border-[#e3dfd8] bg-white p-3">
             {previewCatalog && <p className="mb-2 text-xs text-[#706d67]">Bản xem thử giao diện — chưa kết nối chat.</p>}
             {lastReply && lastReply.quickReplies.length > 0 && (
-              <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+              <div className="mb-2 flex flex-wrap gap-2">
                 {lastReply.quickReplies.map((text) => (
-                  <Button key={text} variant="secondary" className="shrink-0 text-sm" disabled={sending} onClick={() => void send(text)}>
+                  <Button key={text} variant="secondary" className="min-h-11 max-w-full whitespace-normal break-words text-left text-sm" disabled={sending} onClick={() => void send(text)}>
                     {text}
                   </Button>
                 ))}
@@ -583,7 +725,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 placeholder="Nhập câu hỏi của bạn"
                 readOnly={sending || loading}
               />
-              <Button type="submit" disabled={loading || !draft.trim()} loading={sending}>Gửi</Button>
+              <Button type="submit" aria-label="Gửi" title="Gửi" className="w-11 shrink-0 px-0!" disabled={loading || !draft.trim()} loading={sending}>{!sending && <Icon name="send" className="size-5 shrink-0" />}</Button>
             </form>
           </div>
         </section>

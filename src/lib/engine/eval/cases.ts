@@ -1,7 +1,7 @@
 // Basic labeled cases for the engine (PB-03): did it call the right tools, with
 // the right arguments, and only when needed? Small on purpose (shop A of the
 // two-shop fixture); deeper sets come with PB-10.
-import type { HandoffReason, HistoryMessage, ToolCallLog, ToolName } from "@/contract";
+import type { HandoffReason, HistoryMessage, ProductCard, ToolCallLog, ToolName } from "@/contract";
 import { findUnbackedDiscount } from "../discount-guard";
 import type { OfferReason } from "../handoff-offer";
 import { fold } from "../text";
@@ -31,7 +31,12 @@ export type EvalCase = {
   finds?: string;
   // When set, the reply's quick replies must pass this check.
   quickReplies?: { label: string; ok: (quickReplies: string[]) => boolean };
+  // PB-40: when set, the reply's product cards must pass this check.
+  products?: { label: string; ok: (products: ProductCard[]) => boolean };
   history: HistoryMessage[]; // the last message is the shopper's
+  // staff_draft: the reply assistant (PB-20), run for shop A without a
+  // conversation. Default customer.
+  mode?: "customer" | "staff_draft";
   productId?: string; // the product the shopper is looking at (an id in FX.a)
   expected: ExpectedCall[]; // [] means NO tool is needed
   // The conversation's previous AI turn (its ai_turns.tool_calls), seeded before
@@ -133,6 +138,22 @@ export const evalCases: EvalCase[] = [
     expected: [
       { tool: "search_products", required: true },
       // The model may also hand off by itself with the same reason.
+      { tool: "handoff_to_staff", args: { reason: "misunderstood_twice" }, required: false },
+    ],
+    handoff: "misunderstood_twice",
+  },
+  {
+    id: "product-not-found-twice-broadened",
+    description: "PB-05 AC3, second miss with the model's broadened search: still hands off to staff.",
+    shouldHandOff: true,
+    history: [
+      { sender: "shopper", text: UNKNOWN_ASK },
+      { sender: "ai", text: "Dạ shop chưa tìm thấy túi xách da. Bạn tìm túi kiểu nào, màu gì ạ?" },
+      { sender: "shopper", text: "loại túi xách da màu đen ấy" },
+    ],
+    previousTurn: [{ name: "search_products", input: { query: "túi xách da", limit: 5 }, output: { match: "none", products: [] } }],
+    expected: [
+      { tool: "search_products", required: true },
       { tool: "handoff_to_staff", args: { reason: "misunderstood_twice" }, required: false },
     ],
     handoff: "misunderstood_twice",

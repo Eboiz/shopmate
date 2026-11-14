@@ -34,14 +34,15 @@ async function shopFrom(ctx: Ctx) {
   return shopSlugSchema.safeParse(slug).success ? findShop(slug) : null;
 }
 
-// GET: the shopper's conversation in this shop (empty for a new visitor).
+// GET: the shopper's conversation in this shop and its mode (empty and "ai"
+// for a new visitor).
 export async function GET(request: NextRequest, ctx: Ctx) {
   try {
     const shop = await shopFrom(ctx);
     if (!shop) return fail(chatErrors.shopNotFound, 404);
     const token = readShopperToken(request.cookies.get(SHOPPER_COOKIE)?.value);
-    const messages = token ? await loadHistory(shop.id, shopperExternalId(token)) : [];
-    return Response.json({ messages }, { headers: noStore });
+    const history = token ? await loadHistory(shop.id, shopperExternalId(token)) : { messages: [], mode: "ai" };
+    return Response.json(history, { headers: noStore });
   } catch (error) {
     console.error("web chat: history failed", error);
     return fail(chatErrors.historyFailed, 500);
