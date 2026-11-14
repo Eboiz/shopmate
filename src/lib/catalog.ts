@@ -1,5 +1,6 @@
 import "server-only";
 import type { PolicyKind } from "@/contract";
+import { productGallery } from "@/lib/shop/gallery";
 import { POLICY_KINDS } from "@/lib/shop-data-validation";
 import { compareSizes } from "@/lib/size-order";
 import { createClient } from "@/lib/supabase/server";
@@ -23,6 +24,9 @@ export type CatalogProduct = {
   name: string;
   price: number;
   imageUrl: string | null;
+  // PB-32: every photo in order; the first is the card photo. Without
+  // product_images rows it is [imageUrl] (or empty).
+  images: string[];
   variants: CatalogVariant[];
   sizeChart: CatalogSizeRow[];
 };
@@ -40,7 +44,7 @@ export async function getCatalog(shopId: string) {
     supabase
       .from("products")
       .select(
-        "id, code, name, price, image_url, variants(id, size, color, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)",
+        "id, code, name, price, image_url, variants(id, size, color, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg), product_images(url, position)",
       )
       .eq("shop_id", shopId)
       .order("code"),
@@ -55,9 +59,10 @@ export async function getCatalog(shopId: string) {
     if (result.error) throw new Error(`Không đọc được dữ liệu shop: ${result.error.message}`);
   }
 
-  const productList: CatalogProduct[] = (products.data ?? []).map(({ size_charts, image_url, ...product }) => ({
+  const productList: CatalogProduct[] = (products.data ?? []).map(({ size_charts, image_url, product_images, ...product }) => ({
     ...product,
     imageUrl: image_url,
+    images: productGallery(image_url, product_images),
     variants: product.variants.toSorted(
       (a, b) => a.color.localeCompare(b.color, "vi") || compareSizes(a.size, b.size),
     ),
@@ -88,4 +93,30 @@ export async function getCatalog(shopId: string) {
   }));
 
   return { products: productList, policies: policyList, pairings: pairingList };
+}
+
+// PB-32: the shop's contact details and banner, for the "Thông tin shop" tab.
+export type ShopProfile = {
+  name: string;
+  address: string | null;
+  phone: string | null;
+  fanpageUrl: string | null;
+  bannerUrl: string | null;
+};
+
+export async function getShopProfile(shopId: string): Promise<ShopProfile> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("shops")
+    .select("name, address, phone, fanpage_url, banner_url")
+    .eq("id", shopId)
+    .single();
+  if (error) throw new Error(`Không đọc được thông tin shop: ${error.message}`);
+  return {
+    name: data.name,
+    address: data.address,
+    phone: data.phone,
+    fanpageUrl: data.fanpage_url,
+    bannerUrl: data.banner_url,
+  };
 }

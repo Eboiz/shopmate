@@ -8,6 +8,7 @@ import { formatPrice } from "@/lib/format";
 import { displayColor, firstSentence, productGroup, shopGroupHref } from "@/lib/shop/catalog-view";
 import type { ShopCatalog, ShopProduct } from "@/lib/shop/types";
 import type { CartItem } from "./cart";
+import { ProductGallery } from "./product-gallery";
 import { productOptions } from "./product-options";
 import { SizeGuide } from "./size-guide";
 
@@ -103,13 +104,8 @@ export function ProductDetailView({ shopName, product, shopHref, policies, cartC
 
         <div className="grid overflow-hidden rounded-xl border border-[#e3dfd8] bg-white shadow-[0_20px_60px_-44px_#17171766] lg:grid-cols-[minmax(0,1.02fr)_minmax(0,1fr)]">
           <div className="p-4 sm:p-6">
-            <div className="relative aspect-square overflow-hidden rounded-lg bg-[#eeebe5]">
-              {product.imageUrl ? (
-                <Image src={product.imageUrl} alt={product.name} fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover" />
-              ) : (
-                <Image src="/images/product-placeholder.jpg" alt="" fill priority sizes="(max-width: 1024px) 100vw, 48vw" className="object-cover" />
-              )}
-            </div>
+            {/* PB-32: every photo in order; older responses without `images` show imageUrl. */}
+            <ProductGallery name={product.name} images={product.images ?? (product.imageUrl ? [product.imageUrl] : [])} />
           </div>
 
           <div className="flex flex-col border-t border-[#e3dfd8] p-5 sm:p-8 lg:border-l lg:border-t-0 lg:p-10">

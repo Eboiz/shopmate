@@ -221,6 +221,32 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"product_images": {
+                  Row: {
+                    "created_at": string,"id": string,"position": number,"product_id": string,"shop_id": string,"url": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"id"?: string,"position": number,"product_id": string,"shop_id": string,"url": string
+                  }
+                  Update: {
+                    "created_at"?: string,"id"?: string,"position"?: number,"product_id"?: string,"shop_id"?: string,"url"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "product_images_product_id_shop_id_fkey"
+      columns: ["product_id","shop_id"]
+isOneToOne: false
+      referencedRelation: "products"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "product_images_shop_id_fkey"
+      columns: ["shop_id"]
+isOneToOne: false
+      referencedRelation: "shops"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"products": {
                   Row: {
                     "category": string | null,"code": string,"created_at": string,"description": string | null,"id": string,"image_url": string | null,"name": string,"price": number,"shop_id": string
@@ -289,14 +315,14 @@ isOneToOne: false
                   ]
                 },"shops": {
                   Row: {
-                    "created_at": string,"id": string,"name": string,"slug": string
+                    "address": string | null,"banner_url": string | null,"created_at": string,"fanpage_url": string | null,"id": string,"name": string,"phone": string | null,"slug": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"name": string,"slug": string
+                    "address"?: string | null,"banner_url"?: string | null,"created_at"?: string,"fanpage_url"?: string | null,"id"?: string,"name": string,"phone"?: string | null,"slug": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"name"?: string,"slug"?: string
+                    "address"?: string | null,"banner_url"?: string | null,"created_at"?: string,"fanpage_url"?: string | null,"id"?: string,"name"?: string,"phone"?: string | null,"slug"?: string
                   }
                   Relationships: [
                     
@@ -401,6 +427,9 @@ isOneToOne: false
 { Args: { "p_channel"?: Database["public"]['Enums']["channel"],"p_query"?: string }; Returns: {
               "ai": number,"needs_human": number,"staff": number,"total": number
             }[]
+                           },
+"save_product_images":
+{ Args: { "p_product_id": string,"p_urls": Json }; Returns: number
                            },
 "save_size_chart":
 { Args: { "p_product_id": string,"p_rows": Json }; Returns: number

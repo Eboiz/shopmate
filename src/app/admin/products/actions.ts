@@ -18,6 +18,8 @@ import {
   saveProductSchema,
   updatePolicySchema,
 } from "@/lib/shop-data-validation";
+import { publicEnv } from "@/lib/env";
+import { productImagesFormSchema, shopProfileFormSchema } from "@/lib/shop/media-validation";
 import { saveSizeChartSchema } from "@/lib/size-chart-validation";
 import { createClient } from "@/lib/supabase/server";
 import type { FormState } from "./form-state";
@@ -138,5 +140,39 @@ export async function saveSizeChart(_prev: FormState, formData: FormData) {
         return { error, data: error ? null : [productId] };
       },
     { duplicate: SIZE_EXISTS, overlap: SIZE_OVERLAP },
+  );
+}
+
+// PB-32: the product's photos in order, replaced as a whole (save_product_images),
+// so moving a photo never trips unique (product_id, position) half way. The
+// first photo also becomes products.image_url, the card photo the AI and the
+// chat cards use.
+export async function saveProductImages(_prev: FormState, formData: FormData) {
+  return ownerWrite(
+    productImagesFormSchema(publicEnv().NEXT_PUBLIC_SUPABASE_URL),
+    formData,
+    ({ productId, urls }) =>
+      async (db) => {
+        const { error } = await db.rpc("save_product_images", { p_product_id: productId, p_urls: urls });
+        // An emptied list saves zero rows and is still a success.
+        return { error, data: error ? null : [productId] };
+      },
+  );
+}
+
+// PB-32: address, phone, fanpage and banner of the signed-in owner's shop. RLS
+// ("owner updates" on shops) refuses staff and other shops; an update RLS
+// hides returns no row, which reads as "not found or not allowed".
+export async function saveShopProfile(_prev: FormState, formData: FormData) {
+  return ownerWrite(
+    shopProfileFormSchema(publicEnv().NEXT_PUBLIC_SUPABASE_URL),
+    formData,
+    ({ address, phone, fanpageUrl, bannerUrl }) =>
+      (db, shopId) =>
+        db
+          .from("shops")
+          .update({ address, phone, fanpage_url: fanpageUrl, banner_url: bannerUrl })
+          .eq("id", shopId)
+          .select("id"),
   );
 }
