@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense, use, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import { ADMIN_NAV, isNavItemActive } from "@/lib/admin-nav";
 import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
 
-const NAV_ICONS = { "/admin": "grid", "/admin/inbox": "chat", "/admin/orders": "box", "/admin/products": "hanger", "/admin/reply-assistant": "spark" } as const;
+const NAV_ICONS = { "/admin": "grid", "/admin/inbox": "chat", "/admin/orders": "box", "/admin/products": "hanger", "/admin/reply-assistant": "spark", "/admin/ai-da-hoc": "book" } as const;
 
 type Counts = Partial<Record<(typeof ADMIN_NAV)[number]["href"], number>>;
 
@@ -28,7 +28,8 @@ async function readCounts(): Promise<Counts> {
 const countLabel = (href: keyof Counts, count: number) =>
   href === "/admin/inbox" ? `${count} khách cần nhân viên` : `${count} đơn chờ xác nhận`;
 
-export function AdminNav({ previewPath }: { previewPath?: string } = {}) {
+// pendingFacts: the count on "AI đã học" (PB-35a). A promise, so no page waits for it.
+export function AdminNav({ previewPath, pendingFacts }: { previewPath?: string; pendingFacts?: Promise<number> } = {}) {
   const pathname = usePathname();
   const [counts, setCounts] = useState<Counts>({});
 
@@ -48,7 +49,7 @@ export function AdminNav({ previewPath }: { previewPath?: string } = {}) {
   return (
     <nav
       aria-label="Menu quản lý"
-      className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-[#e3dfd8] bg-white px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_-20px_#171717] lg:sticky lg:inset-auto lg:top-0 lg:h-[calc(100dvh-4.5rem)] lg:w-60 lg:shrink-0 lg:grid-cols-1 lg:content-start lg:gap-1 lg:border-r lg:border-t-0 lg:border-[#292929] lg:bg-[#171717] lg:px-3 lg:py-7 lg:shadow-none"
+      className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-[#e3dfd8] bg-white px-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-8px_24px_-20px_#171717] lg:sticky lg:inset-auto lg:top-0 lg:h-[calc(100dvh-4.5rem)] lg:w-60 lg:shrink-0 lg:grid-cols-1 lg:content-start lg:gap-1 lg:border-r lg:border-t-0 lg:border-[#292929] lg:bg-[#171717] lg:px-3 lg:py-7 lg:shadow-none"
     >
       {ADMIN_NAV.map(({ href, label }) => {
         const active = isNavItemActive(previewPath ?? pathname, href);
@@ -58,7 +59,7 @@ export function AdminNav({ previewPath }: { previewPath?: string } = {}) {
             key={href}
             href={href}
             aria-current={active ? "page" : undefined}
-            className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 text-center text-xs transition-colors lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:text-sm ${
+            className={`relative flex min-h-16 flex-col items-center justify-center gap-1 rounded-lg px-1 text-center text-xs transition-colors lg:min-h-12 lg:flex-row lg:justify-start lg:gap-3 lg:px-4 lg:text-sm ${
               active ? "bg-[#efebe4] font-bold text-[#171717] lg:bg-[#c2412b] lg:text-white" : "text-[#5c5954] hover:bg-[#efebe4] hover:text-[#171717] lg:text-[#c9c5bd] lg:hover:bg-[#292929] lg:hover:text-white"
             }`}
           >
@@ -79,9 +80,25 @@ export function AdminNav({ previewPath }: { previewPath?: string } = {}) {
                 <span className="sr-only">, {countLabel(href as keyof Counts, count)}</span>
               </>
             ) : null}
+            {href === "/admin/ai-da-hoc" && pendingFacts && (
+              <Suspense fallback={null}>
+                <PendingBadge count={pendingFacts} active={active} />
+              </Suspense>
+            )}
           </Link>
         );
       })}
     </nav>
+  );
+}
+
+function PendingBadge({ count, active }: { count: Promise<number>; active: boolean }) {
+  const n = use(count);
+  if (n <= 0) return null;
+  return (
+    <span className={`absolute left-[calc(50%+4px)] top-2 min-w-4 rounded-full bg-[#c2412b] px-1 text-[10px] font-bold leading-4 text-white lg:static lg:ml-auto lg:min-w-5 lg:text-xs lg:leading-5 ${active ? "lg:bg-white lg:text-[#c2412b]" : ""}`}>
+      {n}
+      <span className="sr-only"> mục chờ duyệt</span>
+    </span>
   );
 }

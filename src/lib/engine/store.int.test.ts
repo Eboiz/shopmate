@@ -23,6 +23,7 @@ describe("createSupabaseStore", () => {
         previousTurnMissedProduct: false,
         previousQuote: null,
         previousHandoffOffer: null,
+        previousTurnId: null,
       });
     });
 
