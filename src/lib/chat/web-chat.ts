@@ -2,6 +2,7 @@ import "server-only";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { replySchema, type ConversationMode } from "@/contract";
 import { sortSizes } from "@/lib/engine/text";
+import { cardImage, productGallery } from "@/lib/shop/gallery";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { ShopCatalog } from "@/lib/shop/types";
 import { signPhotoUrls } from "./photo-store";
@@ -91,32 +92,47 @@ export async function productName(shopId: string, productId: string): Promise<st
 // and the shop's return and shipping policies. Prices and stock come from the
 // database, the same rows the AI tools read. `variants` keeps sold-out rows
 // (stock 0) so the page can show a size as "Hết hàng" instead of hiding it.
+// PB-32: the shop's contact details and banner, and each product's photos in
+// order (`images`); a product without product_images rows keeps its image_url.
 export async function loadCatalog(shop: Shop): Promise<ShopCatalog> {
   const db = createAdminClient();
-  const [products, policies] = await Promise.all([
+  const [products, policies, profile] = await Promise.all([
     db
       .from("products")
       .select(
-        "id, name, price, image_url, category, description, variants(color, size, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg)",
+        "id, name, price, image_url, category, description, variants(color, size, stock), size_charts(size, height_min_cm, height_max_cm, weight_min_kg, weight_max_kg), product_images(url, position)",
       )
       .eq("shop_id", shop.id)
       .order("code"),
     db.from("policies").select("kind, content").eq("shop_id", shop.id).in("kind", ["doi_tra", "giao_hang"]),
+    db.from("shops").select("address, phone, fanpage_url, banner_url").eq("id", shop.id).maybeSingle(),
   ]);
   if (products.error) throw new Error(`products: ${products.error.message}`);
   if (policies.error) throw new Error(`policies: ${policies.error.message}`);
+  if (profile.error) throw new Error(`shops: ${profile.error.message}`);
   const policy = (kind: "doi_tra" | "giao_hang") =>
     policies.data.find((row) => row.kind === kind)?.content.trim() ?? "";
 
   return {
-    shop: { name: shop.name, policies: { returns: policy("doi_tra"), shipping: policy("giao_hang") } },
+    shop: {
+      name: shop.name,
+      policies: { returns: policy("doi_tra"), shipping: policy("giao_hang") },
+      contact: {
+        address: profile.data?.address ?? null,
+        phone: profile.data?.phone ?? null,
+        fanpageUrl: profile.data?.fanpage_url ?? null,
+      },
+      bannerUrl: profile.data?.banner_url ?? null,
+    },
     products: products.data.map((product) => {
       const inStock = product.variants.filter((variant) => variant.stock > 0);
+      const images = productGallery(product.image_url, product.product_images);
       return {
         id: product.id,
         name: product.name,
         price: product.price,
-        imageUrl: product.image_url,
+        imageUrl: cardImage(images, product.image_url),
+        images,
         category: product.category,
         description: product.description,
         colors: [...new Set(inStock.map((variant) => variant.color))].toSorted((a, b) => a.localeCompare(b, "vi")),

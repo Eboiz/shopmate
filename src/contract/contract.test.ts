@@ -3,6 +3,10 @@ import {
   conversationModeSchema,
   engineInputSchema,
   engineOutputSchema,
+  gapQuestionSchema,
+  gapTopicProposalSchema,
+  hasBlank,
+  learnResultSchema,
   modelReplySchema,
   replySchema,
   toolDefinitions,
@@ -191,5 +195,51 @@ describe("engine input and output", () => {
         personalReplyNeeded: false,
       }).success,
     ).toBe(true);
+  });
+});
+
+describe("learning contract", () => {
+  it("accepts a learned rule", () => {
+    expect(() =>
+      learnResultSchema.parse({
+        status: "learn",
+        policyKind: "giao_hang",
+        rule: "Shop cho kiểm hàng trước khi nhận.",
+        evidence: "shop có cho kiểm hàng",
+        needsReview: false,
+        reviewReasons: [],
+        reason: "",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts a skip with a known reason only", () => {
+    expect(learnResultSchema.safeParse({ status: "skip", skipReason: "one_off", reason: "" }).success).toBe(true);
+    expect(learnResultSchema.safeParse({ status: "skip", skipReason: "maybe", reason: "" }).success).toBe(false);
+  });
+
+  it("rejects a topic from fewer than 2 conversations", () => {
+    expect(
+      gapTopicProposalSchema.safeParse({
+        title: "Kiểm hàng",
+        policyKind: "giao_hang",
+        questionIds: [id],
+        conversationCount: 1,
+        sampleQuestions: ["Kiểm hàng được không?"],
+        draft: "Shop [có/không] cho kiểm hàng.",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("caps a gap question at 500 characters", () => {
+    expect(
+      gapQuestionSchema.safeParse({ id, conversationId: id, reason: "policy_not_covered", question: "a".repeat(501) }).success,
+    ).toBe(false);
+  });
+
+  it("hasBlank finds [...] blanks", () => {
+    expect(hasBlank("Shop [có/không] cho kiểm hàng.")).toBe(true);
+    expect(hasBlank("Shop có cho kiểm hàng.")).toBe(false);
+    expect(hasBlank("[]")).toBe(true);
   });
 });

@@ -13,12 +13,44 @@ export const messengerText = (psid: string, mid: string, text: string): Messenge
   message: { mid, text },
 });
 
-// Meta escapes non-ASCII as \uXXXX and signs those exact bytes.
-export function messengerBody(items: MessengerItem[], pageId = channelSecrets.messengerPageId) {
-  return JSON.stringify({ object: "page", entry: [{ id: pageId, time: Date.now(), messaging: items }] }).replace(
+// Meta escapes non-ASCII as \uXXXX and signs those exact bytes. The same
+// "messaging" shape carries Messenger (object=page) and Instagram Direct
+// (object=instagram, PB-23): only the `object` field and the entry id change.
+export function messengerBody(items: MessengerItem[], pageId = channelSecrets.messengerPageId, object: "page" | "instagram" = "page") {
+  return JSON.stringify({ object, entry: [{ id: pageId, time: Date.now(), messaging: items }] }).replace(
     /[\u0080-￿]/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
+}
+
+// A WhatsApp Cloud API delivery (PB-27), also on the shared Meta webhook: one
+// change per business phone number, the shopper's messages under value.messages.
+// Built as a plain JSON string (no \u escapes) and signed over its exact bytes,
+// so postMessenger() can sign and send it just like a page delivery. The app's
+// parser only reads metadata.phone_number_id and messages[], but the plan keeps
+// Meta's full shape (waba id, contacts, per-message id) for fidelity.
+type WaMessage = Record<string, unknown>;
+export function whatsappBody(
+  phoneNumberId: string,
+  messages: WaMessage[],
+  options: { waId?: string; displayNumber?: string; waba?: string } = {},
+): string {
+  const waId = options.waId ?? messages.find((m) => typeof (m as { from?: unknown }).from === "string")?.from;
+  return JSON.stringify({
+    object: "whatsapp_business_account",
+    entry: [{
+      id: options.waba ?? "waba-e2e",
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: { display_phone_number: options.displayNumber ?? "15550001111", phone_number_id: phoneNumberId },
+          ...(waId ? { contacts: [{ profile: { name: "E2E" }, wa_id: waId }] } : {}),
+          messages,
+        },
+      }],
+    }],
+  });
 }
 
 export const signMessenger = (body: string, secret = channelSecrets.metaAppSecret) =>

@@ -73,14 +73,14 @@ isOneToOne: false
                   ]
                 },"conversations": {
                   Row: {
-                    "created_at": string,"id": string,"last_message_at": string,"mode": Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
+                    "created_at": string,"id": string,"last_message_at": string,"latest_shopper_message_at": string | null,"latest_shopper_message_id": string | null,"mode": Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
+                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"latest_shopper_message_at"?: string | null,"latest_shopper_message_id"?: string | null,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id"?: string,"shopper_id"?: string
+                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"latest_shopper_message_at"?: string | null,"latest_shopper_message_id"?: string | null,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id"?: string,"shopper_id"?: string
                   }
                   Relationships: [
                     {
@@ -89,6 +89,88 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "shoppers"
       referencedColumns: ["id","shop_id"]
+    }
+                  ]
+                },"data_gaps": {
+                  Row: {
+                    "ai_turn_id": string | null,"conversation_id": string,"created_at": string,"id": string,"learned_fact_id": string | null,"product_id": string | null,"question": string,"reason": Database["public"]['Enums']["gap_reason"],"shop_id": string,"soft_declined": boolean,"status": Database["public"]['Enums']["gap_status"]
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "ai_turn_id"?: string | null,"conversation_id": string,"created_at"?: string,"id"?: string,"learned_fact_id"?: string | null,"product_id"?: string | null,"question": string,"reason": Database["public"]['Enums']["gap_reason"],"shop_id": string,"soft_declined"?: boolean,"status"?: Database["public"]['Enums']["gap_status"]
+                  }
+                  Update: {
+                    "ai_turn_id"?: string | null,"conversation_id"?: string,"created_at"?: string,"id"?: string,"learned_fact_id"?: string | null,"product_id"?: string | null,"question"?: string,"reason"?: Database["public"]['Enums']["gap_reason"],"shop_id"?: string,"soft_declined"?: boolean,"status"?: Database["public"]['Enums']["gap_status"]
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "data_gaps_ai_turn_id_fkey"
+      columns: ["ai_turn_id"]
+isOneToOne: false
+      referencedRelation: "ai_turns"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "data_gaps_conversation_id_shop_id_fkey"
+      columns: ["conversation_id","shop_id"]
+isOneToOne: false
+      referencedRelation: "conversations"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "data_gaps_learned_fact_id_shop_id_fkey"
+      columns: ["learned_fact_id","shop_id"]
+isOneToOne: false
+      referencedRelation: "learned_facts"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "data_gaps_product_id_shop_id_fkey"
+      columns: ["product_id","shop_id"]
+isOneToOne: false
+      referencedRelation: "products"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "data_gaps_shop_id_fkey"
+      columns: ["shop_id"]
+isOneToOne: false
+      referencedRelation: "shops"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"learned_facts": {
+                  Row: {
+                    "created_at": string,"decided_at": string | null,"decided_by": string | null,"id": string,"policy_kind": Database["public"]['Enums']["policy_kind"] | null,"product_id": string | null,"review_reasons": (string)[],"shop_id": string,"source_message_id": string | null,"status": Database["public"]['Enums']["fact_status"],"text": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"decided_at"?: string | null,"decided_by"?: string | null,"id"?: string,"policy_kind"?: Database["public"]['Enums']["policy_kind"] | null,"product_id"?: string | null,"review_reasons"?: (string)[],"shop_id": string,"source_message_id"?: string | null,"status"?: Database["public"]['Enums']["fact_status"],"text": string
+                  }
+                  Update: {
+                    "created_at"?: string,"decided_at"?: string | null,"decided_by"?: string | null,"id"?: string,"policy_kind"?: Database["public"]['Enums']["policy_kind"] | null,"product_id"?: string | null,"review_reasons"?: (string)[],"shop_id"?: string,"source_message_id"?: string | null,"status"?: Database["public"]['Enums']["fact_status"],"text"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "learned_facts_decided_by_shop_id_fkey"
+      columns: ["decided_by","shop_id"]
+isOneToOne: false
+      referencedRelation: "profiles"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "learned_facts_product_id_shop_id_fkey"
+      columns: ["product_id","shop_id"]
+isOneToOne: false
+      referencedRelation: "products"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "learned_facts_shop_id_fkey"
+      columns: ["shop_id"]
+isOneToOne: false
+      referencedRelation: "shops"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "learned_facts_source_message_id_fkey"
+      columns: ["source_message_id"]
+isOneToOne: false
+      referencedRelation: "messages"
+      referencedColumns: ["id"]
     }
                   ]
                 },"messages": {
@@ -145,14 +227,14 @@ isOneToOne: false
                   ]
                 },"orders": {
                   Row: {
-                    "cancelled_at": string | null,"cancelled_by": string | null,"confirmed_at": string | null,"confirmed_by": string | null,"conversation_id": string,"created_at": string,"customer_address": string,"customer_name": string,"customer_phone": string,"id": string,"shop_id": string,"status": Database["public"]['Enums']["order_status"],"total": number
+                    "cancelled_at": string | null,"cancelled_by": string | null,"confirmed_at": string | null,"confirmed_by": string | null,"conversation_id": string,"created_at": string,"customer_address": string,"customer_name": string,"customer_phone": string,"id": string,"quote_key": string | null,"shop_id": string,"status": Database["public"]['Enums']["order_status"],"total": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id": string,"created_at"?: string,"customer_address": string,"customer_name": string,"customer_phone": string,"id"?: string,"shop_id": string,"status"?: Database["public"]['Enums']["order_status"],"total": number
+                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id": string,"created_at"?: string,"customer_address": string,"customer_name": string,"customer_phone": string,"id"?: string,"quote_key"?: string | null,"shop_id": string,"status"?: Database["public"]['Enums']["order_status"],"total": number
                   }
                   Update: {
-                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id"?: string,"created_at"?: string,"customer_address"?: string,"customer_name"?: string,"customer_phone"?: string,"id"?: string,"shop_id"?: string,"status"?: Database["public"]['Enums']["order_status"],"total"?: number
+                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id"?: string,"created_at"?: string,"customer_address"?: string,"customer_name"?: string,"customer_phone"?: string,"id"?: string,"quote_key"?: string | null,"shop_id"?: string,"status"?: Database["public"]['Enums']["order_status"],"total"?: number
                   }
                   Relationships: [
                     {
@@ -215,6 +297,32 @@ isOneToOne: false
                   Relationships: [
                     {
       foreignKeyName: "policies_shop_id_fkey"
+      columns: ["shop_id"]
+isOneToOne: false
+      referencedRelation: "shops"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"product_images": {
+                  Row: {
+                    "created_at": string,"id": string,"position": number,"product_id": string,"shop_id": string,"url": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"id"?: string,"position": number,"product_id": string,"shop_id": string,"url": string
+                  }
+                  Update: {
+                    "created_at"?: string,"id"?: string,"position"?: number,"product_id"?: string,"shop_id"?: string,"url"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "product_images_product_id_shop_id_fkey"
+      columns: ["product_id","shop_id"]
+isOneToOne: false
+      referencedRelation: "products"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "product_images_shop_id_fkey"
       columns: ["shop_id"]
 isOneToOne: false
       referencedRelation: "shops"
@@ -309,14 +417,14 @@ isOneToOne: false
                   ]
                 },"shops": {
                   Row: {
-                    "created_at": string,"id": string,"name": string,"slug": string
+                    "address": string | null,"banner_url": string | null,"created_at": string,"fanpage_url": string | null,"id": string,"learning_mode": Database["public"]['Enums']["learning_mode"],"name": string,"phone": string | null,"slug": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"name": string,"slug": string
+                    "address"?: string | null,"banner_url"?: string | null,"created_at"?: string,"fanpage_url"?: string | null,"id"?: string,"learning_mode"?: Database["public"]['Enums']["learning_mode"],"name": string,"phone"?: string | null,"slug": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"name"?: string,"slug"?: string
+                    "address"?: string | null,"banner_url"?: string | null,"created_at"?: string,"fanpage_url"?: string | null,"id"?: string,"learning_mode"?: Database["public"]['Enums']["learning_mode"],"name"?: string,"phone"?: string | null,"slug"?: string
                   }
                   Relationships: [
                     
@@ -391,7 +499,13 @@ isOneToOne: false
 { Args: { "p_decision": Database["public"]['Enums']["order_status"],"p_order_id": string }; Returns: Json
                            },
 "engine_create_draft_order":
-{ Args: { "p_conversation_id": string,"p_customer_address": string,"p_customer_name": string,"p_customer_phone": string,"p_items": Json,"p_shop_id": string }; Returns: Json
+{ Args: { "p_conversation_id": string,"p_customer_address": string,"p_customer_name": string,"p_customer_phone": string,"p_expected_prices": Json,"p_items": Json,"p_quote_key": string,"p_shop_id": string }; Returns: Json
+                           },
+"engine_resume_ai":
+{ Args: { "p_conversation_id": string,"p_message_id": string,"p_shop_id": string }; Returns: boolean
+                           },
+"engine_order_for_quote":
+{ Args: { "p_conversation_id": string,"p_quote_key": string,"p_shop_id": string,"p_supersede": boolean }; Returns: Json
                            },
 "engine_search_products":
 { Args: { "p_limit": number,"p_query": string,"p_shop_id": string }; Returns: {
@@ -416,6 +530,9 @@ isOneToOne: false
               "ai": number,"needs_human": number,"staff": number,"total": number
             }[]
                            },
+"save_product_images":
+{ Args: { "p_product_id": string,"p_urls": Json }; Returns: number
+                           },
 "save_size_chart":
 { Args: { "p_product_id": string,"p_rows": Json }; Returns: number
                            },
@@ -432,7 +549,7 @@ isOneToOne: false
                            }
           }
           Enums: {
-            "channel": "web"|"messenger"|"instagram"|"telegram"|"whatsapp","conversation_mode": "ai"|"needs_human"|"staff","engine_mode": "customer"|"staff_draft","handoff_reason": "complaint"|"asked_for_human"|"not_covered_by_data"|"product_not_found"|"misunderstood_twice"|"size_out_of_range"|"policy_not_covered"|"postcheck_failed"|"too_many_tool_calls","message_sender": "shopper"|"ai"|"staff"|"system","order_status": "draft"|"confirmed"|"cancelled","policy_kind": "doi_tra"|"giao_hang"|"khuyen_mai","profile_role": "owner"|"staff"
+            "channel": "web"|"messenger"|"instagram"|"telegram"|"whatsapp","conversation_mode": "ai"|"needs_human"|"staff","engine_mode": "customer"|"staff_draft","fact_status": "active"|"pending"|"removed","gap_reason": "policy_not_covered"|"not_covered_by_data"|"product_not_found","gap_status": "open"|"learned"|"dismissed","handoff_reason": "complaint"|"asked_for_human"|"not_covered_by_data"|"product_not_found"|"misunderstood_twice"|"size_out_of_range"|"policy_not_covered"|"postcheck_failed"|"too_many_tool_calls","learning_mode": "auto"|"review","message_sender": "shopper"|"ai"|"staff"|"system","order_status": "draft"|"confirmed"|"cancelled","policy_kind": "doi_tra"|"giao_hang"|"khuyen_mai","profile_role": "owner"|"staff"
           }
           CompositeTypes: {
             [_ in never]: never
@@ -548,7 +665,7 @@ export type CompositeTypes<
 export const Constants = {
   "public": {
           Enums: {
-            "channel": ["web", "messenger", "instagram", "telegram", "whatsapp"],"conversation_mode": ["ai", "needs_human", "staff"],"engine_mode": ["customer", "staff_draft"],"handoff_reason": ["complaint", "asked_for_human", "not_covered_by_data", "product_not_found", "misunderstood_twice", "size_out_of_range", "policy_not_covered", "postcheck_failed", "too_many_tool_calls"],"message_sender": ["shopper", "ai", "staff", "system"],"order_status": ["draft", "confirmed", "cancelled"],"policy_kind": ["doi_tra", "giao_hang", "khuyen_mai"],"profile_role": ["owner", "staff"]
+            "channel": ["web", "messenger", "instagram", "telegram", "whatsapp"],"conversation_mode": ["ai", "needs_human", "staff"],"engine_mode": ["customer", "staff_draft"],"fact_status": ["active", "pending", "removed"],"gap_reason": ["policy_not_covered", "not_covered_by_data", "product_not_found"],"gap_status": ["open", "learned", "dismissed"],"handoff_reason": ["complaint", "asked_for_human", "not_covered_by_data", "product_not_found", "misunderstood_twice", "size_out_of_range", "policy_not_covered", "postcheck_failed", "too_many_tool_calls"],"learning_mode": ["auto", "review"],"message_sender": ["shopper", "ai", "staff", "system"],"order_status": ["draft", "confirmed", "cancelled"],"policy_kind": ["doi_tra", "giao_hang", "khuyen_mai"],"profile_role": ["owner", "staff"]
           }
         }
 } as const

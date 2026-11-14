@@ -3,6 +3,9 @@
 import Image from "next/image";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { formatPrice } from "@/lib/format";
+import { BODY_LIMITS_ERROR, parseBody } from "@/lib/shop/body-limits";
+import { contactItems, type ShopContact } from "@/lib/shop/contact";
+import { DEFAULT_BANNER } from "@/lib/shop/gallery";
 import type { ShopProduct, SizeChartRow } from "@/lib/shop/types";
 import { Icon } from "@/components/ui/icon";
 import { HeaderSearch } from "./header-search";
@@ -157,16 +160,18 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
 
 type HeroProps = {
   shopName: string;
+  // PB-32: the owner's banner; null or missing keeps the default photo.
+  bannerUrl?: string | null;
   featured: ShopProduct[];
   onAsk: (text: string) => void;
   onAskAbout: (product: ShopProduct) => void;
 };
 
-export function ShopHero({ shopName, featured, onAsk, onAskAbout }: HeroProps) {
+export function ShopHero({ shopName, bannerUrl, featured, onAsk, onAskAbout }: HeroProps) {
   return (
     <section id="dau-trang" className="mx-auto grid max-w-[1400px] gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[1.45fr_1fr] lg:px-10">
       <div className="relative flex min-h-[440px] items-end overflow-hidden bg-[#33312d] text-white lg:min-h-[580px]">
-        <Image src="/images/hero-boutique.jpg" alt="" fill priority sizes="(max-width: 1024px) 100vw, 60vw" className="object-cover" />
+        <Image src={bannerUrl || DEFAULT_BANNER} alt="" fill priority sizes="(max-width: 1024px) 100vw, 60vw" className="object-cover" />
         <div className="absolute inset-0 bg-gradient-to-b from-[#17171766] via-[#17171799] to-[#171717ee] lg:from-[#17171700] lg:via-[#17171733] lg:to-[#171717e6]" />
         <div className="ui-enter relative z-10 grid max-w-3xl gap-4 p-6 sm:p-10">
           <p className="text-balance text-[clamp(2.25rem,4.4vw,4.25rem)] font-black uppercase leading-[1.06] tracking-[-.035em]">Chọn đúng size,<br />mặc đúng gu<span className="text-[#e9573f]">.</span></p>
@@ -226,14 +231,16 @@ export function ShopHero({ shopName, featured, onAsk, onAskAbout }: HeroProps) {
 
 type TilesProps = { groups: GroupLink[]; onChoose: (name: string) => void; onAsk: (text: string) => void };
 
+// PB-46: every group that has products, then the "ask the AI" tile. On a phone
+// the AI tile takes the free cell of an odd last row, or a row of its own.
 export function GroupTiles({ groups, onChoose, onAsk }: TilesProps) {
-  const shown = groups.slice(0, 4);
+  const odd = groups.length % 2 === 1;
   return (
     <section aria-labelledby="bo-suu-tap-title" className="mx-auto max-w-[1400px] px-4 pb-16 sm:px-6 sm:pb-20 lg:px-10">
       <h2 id="bo-suu-tap-title" className="mb-6 text-[clamp(1.9rem,3.6vw,3rem)] font-black uppercase leading-none tracking-[-.04em]">Theo danh mục<span className="text-[#e9573f]">.</span></h2>
-      <div style={{ "--tiles": Math.max(4, shown.length + 1) } as CSSProperties} className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-[repeat(var(--tiles),minmax(0,1fr))]">
-        {shown.map((group) => (
-          <button key={group.name} type="button" onClick={() => onChoose(group.name)} className="group relative flex aspect-[3/4.2] items-end overflow-hidden bg-[#33312d] text-left text-white">
+      <div style={{ "--tiles": Math.max(4, groups.length + 1) } as CSSProperties} className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-[repeat(var(--tiles),minmax(0,1fr))]">
+        {groups.map((group) => (
+          <button key={group.name} type="button" onClick={() => onChoose(group.name)} className="group relative flex aspect-[4/5] items-end overflow-hidden bg-[#33312d] text-left text-white md:aspect-[3/4.2]">
             <Image src={group.imageUrl || "/images/product-placeholder.jpg"} alt="" fill sizes="(max-width: 768px) 50vw, 20vw" className="object-cover transition-transform duration-500 group-hover:scale-105" />
             <span className="absolute inset-0 bg-gradient-to-b from-[#17171700] from-40% to-[#171717cc]" />
             <span className="relative z-10 grid gap-1 p-4 sm:p-5">
@@ -242,7 +249,7 @@ export function GroupTiles({ groups, onChoose, onAsk }: TilesProps) {
             </span>
           </button>
         ))}
-        <button type="button" onClick={() => onAsk("Mình chưa biết chọn gì, tư vấn giúp mình")} className="relative col-span-2 flex min-h-48 flex-col justify-between gap-6 bg-[#e9573f] p-4 text-left text-[#171717] transition-colors hover:bg-[#f06a53] sm:p-5 md:col-span-1 md:aspect-[3/4.2] md:min-h-0">
+        <button type="button" onClick={() => onAsk("Mình chưa biết chọn gì, tư vấn giúp mình")} className={`relative flex flex-col justify-between gap-6 bg-[#e9573f] p-4 text-left text-[#171717] transition-colors hover:bg-[#f06a53] sm:p-5 md:col-span-1 md:aspect-[3/4.2] md:min-h-0 ${odd ? "aspect-[4/5]" : "col-span-2 min-h-48"}`}>
           <span className="text-[clamp(2.25rem,3.6vw,3.25rem)] font-black leading-[.92] tracking-[-.04em]">Chưa biết chọn?</span>
           <span className="grid gap-1">
             <span className="text-lg font-black uppercase leading-tight tracking-[-.03em] sm:text-xl">Hỏi trợ lý AI</span>
@@ -254,8 +261,6 @@ export function GroupTiles({ groups, onChoose, onAsk }: TilesProps) {
   );
 }
 
-const inRange = (value: number, min: number, max: number) => Number.isFinite(value) && value >= min && value <= max;
-
 export function SizeBand({ chart, onAsk }: { chart: SizeChartRow[] | null; onAsk: (text: string) => void }) {
   const [height, setHeight] = useState("");
   const [weight, setWeight] = useState("");
@@ -263,14 +268,13 @@ export function SizeBand({ chart, onAsk }: { chart: SizeChartRow[] | null; onAsk
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const h = Number(height.replace(",", "."));
-    const w = Number(weight.replace(",", "."));
-    if (!inRange(h, 120, 210) || !inRange(w, 30, 150)) {
-      setError("Nhập chiều cao từ 120 đến 210 cm và cân nặng từ 30 đến 150 kg.");
+    const body = parseBody(height, weight);
+    if (!body) {
+      setError(BODY_LIMITS_ERROR);
       return;
     }
     setError("");
-    onAsk(`Mình cao ${h}cm, nặng ${w}kg, tư vấn size giúp mình`);
+    onAsk(`Mình cao ${body.heightCm}cm, nặng ${body.weightKg}kg, tư vấn size giúp mình`);
   }
 
   const field = "min-h-[52px] w-full border-[1.5px] border-[#5a5752] bg-transparent px-3.5 text-base tabular-nums text-white outline-none placeholder:text-[#8f8a82] focus:border-[#e9573f]";
@@ -323,22 +327,47 @@ export function SizeBand({ chart, onAsk }: { chart: SizeChartRow[] | null; onAsk
 
 type FooterProps = {
   shopName: string;
+  // PB-32: address, phone and fanpage; an empty field is not shown.
+  contact?: Partial<ShopContact>;
   groups: GroupLink[];
   policyItems: Array<{ title: string; text: string }>;
   onChoose: (name: string) => void;
   onAsk: (text: string) => void;
 };
 
-export function ShopFooter({ shopName, groups, policyItems, onChoose, onAsk }: FooterProps) {
+export function ShopFooter({ shopName, contact, groups, policyItems, onChoose, onAsk }: FooterProps) {
   const head = "mb-4 text-xs font-extrabold uppercase tracking-[.16em]";
   const link = "inline-flex min-h-8 items-center text-left text-sm text-[#45423d] hover:text-[#c2412b]";
+  const contacts = contactItems(contact);
   return (
-    // pb-28 leaves room for the floating chat button and the phone bottom bar.
-    <footer id="chinh-sach" className="scroll-mt-24 border-t border-[#e3dfd8] bg-[#f5f3ef] pb-28">
+    // sm:pb-28 leaves room for the floating chat button; on a phone the page
+    // already ends with the bottom bar's height (.shop-has-bar).
+    <footer id="chinh-sach" className="scroll-mt-24 border-t border-[#e3dfd8] bg-[#f5f3ef] pb-10 sm:pb-28">
       <div className="mx-auto grid max-w-[1400px] gap-10 px-4 pt-14 sm:grid-cols-2 sm:px-6 lg:grid-cols-[1.2fr_.8fr_.9fr_2fr] lg:px-10">
         <div>
           <p className="text-2xl font-black uppercase tracking-[-.04em]">{shopName}<span className="text-[#e9573f]">.</span></p>
           <p className="mt-3 max-w-[34ch] text-sm leading-6 text-[#45423d]">Hỏi gì cũng được: trợ lý AI trả lời ngay trên trang, nhân viên shop hỗ trợ khi cần.</p>
+          {contacts.length > 0 && (
+            <address className="mt-5 grid gap-2 text-sm not-italic leading-6 text-[#45423d]">
+              {contacts.map((item) =>
+                item.kind === "address" ? (
+                  <p key={item.kind}><span className="font-semibold text-[#171717]">Địa chỉ:</span> {item.text}</p>
+                ) : item.kind === "phone" ? (
+                  <p key={item.kind}>
+                    <span className="font-semibold text-[#171717]">Điện thoại:</span>{" "}
+                    <a href={item.href} className="inline-flex min-h-11 items-center underline-offset-4 hover:text-[#c2412b] hover:underline">{item.text}</a>
+                  </p>
+                ) : (
+                  <p key={item.kind} className="break-words">
+                    <span className="font-semibold text-[#171717]">Fanpage:</span>{" "}
+                    <a href={item.href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center break-all underline-offset-4 hover:text-[#c2412b] hover:underline">
+                      {item.text}<span className="sr-only"> (mở tab mới)</span>
+                    </a>
+                  </p>
+                ),
+              )}
+            </address>
+          )}
         </div>
         {groups.length > 0 && (
           <div>

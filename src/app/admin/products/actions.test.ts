@@ -25,7 +25,10 @@ vi.mock("next/cache", () => ({ refresh }));
 vi.mock("@/lib/auth", () => ({ requireStaff: async () => ({ shopId: "shop-a", role: auth.role }) }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc, from }) }));
 
-const { saveProduct, saveSizeChart } = await import("./actions");
+vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://abc.supabase.co");
+vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test");
+
+const { saveProduct, saveProductImages, saveShopProfile, saveSizeChart } = await import("./actions");
 
 const form = (rows: unknown) => {
   const data = new FormData();
@@ -135,6 +138,117 @@ describe("saveProduct", () => {
   it("tells staff only the owner may edit", async () => {
     auth.role = "staff";
     expect((await saveProduct({ error: null }, productForm("390000", []))).error).toBe("Chỉ chủ shop được sửa dữ liệu này.");
+    expect(writes).toEqual([]);
+  });
+});
+
+// PB-32: photo list and shop profile.
+const PUBLIC = "https://abc.supabase.co/storage/v1/object/public";
+
+describe("saveProductImages", () => {
+  const images = (urls: unknown) => {
+    const data = new FormData();
+    data.set("productId", "product-1");
+    data.set("urls", JSON.stringify(urls));
+    return data;
+  };
+
+  beforeEach(() => {
+    auth.role = "owner";
+    rpc.mockReset().mockResolvedValue({ data: 2, error: null });
+    refresh.mockReset();
+  });
+
+  it("saves the photos in the given order and refreshes the page", async () => {
+    const urls = [`${PUBLIC}/product-images/shop-a/p1/b.webp`, `${PUBLIC}/product-images/SP01.jpg`];
+    expect(await saveProductImages({ error: null }, images(urls))).toEqual({ error: null });
+    expect(rpc).toHaveBeenCalledWith("save_product_images", { p_product_id: "product-1", p_urls: urls });
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("treats an emptied list as saved", async () => {
+    rpc.mockResolvedValue({ data: 0, error: null });
+    expect(await saveProductImages({ error: null }, images([]))).toEqual({ error: null });
+  });
+
+  it("refuses a URL outside the project's product-images bucket, before any write", async () => {
+    const result = await saveProductImages({ error: null }, images(["https://evil.example/a.jpg"]));
+    expect(result.error).toMatch(/không phải ảnh tải lên/);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("refuses more than 8 photos and repeated photos", async () => {
+    const many = Array.from({ length: 9 }, (_, i) => `${PUBLIC}/product-images/shop-a/p1/${i}.webp`);
+    expect((await saveProductImages({ error: null }, images(many))).error).toMatch(/tối đa 8 ảnh/);
+    const twice = [many[0], many[0]];
+    expect((await saveProductImages({ error: null }, images(twice))).error).toMatch(/bị lặp/);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("tells staff it is owner-only without writing", async () => {
+    auth.role = "staff";
+    expect((await saveProductImages({ error: null }, images([]))).error).toBe("Chỉ chủ shop được sửa dữ liệu này.");
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps an RLS refusal from the database to the owner-only message", async () => {
+    rpc.mockResolvedValue({ data: null, error: { code: "42501" } });
+    expect((await saveProductImages({ error: null }, images([]))).error).toBe("Chỉ chủ shop được sửa dữ liệu này.");
+  });
+});
+
+describe("saveShopProfile", () => {
+  const profile = (fields: Record<string, string>) => {
+    const data = new FormData();
+    for (const [key, value] of Object.entries({ address: "", phone: "", fanpageUrl: "", bannerUrl: "", ...fields })) data.set(key, value);
+    return data;
+  };
+
+  beforeEach(() => {
+    auth.role = "owner";
+    writes.length = 0;
+    answer.fn = () => ({ data: [{ id: "shop-a" }], error: null });
+    refresh.mockReset();
+  });
+
+  it("saves the trimmed fields of the signed-in shop, empty ones as null", async () => {
+    const result = await saveShopProfile(
+      { error: null },
+      profile({ address: " 12 Lê Lợi ", phone: "0901 234 567", bannerUrl: `${PUBLIC}/shop-banners/shop-a/b.webp` }),
+    );
+    expect(result).toEqual({ error: null });
+    expect(writes).toEqual([
+      {
+        table: "shops",
+        values: { address: "12 Lê Lợi", phone: "0901 234 567", fanpage_url: null, banner_url: `${PUBLIC}/shop-banners/shop-a/b.webp` },
+        filters: { id: "shop-a" },
+      },
+    ]);
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("clears the banner when the field is empty (back to the default photo)", async () => {
+    await saveShopProfile({ error: null }, profile({}));
+    expect(writes[0].values.banner_url).toBeNull();
+  });
+
+  it("refuses a bad phone, an http fanpage or a banner from elsewhere, keeping what was typed", async () => {
+    const phone = await saveShopProfile({ error: null }, profile({ phone: "abc" }));
+    expect(phone.error).toMatch(/Số điện thoại/);
+    expect(phone.values?.phone).toBe("abc");
+    expect((await saveShopProfile({ error: null }, profile({ fanpageUrl: "http://fb.com/x" }))).error).toMatch(/https:\/\//);
+    expect((await saveShopProfile({ error: null }, profile({ bannerUrl: `${PUBLIC}/product-images/a.jpg` }))).error).toMatch(/Ảnh bìa/);
+    expect(writes).toEqual([]);
+  });
+
+  it("reads an update RLS hid (no row back) as not allowed or not found", async () => {
+    answer.fn = () => ({ data: [], error: null });
+    expect((await saveShopProfile({ error: null }, profile({}))).error).toBe("Không tìm thấy dữ liệu, hãy tải lại trang.");
+  });
+
+  it("tells staff it is owner-only without writing", async () => {
+    auth.role = "staff";
+    expect((await saveShopProfile({ error: null }, profile({}))).error).toBe("Chỉ chủ shop được sửa dữ liệu này.");
     expect(writes).toEqual([]);
   });
 });

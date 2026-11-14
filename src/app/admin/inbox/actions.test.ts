@@ -31,6 +31,13 @@ vi.mock("@/lib/channels/send", () => ({
   sendToConversation: (id: string, reply: Reply, sender: Sender) => send(id, reply, sender),
 }));
 
+// PB-35a: learning runs after the response (after()); the test runs the callback at once.
+const afterCallbacks: (() => unknown)[] = [];
+vi.mock("next/server", () => ({ after: (fn: () => unknown) => afterCallbacks.push(fn) }));
+const learn = vi.fn();
+vi.mock("@/lib/learning/from-staff", () => ({ learnFromStaffMessage: (...args: unknown[]) => learn(...args) }));
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => "admin-db" }));
+
 const { sendStaffMessage } = await import("./actions");
 
 beforeEach(() => {
@@ -38,6 +45,8 @@ beforeEach(() => {
   conversation = { id: CONV, mode: "staff" };
   filters = [];
   send.mockReset().mockResolvedValue({ ok: true, messageId: "m1" });
+  afterCallbacks.length = 0;
+  learn.mockReset().mockResolvedValue("no_gap");
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -101,5 +110,23 @@ describe("sendStaffMessage (PB-13)", () => {
       { from: "staff", staffId: STAFF, clientMessageId: REQUEST },
       { from: "staff", staffId: STAFF, clientMessageId: REQUEST },
     ]);
+  });
+
+  it("PB-35a: learns from the reply after it was sent, never from one that failed", async () => {
+    await sendStaffMessage(CONV, "Dạ shop có cho kiểm hàng ạ", REQUEST);
+    expect(afterCallbacks).toHaveLength(1);
+    await afterCallbacks[0]();
+    expect(learn).toHaveBeenCalledWith("admin-db", { shopId: SHOP, conversationId: CONV, messageId: "m1", text: "Dạ shop có cho kiểm hàng ạ" });
+
+    afterCallbacks.length = 0;
+    send.mockResolvedValue({ ok: false, messageId: "m2", error: "outside the 24-hour window" });
+    await sendStaffMessage(CONV, "Dạ có ạ", REQUEST);
+    expect(afterCallbacks).toHaveLength(0);
+  });
+
+  it("PB-35a: a learning failure never fails the staff reply", async () => {
+    learn.mockRejectedValue(new Error("model down"));
+    expect(await sendStaffMessage(CONV, "Dạ có ạ", REQUEST)).toEqual({ ok: true });
+    await expect(afterCallbacks[0]()).resolves.toBeUndefined();
   });
 });

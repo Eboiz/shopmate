@@ -16,6 +16,13 @@ export type ToolContext = {
   conversationId: string | null;
   // PB-30: the photos of the shopper's latest turn, filled by the server.
   photos?: PhotoInput[];
+  // Set by the server for create_draft_order only, never by the model (tool
+  // inputs stay strict and unchanged): the confirmed quote turn and the prices
+  // the shopper confirmed, so the RPC can replay and price-check the order.
+  order?: {
+    quoteKey: string | null;
+    expectedPrices: { variantId: string; unitPrice: number }[];
+  };
 };
 
 
@@ -175,6 +182,8 @@ export const tools = {
     output: z.discriminatedUnion("status", [
       z.object({ status: z.literal("created"), orderId: idSchema, total: vndSchema }),
       z.object({ status: z.literal("out_of_stock"), variantIds: z.array(idSchema) }),
+      // The server's expected prices (ctx.order) no longer match the products.
+      z.object({ status: z.literal("price_changed") }),
     ]),
   },
   handoff_to_staff: {

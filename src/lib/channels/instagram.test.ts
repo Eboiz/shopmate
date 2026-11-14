@@ -43,6 +43,14 @@ describe("parseInstagramEvents", () => {
     ).toEqual([]);
   });
 
+  it('reads a tapped "Chọn size" card button as shopper text, as on Messenger (PB-22)', () => {
+    expect(
+      parseInstagramEvents(
+        ig([{ sender: { id: "igsid-1" }, timestamp: 1, postback: { mid: "p2", title: "Chọn size", payload: "Chọn size Đầm suông linen" } }]),
+      ),
+    ).toEqual([{ type: "text", accountId: igAccount, senderId: "igsid-1", mid: "p2", text: "Chọn size Đầm suông linen" }]);
+  });
+
   it("logs and skips shares, story mentions and other attachments the AI can't read", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     expect(
@@ -104,7 +112,14 @@ describe("toInstagramMessages (design A, as on Messenger)", () => {
           type: "template",
           payload: {
             template_type: "generic",
-            elements: [{ title: "Sản phẩm 1", subtitle: "359.000đ · Size còn hàng: S, M", image_url: card(1).imageUrl }],
+            elements: [
+              {
+                title: "Sản phẩm 1",
+                subtitle: "359.000đ · Size còn hàng: S, M",
+                image_url: card(1).imageUrl,
+                buttons: [{ type: "postback", title: "Chọn size", payload: "Chọn size Sản phẩm 1" }],
+              },
+            ],
           },
         },
         quick_replies: [{ content_type: "text", title: "Đặt luôn", payload: "Đặt luôn" }],
@@ -167,6 +182,31 @@ describe("sendInstagram", () => {
     await expect(sendInstagram(target, { text: "Dạ", products: [], quickReplies: [] }, fetchMock)).rejects.toThrow(
       "instagram_send_failed: 400 (#10) User consent is required",
     );
+  });
+
+  it("falls back to text and photos when the carousel is refused, as on Messenger (PB-22)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sent: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const { message } = JSON.parse(String(init.body)) as { message: Record<string, unknown> };
+      if ((message.attachment as { type?: string } | undefined)?.type === "template") {
+        return Response.json({ error: { message: "(#100) Invalid template" } }, { status: 400 });
+      }
+      sent.push(message);
+      return new Response("{}", { status: 200 });
+    });
+    const product = { productId: "00000000-0000-4000-8000-000000000001", name: "Đầm A", price: 359000, imageUrl: "https://x/a.jpg", sizesInStock: ["M"] };
+    await sendInstagram(target, { text: "Dạ", products: [product], quickReplies: [] }, fetchMock as unknown as typeof fetch);
+    expect(sent).toEqual([
+      { text: "Dạ" },
+      { attachment: { type: "image", payload: { url: "https://x/a.jpg" } } },
+      { text: "Đầm A\n359.000đ · Size còn hàng: M" },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      "instagram: carousel refused, sending text and photos instead",
+      "instagram_send_failed: 400 (#100) Invalid template",
+    );
+    warn.mockRestore();
   });
 
   it("refuses a target with no Instagram account", async () => {

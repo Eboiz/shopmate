@@ -1,5 +1,6 @@
 import type { ToolContext, ToolOutput } from "@/contract";
 import { classifyHits, PHOTO_SIMILAR_MAX, searchByPhoto } from "../photo-search";
+import { activeProductFacts, withFacts } from "../learned-facts";
 import { rankProducts } from "../product-match";
 import { sortSizes } from "../text";
 import { ToolError, type Db, type ToolHandler } from "../types";
@@ -56,14 +57,11 @@ async function withVariants(db: Db, shopId: string, match: Output["match"], prod
   if (products.length === 0) return { match, products: [] };
 
   // Colors and sizes of every variant, in stock or not: stock is get_stock's job.
-  const { data: variants, error: variantError } = await db
-    .from("variants")
-    .select("product_id, size, color")
-    .eq("shop_id", shopId)
-    .in(
-      "product_id",
-      products.map((p) => p.id),
-    );
+  const ids = products.map((p) => p.id);
+  const [{ data: variants, error: variantError }, facts] = await Promise.all([
+    db.from("variants").select("product_id, size, color").eq("shop_id", shopId).in("product_id", ids),
+    activeProductFacts(db, shopId, ids),
+  ]);
   if (variantError) throw new Error(`variants: ${variantError.message}`);
 
   return {
@@ -76,7 +74,7 @@ async function withVariants(db: Db, shopId: string, match: Output["match"], prod
         category: p.category,
         price: p.price,
         imageUrl: p.image_url,
-        description: p.description,
+        description: withFacts(p.description, facts.get(p.id) ?? []),
         colors: [...new Set(own.map((v) => v.color))],
         sizes: sortSizes(own.map((v) => v.size)),
       };

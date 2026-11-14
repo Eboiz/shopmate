@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
+import { findUnbackedDiscount, mentionsOffer, policyTextsFrom } from "./discount-guard";
 
 // The demo shop's real policies (supabase/seed/demo/policies.csv); it has no promotion.
 const DOI_TRA =
@@ -124,6 +124,54 @@ describe("findUnbackedDiscount", () => {
     expect(findUnbackedDiscount("Mien phi giao hang va ap dung cho don tu 500k a", [GIAO_HANG])).toBeNull();
   });
 
+  // BUG #6: kinds and numbers matched, but the condition itself was ignored, so
+  // the reply widened ("đơn đầu tiên" -> "mọi đơn") or inverted ("từ 500.000đ"
+  // -> "dưới 500.000đ") the policy's condition and still passed.
+  it("flags a reply that widens or inverts the policy's condition", () => {
+    expect(findUnbackedDiscount("Giảm 10% cho mọi đơn hàng.", [PROMO])).not.toBeNull();
+    expect(findUnbackedDiscount("Miễn phí ship cho đơn dưới 500.000đ.", [GIAO_HANG])).not.toBeNull();
+  });
+
+  // More folded shapes of the inverted condition: "chưa tới/không tới" ("not yet
+  // reached") and "ít hơn" ("less than") all mean "under 500.000đ", not the
+  // policy's "từ 500.000đ".
+  it.each([
+    "Đơn chưa tới 500.000đ được miễn phí giao hàng",
+    "Đơn ít hơn 500.000đ được miễn phí ship",
+    "Đơn không tới 500.000đ miễn phí ship",
+  ])("flags an inverted condition in another wording: %j", (reply) => {
+    expect(findUnbackedDiscount(reply, [GIAO_HANG])).not.toBeNull();
+  });
+
+  it.each([
+    ["Miễn phí ship cho đơn 500.000đ trở xuống", "giao"],
+    ["Đơn từ 500.000đ được miễn phí ship, dưới 500.000đ cũng miễn phí ship", "giao"],
+    ["Giảm 10% cho đơn đầu tiên, các đơn sau cũng được giảm 10%", "promo"],
+  ])("flags a condition widened next to the policy's own: %j", (reply, which) => {
+    expect(findUnbackedDiscount(reply, [which === "giao" ? GIAO_HANG : PROMO])).not.toBeNull();
+  });
+
+  it("accepts a reply that explains where the offer stops", () => {
+    expect(findUnbackedDiscount("Miễn phí ship cho đơn từ 500.000đ, đơn dưới 500.000đ tính phí bình thường", [GIAO_HANG])).toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% cho đơn đầu tiên, các đơn sau áp dụng giá niêm yết", [PROMO])).toBeNull();
+  });
+
+  it("a clause that makes the offer is still checked even with 'tính phí' / 'giá niêm yết' in it", () => {
+    expect(findUnbackedDiscount("Đơn dưới 500.000đ được miễn phí ship thay vì tính phí bình thường", [GIAO_HANG])).not.toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% trên giá niêm yết cho đơn đầu tiên", [PROMO])).toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% cho đơn đầu tiên, các đơn sau không được giảm", [PROMO])).toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% cho đơn đầu tiên, các đơn sau không có giảm giá nên tính nguyên giá", [PROMO])).toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% cho đơn đầu tiên, các đơn sau cũng được giảm 10%", [PROMO])).not.toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% cho đơn đầu tiên, các đơn sau không còn áp dụng giá niêm yết nên cũng được giảm 10%", [PROMO])).not.toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% cho đơn đầu tiên, các đơn sau không còn áp dụng giảm giá", [PROMO])).toBeNull();
+  });
+
+  it("still accepts a reply that keeps the policy's condition", () => {
+    expect(findUnbackedDiscount("Shop giảm 10% cho đơn đầu tiên.", [PROMO])).toBeNull();
+    expect(findUnbackedDiscount("Giảm 10% cho lần mua đầu ạ.", [PROMO])).toBeNull();
+    expect(findUnbackedDiscount("Miễn phí ship cho đơn từ 500.000đ.", [GIAO_HANG])).toBeNull();
+  });
+
   it("returns the offending clause", () => {
     expect(findUnbackedDiscount("Váy giá 350.000đ. Mình giảm 50% cho bạn nhé!", [])).toBe("minh giam 50% cho ban nhe");
   });
@@ -139,5 +187,23 @@ describe("policyTextsFrom", () => {
         { name: "search_products", input: { query: "váy" }, output: { content: "not a policy" } },
       ]),
     ).toEqual(["Đổi trong 7 ngày"]);
+  });
+});
+
+describe("mentionsOffer", () => {
+  it.each(["Khách mới được tặng quà", "Shop freeship toàn quốc", "Nhập mã HELLO giảm 10%"])("offer: %s", (t) => {
+    expect(mentionsOffer(t)).toBe(true);
+  });
+  it.each(["Shop không giảm giá", "Áo free size", "Đổi trong 7 ngày"])("no offer: %s", (t) => {
+    expect(mentionsOffer(t)).toBe(false);
+  });
+});
+
+describe("mentionsOffer review fixes", () => {
+  it("counts a gift staff give as an offer", () => {
+    expect(mentionsOffer("Nhân viên tặng quà cho khách mới")).toBe(true);
+  });
+  it("keeps the staff deferral for replies", () => {
+    expect(findUnbackedDiscount("Giảm giá thì nhân viên sẽ báo bạn nhé", [])).toBeNull();
   });
 });
