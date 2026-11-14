@@ -156,6 +156,7 @@ export async function receiveChannelMessage(
     turn = await runCustomerTurn({
       mode: "customer",
       conversationId: conversation.id,
+      messageId: storedMessage.id,
       history,
       productId: incoming.productId ?? null,
     });

@@ -399,7 +399,10 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         if (!customer) return fixed(STAFF_NO_POLICY_TEXT);
         return offer(`Dạ, shop chưa có thông tin về ${POLICY_NAMES[policy.kind]} để mình trả lời chắc chắn. ${OFFER_QUESTION}`, "policy_not_covered");
       }
-      const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 1) : 1;
+      // A failing coverage check counts as "not covered" (#11): the reply then
+      // says what the policy does not say and offers staff, never a reply built
+      // on a policy that may not cover the question.
+      const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 0) : 1;
       if (covers < POLICY_COVERS_THRESHOLD) {
         if (!customer) return fixed(STAFF_POLICY_SILENT_TEXT);
         // PB-31: give what the policy says that is related, say plainly what it

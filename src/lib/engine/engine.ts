@@ -27,7 +27,7 @@ import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type
 import { createLangfuseSink } from "./langfuse";
 import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
 import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
-import { normalizeSizeInput } from "./measurements";
+import { normalizeSizeInput, shopperMeasurements, shopperTypedNumber } from "./measurements";
 import { findUncheckedNumbers, NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
 import type { PostcheckLog } from "./postcheck-log";
 import { findEnglish, VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
@@ -42,7 +42,10 @@ import { isCatalogQuestion, productCoveringMessage } from "./product-match";
 import { filterQuickReplies, type QuickReply } from "./quick-replies";
 import { catalogOverview, groupListing, isGroupName, routeTurn, unsoldSizeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { missedMentions, mustMentionNote, sizesNamedIn } from "./size-request";
-import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
+import {
+  measurementsCorrection, measurementsQuestionText, recommendsSize, replyMatchesSize, sizeCorrection, sizeFallbackText,
+  sizesInToolOutputs, type SizeAdvice,
+} from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
 import { EngineError, type Db, type ToolHandlers } from "./types";
@@ -57,6 +60,18 @@ const HANDOFF_SUFFIX = "Mình đã chuyển câu hỏi của bạn cho nhân vi�
 export const SIZE_OUT_OF_RANGE_HANDOFF_TEXT = `Dạ, số đo của bạn nằm ngoài bảng size của shop nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
 export const NO_SIZE_CHART_HANDOFF_TEXT = `Dạ, sản phẩm này shop chưa có bảng size nên mình chưa tư vấn được size. ${HANDOFF_SUFFIX}`;
 export const PRODUCT_NOT_FOUND_HANDOFF_TEXT = `Dạ, mình vẫn chưa tìm thấy sản phẩm bạn hỏi trong shop. ${HANDOFF_SUFFIX}`;
+// The confirmed quote could not be re-read before writing: nothing was written.
+export const QUOTE_UNAVAILABLE_TEXT =
+  "Mình chưa kiểm tra lại được giá của đơn. Mình chưa tạo đơn; bạn thử lại sau nhé.";
+// The RPC refused the write (it raised, so its transaction rolled back).
+export const ORDER_WRITE_FAILED_TEXT = "Dạ, mình chưa tạo được đơn lúc này. Bạn thử lại sau nhé.";
+// The write may have committed (timeout or a malformed answer, also after the
+// replay): staff checks, the shopper is not told it failed.
+export const ORDER_WRITE_UNKNOWN_TEXT =
+  "Dạ, hệ thống đang chậm nên mình chưa chắc đơn đã được ghi. Nhân viên shop sẽ kiểm tra và xác nhận với bạn nhé.";
+
+// A shopper-voice quick reply that asks or states a budget (see customerQuickReplies).
+const SHOPPER_ASKS = /\?$|\b(?:khong|ko|k|chua|sao|bao nhieu)(?:\s+(?:a|nhi|vay|ha|shop|ban|em))?$|\bthe nao(?:\s+(?:a|nhi|vay|ha|shop|ban|em))?$|^(?:ngan sach|tam|khoang|duoi|em co|minh co)\b/;
 
 type SizeStatus = "out_of_range" | "no_chart" | null;
 // PB-31: an out_of_range result of recommend_size, for the server's size text.
@@ -135,8 +150,9 @@ export type EngineResult = {
   // The ai_turns row id as soon as the row is written (turnLogged also waits
   // for the metrics sink); null when the write failed. Never rejects.
   turnRow: Promise<string | null>;
-  // The create_draft_order RPC ran this turn, so its reply says what happened
-  // to that order: the channel sends it even when the shopper has written again
+  // The create_draft_order RPC ran this turn, or the order already written under
+  // the confirmed quote was found, so its reply says what happened to that
+  // order: the channel sends it even when the shopper has written again
   // meanwhile, or staff took over (receive.ts, R3).
   orderWritten: boolean;
 };
@@ -344,15 +360,26 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // unchanged). No quick replies, no catalogue read. A failed read must not
   // lose the reply: filter against an empty catalogue, which keeps only the
   // replies that name no garment.
+  // The discount/echo/price guards below only run on reply.text, so a quick
+  // reply would bypass them; apply the same checks to each quick reply and drop
+  // the offending ones instead of failing the whole reply.
   const customerQuickReplies = async (replies: QuickReply[]): Promise<QuickReply[]> => {
     if (mode !== "customer" || replies.length === 0) return replies;
+    let filtered: QuickReply[];
     try {
-      return filterQuickReplies(replies, await loadCatalog());
+      filtered = filterQuickReplies(replies, await loadCatalog());
     } catch (e) {
       console.error("engine: catalog read failed, filtering quick replies against an empty catalog", e);
       turnCatalog ??= [];
-      return filterQuickReplies(replies, []);
+      filtered = filterQuickReplies(replies, []);
     }
+    // A quick reply is what the shopper would send: a question ("Có miễn phí
+    // ship không?") or a budget ("Ngân sách dưới 500k") is the shopper asking,
+    // not the shop promising, so only statements go through the guards.
+    return filtered.filter((quick) => SHOPPER_ASKS.test(fold(quick).trim()) || (
+      findUnbackedDiscount(quick, policyTextsFrom(logs)) === null
+      && uncheckedNumbers(quick).length === 0
+      && echoedShopperAmounts(quick, input.history, logs.map((l) => l.output)).length === 0));
   };
 
   // Computed once per turn, never per loop: a stable prefix keeps the prompt cache.
@@ -384,6 +411,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
   let sizeRetried = false;
   let sizeFallback = false;
+  // #9: recommend_size was refused for missing measurements (what is missing),
+  // and the reply then failed the "no size without measurements" check twice.
+  let measurementsMissing: string[] | null = null;
+  let measurementsFallback = false;
   // PB-39 post-check: the reply claimed missing data the tools returned.
   let missingRetried = false;
   let missingClaims: MissingClaim[] = [];
@@ -674,7 +705,11 @@ ${missingRetryNote(claims)}`;
             reply = fb.offer
               ? offerReply(fb.text)
               : { text: fb.text, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
-            offerMade = fb.offer;
+            // The route's own offer (a policy that doesn't cover the question)
+            // stays: the data alone doesn't answer it.
+            const routeOffer = !fb.offer && mode === "customer" ? write.offer ?? null : null;
+            if (routeOffer) reply = { ...reply, ...withOffer(reply.text) };
+            offerMade = fb.offer ?? routeOffer;
             break;
           }
           const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
@@ -784,12 +819,27 @@ ${missingRetryNote(claims)}`;
         continue;
       }
       sizeFallback = !sizeOk;
+      // #9: with recommend_size refused for missing measurements and no size
+      // result, the reply must not recommend a size; one retry, then the fixed
+      // question for the missing numbers.
+      const missingNow = measurementsMissing as string[] | null;
+      const measurementsOk = advice || !missingNow || !parsed.ok || mode !== "customer"
+        || !recommendsSize(parsed.reply.text);
+      if (!measurementsOk && !sizeRetried) {
+        sizeRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: measurementsCorrection(missingNow!) },
+        );
+        continue;
+      }
+      measurementsFallback = !measurementsOk;
       // PB-39: "chưa có giá" while get_stock returned one, "chưa có phí ship"
       // while get_policy(giao_hang) did, or a promise to check and update later.
       const claims = parsed.ok && !isMatchingQuestion(input.history)
         ? falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: offersStaff(parsed.reply) })
         : [];
-      if (claims.length > 0 && !missingRetried && !sizeFallback) {
+      if (claims.length > 0 && !missingRetried && !sizeFallback && !measurementsFallback) {
         missingRetried = true;
         messages.push(
           { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
@@ -824,7 +874,7 @@ ${missingRetryNote(claims)}`;
       // PB-07: only a reply the model wrote is checked; an order summary, a size
       // fallback, a pairing reply or the PB-17 refusal is written by the server.
       const serverWrites = orderResult !== null || currentQuote !== null || orderIssue !== null
-        || sizeFallback || pairingState.called || isMatchingQuestion(input.history) || refusalFallback;
+        || sizeFallback || measurementsFallback || pairingState.called || isMatchingQuestion(input.history) || refusalFallback;
       if (!discountBlocked && modelReply && !serverWrites) {
         const unchecked = uncheckedNumbers(modelReply.text);
         const retried = numberCheck !== undefined;
@@ -891,6 +941,36 @@ ${missingRetryNote(claims)}`;
         };
         return { run, ms: now() - s0, startMs: s0 - t0 };
       }
+      // Re-read the same variants from the database before writing: returns the
+      // fresh quote, or null after setting orderIssue when the re-quote fails.
+      // Shared by the pre-write check and the RPC's price_changed result.
+      const requote = async (): Promise<PendingQuote | null> => {
+        const quotedAt = now();
+        const freshRun = await executeTool("quote_order", { items: previousQuote!.items }, ctx, mode, deps.handlers, deps.db);
+        toolMetrics.push({ name: "quote_order", startMs: quotedAt - t0, ms: now() - quotedAt, outcome: toolOutcome(freshRun) });
+        if (freshRun.log) logs.push(freshRun.log);
+        const freshQuote = freshRun.log ? latestQuote([freshRun.log]) : null;
+        if (freshRun.isError || !freshQuote) {
+          orderIssue = { code: "quote_unavailable" };
+          return null;
+        }
+        return freshQuote;
+      };
+      // The order already written under the confirmed quote's key, as a
+      // successful create_draft_order run, or null (no key, none, or no store).
+      // supersede: the caller is about to show a re-quote, so a create of this
+      // quote that starts afterwards must write nothing.
+      const existingOrder = async (supersede: boolean): Promise<ToolRun | null> => {
+        const key = previousQuote?.quoteId;
+        if (!key || !deps.store.orderForQuote) return null;
+        const found = await deps.store.orderForQuote(ctx, key, supersede);
+        if (!found) return null;
+        return {
+          log: { name: "create_draft_order", input: u.input, output: found },
+          content: JSON.stringify(found),
+          isError: false,
+        };
+      };
       if (u.name === "create_draft_order" && mode === "customer") {
         // The shopper confirms the quoted items, so those are written: the model
         // only supplies the contact details (it once typed an invented variant id).
@@ -914,18 +994,28 @@ ${missingRetryNote(claims)}`;
           orderIssue = { code: "invalid_phone" };
         }
         if (tools.create_draft_order.input.safeParse(u.input).success) {
-          // Prices may change between the summary and confirmation. Re-read the
-          // same variants before writing; a changed quote needs a new approval.
-          const quotedAt = now();
-          const freshRun = await executeTool("quote_order", { items: previousQuote!.items }, ctx, mode, deps.handlers, deps.db);
-          toolMetrics.push({ name: "quote_order", startMs: quotedAt - t0, ms: now() - quotedAt, outcome: toolOutcome(freshRun) });
-          if (freshRun.log) logs.push(freshRun.log);
-          const freshQuote = freshRun.log ? latestQuote([freshRun.log]) : null;
-          if (freshRun.isError || !freshQuote) {
-            orderIssue = { code: "quote_unavailable" };
+          // Prices may change between the summary and confirmation; a changed
+          // quote needs a new approval.
+          const freshQuote = await requote();
+          if (!freshQuote) {
+            // No re-quote is shown: the shopper may retry the same quote.
+            const existing = await existingOrder(false);
+            if (existing) {
+              orderIssue = null;
+              // The shopper must hear about this order like a fresh write (R3).
+              orderWritten = true;
+              return { run: existing, ms: now() - s0, startMs: s0 - t0 };
+            }
             return { run: blockedOrderRun(u.input, "quote_unavailable"), ms: now() - s0, startMs: s0 - t0 };
           }
           if (!sameQuote(previousQuote!.quote, freshQuote.quote)) {
+            // A concurrent turn may already have written this quote: its order
+            // stands, the shopper is not asked to confirm a re-quote of it.
+            const existing = await existingOrder(true);
+            if (existing) {
+              orderWritten = true;
+              return { run: existing, ms: now() - s0, startMs: s0 - t0 };
+            }
             currentQuote = freshQuote;
             orderIssue = { code: "quote_changed" };
             return { run: blockedOrderRun(u.input, "quote_changed"), ms: now() - s0, startMs: s0 - t0 };
@@ -944,6 +1034,35 @@ ${missingRetryNote(claims)}`;
       // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.
       // v1.3: the model names the product on screen by VIEWING_PRODUCT_REF.
       const toolInput = resolveViewingProduct(u.input, tc.product);
+      // Bug #9: the model must not invent the shopper's height/weight. Like the
+      // router (route.ts), recommend_size only runs with numbers the shopper
+      // wrote; otherwise it is refused so the model asks and calls again.
+      if (u.name === "recommend_size") {
+        const said = shopperMeasurements(input.history);
+        // A bare answer ("160 ạ") has no unit to parse; the model's value counts
+        // only when the shopper typed that exact number since the last AI message.
+        const asked = (toolInput && typeof toolInput === "object" ? toolInput : {}) as Record<string, unknown>;
+        const missing = [
+          said.heightCm === null && !shopperTypedNumber(input.history, asked.heightCm) ? "chiều cao (cm)" : null,
+          said.weightKg === null && !shopperTypedNumber(input.history, asked.weightKg) ? "cân nặng (kg)" : null,
+        ].filter(Boolean);
+        if (missing.length > 0) {
+          measurementsMissing = missing as string[];
+          return {
+            run: {
+              log: { name: "recommend_size", input: toolInput, error: "measurements_missing" },
+              content: JSON.stringify({
+                error: "measurements_missing",
+                missing,
+                hint: "Hỏi khách số còn thiếu rồi mới gọi lại recommend_size; không tự đoán số đo.",
+              }),
+              isError: true,
+            },
+            ms: now() - s0,
+            startMs: s0 - t0,
+          };
+        }
+      }
       const effectiveInput = u.name === "get_pairings" && toolInput && typeof toolInput === "object"
         ? { ...toolInput, ...(tc.product ? { productId: tc.product.id } : {}), ...(knownSize ? { size: knownSize } : {}) }
         : u.name === "recommend_size"
@@ -955,8 +1074,40 @@ ${missingRetryNote(claims)}`;
       }
       const hit = toolCache.get(u.name, effectiveInput);
       if (hit) return { run: hit, ms: now() - s0, startMs: s0 - t0, cached: true };
-      const run = await executeTool(u.name, effectiveInput, ctx, mode, deps.handlers, deps.db);
+      // The confirmed quote turn is the RPC's replay key, and the confirmed
+      // prices are what it checks the order against (PB-11). Other tools and
+      // staff_draft keep the plain ctx.
+      const orderCtx = u.name === "create_draft_order" && mode === "customer" && previousQuote
+        ? {
+            ...ctx,
+            order: {
+              quoteKey: previousQuote.quoteId ?? null,
+              expectedPrices: previousQuote.quote.lines.map((line) => ({ variantId: line.variantId, unitPrice: line.unitPrice })),
+            },
+          }
+        : ctx;
+      let run = await executeTool(u.name, effectiveInput, orderCtx, mode, deps.handlers, deps.db);
+      // An internal_error (timeout, dropped connection) may come after the RPC
+      // committed. With a quote_key the replay is idempotent: it returns the
+      // order if it exists, so one retry settles whether the write happened.
+      if (u.name === "create_draft_order" && "order" in orderCtx && orderCtx.order?.quoteKey
+        && run.isError && (run.log?.error ?? "").startsWith("internal_error")) {
+        run = await executeTool(u.name, effectiveInput, orderCtx, mode, deps.handlers, deps.db);
+      }
       toolCache.set(u.name, effectiveInput, run);
+      // The RPC found a different price than the confirmed quote and wrote
+      // nothing: like the pre-write check, re-quote and require a new approval.
+      if (u.name === "create_draft_order" && mode === "customer" && !run.isError
+        && (run.log?.output as { status?: string } | undefined)?.status === "price_changed") {
+        const freshQuote = await requote();
+        if (!freshQuote) {
+          return { run: blockedOrderRun(u.input, "quote_unavailable"), ms: now() - s0, startMs: s0 - t0 };
+        }
+        // (The RPC itself already replays an order written under this key.)
+        currentQuote = freshQuote;
+        orderIssue = { code: "quote_changed" };
+        return { run: blockedOrderRun(u.input, "quote_changed"), ms: now() - s0, startMs: s0 - t0 };
+      }
       return { run, ms: now() - s0, startMs: s0 - t0 };
     });
 
@@ -992,6 +1143,19 @@ ${missingRetryNote(claims)}`;
       if (mode === "customer" && u.name === "create_draft_order" && !run.isError) {
         orderResult = tools.create_draft_order.output.parse(run.log?.output);
       }
+      // A write that reached the RPC and failed decides the reply over any block
+      // or validation verdict of another create call in the same batch: an
+      // unknown write (may have committed) outranks a definite failure, which
+      // outranks everything else. invalid_input stays with the model.
+      if (mode === "customer" && u.name === "create_draft_order" && run.isError) {
+        const error = run.log?.error ?? "";
+        const current = (orderIssue as { code: string } | null)?.code;
+        if (error.startsWith("internal_error") || error.startsWith("invalid_output")) {
+          orderIssue = { code: "order_write_unknown" };
+        } else if ((error === "variant_not_found" || error === "quote_required") && current !== "order_write_unknown") {
+          orderIssue = { code: "order_write_failed" };
+        }
+      }
     });
 
     const handedOff = uses.find((u, i) => u.name === "handoff_to_staff" && !runs[i].run.isError);
@@ -999,7 +1163,11 @@ ${missingRetryNote(claims)}`;
       handoff = (handedOff.input as { reason: HandoffReason }).reason;
       break;
     }
-    if (orderResult || currentQuote) break;
+    // order_write_failed ends the turn: the model would otherwise write its own
+    // "đã ghi nhận" text over a write that never happened.
+    // (orderIssue is set inside the runBatch callback; TS cannot see it.)
+    const writeIssue = (orderIssue as { code: string } | null)?.code;
+    if (orderResult || currentQuote || writeIssue === "order_write_failed" || writeIssue === "order_write_unknown") break;
 
     messages.push(
       { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
@@ -1028,6 +1196,11 @@ ${missingRetryNote(claims)}`;
     && answersAiMessage(input.history) && productMiss;
   if (productMissedTwice) handoff = "misunderstood_twice";
   else if (discountBlocked) handoff = "postcheck_failed";
+  // The order may or may not have been written: staff checks it (the server
+  // could not verify the write, hence postcheck_failed).
+  const orderUnknown = mode === "customer" && !handoff
+    && (orderIssue as { code: string } | null)?.code === "order_write_unknown";
+  if (orderUnknown) handoff = "postcheck_failed";
 
   // PB-06 AC4, soft since PB-31: measurements outside the chart, or a product with
   // no chart, always end in the server's size text offering staff, even when the
@@ -1069,7 +1242,8 @@ ${missingRetryNote(claims)}`;
     // Must finish before returning: the caller sends HANDOFF_TEXT right after.
     // (A handoff_to_staff call already moved the conversation itself.)
     if (handoff === "too_many_tool_calls" || handoff === "postcheck_failed" || productMissedTwice) await deps.store.setNeedsHuman(ctx);
-    const text = productMissedTwice
+    const text = orderUnknown ? ORDER_WRITE_UNKNOWN_TEXT
+      : productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
       : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
     const cardIds = handoff === "postcheck_failed" && tc.product ? [tc.product.id] : [];
@@ -1119,11 +1293,15 @@ ${missingRetryNote(claims)}`;
   } else if (finalOrderIssue?.code === "customer_details_missing") {
     reply = { text: `Mình còn thiếu ${finalOrderIssue.missing?.join(", ")}. Bạn gửi giúp mình để tiếp tục đặt hàng nhé.`, products: [], quickReplies: [] };
   } else if (finalOrderIssue?.code === "quote_unavailable") {
-    reply = { text: "Mình chưa kiểm tra lại được giá của đơn. Mình chưa tạo đơn; bạn thử lại sau nhé.", products: [], quickReplies: [] };
+    reply = { text: QUOTE_UNAVAILABLE_TEXT, products: [], quickReplies: [] };
+  } else if (finalOrderIssue?.code === "order_write_failed") {
+    reply = { text: ORDER_WRITE_FAILED_TEXT, products: [], quickReplies: [] };
   } else if (finalOrderIssue?.code === "confirmation_required" || finalOrderIssue?.code === "order_items_changed") {
     reply = { text: "Mình cần báo giá đúng các món và xin bạn xác nhận bản tóm tắt trước khi tạo đơn. Bạn cho mình biết món, size, màu và số lượng muốn đặt nhé.", products: [], quickReplies: [] };
   } else if (truncated || !modelReply) {
     reply = { text: FALLBACK_TEXT, products: [], quickReplies: [] };
+  } else if (measurementsFallback && measurementsMissing) {
+    reply = { text: measurementsQuestionText(measurementsMissing as string[]), products: [], quickReplies: [] };
   } else if (sizeFallback && sizeAdvice) {
     // The model named a size the size function didn't return, twice: the reply
     // is written from the tool result, with the product's card from the database.
@@ -1170,7 +1348,15 @@ ${missingRetryNote(claims)}`;
   // ơn" after a complaint stays in the staff queue.
   if (mode === "customer" && tc.conversation?.mode === "needs_human" && handoff === null && !truncated
     && !numberBlocked && !discountBlocked && answeredFromData(logs)) {
-    await deps.store.setAiMode?.(ctx);
+    // #8: a newer shopper message bumps conversations.last_message_at after the
+    // snapshot was read, so passing it makes the resume update match no row.
+    // Keep the single-argument call without a snapshot: it keeps the old behaviour.
+    // With the answered message's id, the resume is one atomic check that it
+    // is still the newest shopper message (the snapshot may postdate history).
+    const messageId = input.mode === "customer" ? input.messageId : undefined;
+    if (messageId !== undefined && deps.store.resumeAiIfLatest) await deps.store.resumeAiIfLatest(ctx, messageId);
+    else if (tc.conversation.lastMessageAt === undefined) await deps.store.setAiMode?.(ctx);
+    else await deps.store.setAiMode?.(ctx, tc.conversation.lastMessageAt);
   }
 
   // A complaint the word list catches returned early above (PB-20); one only Jev

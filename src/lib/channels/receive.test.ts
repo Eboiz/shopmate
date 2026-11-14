@@ -131,6 +131,8 @@ describe("receiveChannelMessage", () => {
     expect(engine).toHaveBeenCalledWith({
       mode: "customer",
       conversationId: conversation().id,
+      // #8: the stored message's id, so a resume from needs_human checks it is still the newest
+      messageId: shopperMessages()[0].id,
       history: [{ sender: "shopper", text: "Váy suông linen size nào vừa 1m58?" }],
       productId: null,
     });
