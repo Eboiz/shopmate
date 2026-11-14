@@ -1,6 +1,13 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { parseMessengerEvents, sendMessenger, sendTypingOn, toMessengerMessages, verifyMessengerSignature } from "./messenger";
+import {
+  parseMessengerEvents,
+  sendMessenger,
+  sendTypingOn,
+  toMessengerMessages,
+  toProductFallbackMessages,
+  verifyMessengerSignature,
+} from "./messenger";
 
 const secret = "test-app-secret";
 // Meta signs the body exactly as sent, with non-ASCII characters escaped.
@@ -74,6 +81,19 @@ describe("parseMessengerEvents", () => {
     expect(events).toEqual([]);
   });
 
+  it('reads a tapped "Chọn size" card button as the shopper text in its payload (PB-22)', () => {
+    const events = parseMessengerEvents(
+      page([
+        { sender: { id: "u1" }, timestamp: 5, postback: { mid: "p1", title: "Chọn size", payload: "Chọn size Đầm suông linen" } },
+        { sender: { id: "u1" }, timestamp: 6, postback: { title: "Chọn size", payload: "Chọn size Áo sơ mi lụa" } },
+      ]),
+    );
+    expect(events).toEqual([
+      { type: "text", accountId: "111", senderId: "u1", mid: "p1", text: "Chọn size Đầm suông linen" },
+      { type: "text", accountId: "111", senderId: "u1", mid: "postback:u1:6", text: "Chọn size Áo sơ mi lụa" },
+    ]);
+  });
+
   it("reads every entry and every messaging item in one delivery", () => {
     const body = {
       object: "page",
@@ -114,7 +134,12 @@ describe("toMessengerMessages (design A: text, then cards, quick replies on the 
           payload: {
             template_type: "generic",
             elements: [
-              { title: "Sản phẩm 1", subtitle: "359.000đ · Size còn hàng: S, M", image_url: card(1).imageUrl },
+              {
+                title: "Sản phẩm 1",
+                subtitle: "359.000đ · Size còn hàng: S, M",
+                image_url: card(1).imageUrl,
+                buttons: [{ type: "postback", title: "Chọn size", payload: "Chọn size Sản phẩm 1" }],
+              },
               { title: "Sản phẩm 2", subtitle: "359.000đ · Hết hàng" },
             ],
           },
@@ -142,6 +167,38 @@ describe("toMessengerMessages (design A: text, then cards, quick replies on the 
     expect(element.title.length).toBeLessThanOrEqual(80);
     expect(element.subtitle.length).toBeLessThanOrEqual(80);
     expect(element.title.endsWith("…")).toBe(true);
+  });
+});
+
+describe("carousel cards (PB-22)", () => {
+  const card = (n: number, sizes = ["S", "M"]) => ({
+    productId: `00000000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`,
+    name: `Sản phẩm ${n}`,
+    price: 359000 + n * 1000,
+    imageUrl: n === 2 ? null : `https://x/SP${n}.jpg`,
+    sizesInStock: sizes,
+  });
+
+  it('builds every card from products[]: photo, name, price and a "Chọn size" button, at most 10', () => {
+    const products = Array.from({ length: 12 }, (_, i) => card(i + 1));
+    const [carousel] = toMessengerMessages({ text: "", products, quickReplies: [] });
+    const elements = (carousel as { attachment: { payload: { elements: Record<string, unknown>[] } } }).attachment.payload.elements;
+    expect(elements).toHaveLength(10);
+    elements.forEach((element, i) => {
+      const p = products[i];
+      expect(element.title).toBe(p.name);
+      expect(element.subtitle).toContain(`${p.price / 1000}.000đ`);
+      expect(element.image_url).toBe(p.imageUrl ?? undefined);
+      expect(element.buttons).toEqual([{ type: "postback", title: "Chọn size", payload: `Chọn size ${p.name}` }]);
+    });
+  });
+
+  it("falls back to each product's photo then its caption, quick replies on the last", () => {
+    expect(toProductFallbackMessages({ text: "Dạ", products: [card(1), card(2, [])], quickReplies: ["Đặt luôn"] })).toEqual([
+      { attachment: { type: "image", payload: { url: "https://x/SP1.jpg" } } },
+      { text: "Sản phẩm 1\n360.000đ · Size còn hàng: S, M" },
+      { text: "Sản phẩm 2\n361.000đ · Hết hàng", quick_replies: [{ content_type: "text", title: "Đặt luôn", payload: "Đặt luôn" }] },
+    ]);
   });
 });
 
@@ -173,6 +230,56 @@ describe("sendMessenger", () => {
     await expect(sendMessenger(target, { text: "Dạ", products: [], quickReplies: [] }, fetchMock)).rejects.toThrow(
       "messenger_send_failed: 400 (#10) This message is sent outside of allowed window.",
     );
+  });
+
+  it("falls back to text and photos when the carousel is refused, without leaking the token", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const sent: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      const { message } = JSON.parse(String(init.body)) as { message: Record<string, unknown> };
+      if ((message.attachment as { type?: string } | undefined)?.type === "template") {
+        return Response.json({ error: { message: "(#100) Invalid template" } }, { status: 400 });
+      }
+      sent.push(message);
+      return new Response("{}", { status: 200 });
+    });
+    const reply = {
+      text: "Dạ shop có 2 mẫu ạ",
+      products: [
+        { productId: "00000000-0000-4000-8000-000000000001", name: "Đầm A", price: 359000, imageUrl: "https://x/a.jpg", sizesInStock: ["M"] },
+        { productId: "00000000-0000-4000-8000-000000000002", name: "Đầm B", price: 399000, imageUrl: null, sizesInStock: ["S"] },
+      ],
+      quickReplies: ["Đặt luôn"],
+    };
+    await sendMessenger(target, reply, fetchMock as unknown as typeof fetch);
+    expect(sent).toEqual([
+      { text: "Dạ shop có 2 mẫu ạ" },
+      { attachment: { type: "image", payload: { url: "https://x/a.jpg" } } },
+      { text: "Đầm A\n359.000đ · Size còn hàng: M" },
+      { text: "Đầm B\n399.000đ · Size còn hàng: S", quick_replies: [{ content_type: "text", title: "Đặt luôn", payload: "Đặt luôn" }] },
+    ]);
+    const logged = JSON.stringify(warn.mock.calls);
+    expect(logged).toContain("messenger_send_failed: 400 (#100) Invalid template");
+    expect(logged).not.toContain("page-token");
+    warn.mockRestore();
+  });
+
+  it("throws when the fallback is refused too, without the token", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let calls = 0;
+    const fetchMock = vi.fn(async () =>
+      ++calls === 1 ? new Response("{}", { status: 200 }) : Response.json({ error: { message: "(#200) No permission" } }, { status: 403 }),
+    );
+    const reply = {
+      text: "Dạ",
+      products: [{ productId: "00000000-0000-4000-8000-000000000001", name: "Đầm A", price: 1, imageUrl: null, sizesInStock: [] }],
+      quickReplies: [],
+    };
+    const error = await sendMessenger(target, reply, fetchMock).catch((e: Error) => e);
+    expect(String(error)).toContain("messenger_send_failed: 403 (#200) No permission");
+    expect(String(error)).not.toContain("page-token");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
   });
 
   it("refuses a target with no Page account", async () => {
