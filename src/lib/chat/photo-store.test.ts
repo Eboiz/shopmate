@@ -1,3 +1,5 @@
+import { randomFillSync } from "node:crypto";
+import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import type { Db } from "@/lib/engine/types";
 import { loadPhotos, signPhotoUrls, storeShopperPhoto } from "./photo-store";
@@ -40,6 +42,18 @@ describe("photo-store", () => {
     const path = `${SHOP}/${CONV}/p.jpg`;
     const { db } = fakeDb({ [path]: JPEG });
     expect(await loadPhotos(db, SHOP, [path])).toEqual([{ base64: Buffer.from(JPEG).toString("base64"), mediaType: "image/jpeg" }]);
+  });
+
+  it("loads a big stored photo shrunk to a JPEG", async () => {
+    const width = 1200;
+    const pixels = Buffer.alloc(width * width * 3);
+    randomFillSync(pixels);
+    const png = new Uint8Array(await sharp(pixels, { raw: { width, height: width, channels: 3 } }).png({ compressionLevel: 0 }).toBuffer());
+    const path = `${SHOP}/${CONV}/p.png`;
+    const { db } = fakeDb({ [path]: png });
+    const [photo] = await loadPhotos(db, SHOP, [path]);
+    expect(photo!.mediaType).toBe("image/jpeg");
+    expect(Buffer.from(photo!.base64, "base64").length).toBeLessThan(png.length);
   });
 
   it("refuses a path outside the shop's folder", async () => {

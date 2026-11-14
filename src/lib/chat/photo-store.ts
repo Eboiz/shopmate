@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { PhotoInput } from "@/contract";
 import type { Db } from "@/lib/engine/types";
 import { checkPhoto } from "./photo-rules";
+import { shrinkPhoto } from "./shrink-photo";
 
 // PB-30: shopper photos in the private `chat-photos` bucket, at
 // <shop_id>/<conversation_id>/<uuid>.<ext>. Server code uses the secret key, so
@@ -24,21 +25,29 @@ export async function storeShopperPhoto(
 
 const inShop = (shopId: string, path: string) => path.startsWith(`${shopId}/`) && !path.includes("..");
 
-// The photos as base64 for Claude and the photo search. A path outside the
+// The photos as base64 for Claude and the photo search, big ones shrunk (see
+// shrink-photo.ts). A path outside the
 // shop's folder is a bug, not a missing photo: it throws.
 export async function loadPhotos(db: Db, shopId: string, paths: string[]): Promise<PhotoInput[]> {
   const bad = paths.find((p) => !inShop(shopId, p));
   if (bad !== undefined) throw new Error(`chat photo ${bad} is not in shop ${shopId}`);
-  return Promise.all(
+  const downloaded = await Promise.all(
     paths.map(async (path) => {
       const { data, error } = await db.storage.from(PHOTO_BUCKET).download(path);
       if (error || !data) throw new Error(`chat photo download ${path}: ${error?.message ?? "no data"}`);
       const bytes = new Uint8Array(await data.arrayBuffer());
       const check = checkPhoto(bytes);
       if (!check.ok) throw new Error(`chat photo ${path} is not a photo`);
-      return { base64: Buffer.from(bytes).toString("base64"), mediaType: check.mediaType };
+      return { bytes, mediaType: check.mediaType };
     }),
   );
+  // One decode at a time: up to 4 photos decoded together could exhaust memory.
+  const photos: PhotoInput[] = [];
+  for (const { bytes, mediaType } of downloaded) {
+    const photo = await shrinkPhoto(bytes, mediaType);
+    photos.push({ base64: Buffer.from(photo.bytes).toString("base64"), mediaType: photo.mediaType });
+  }
+  return photos;
 }
 
 // Signed URLs for the web chat history (1 hour). A path that fails to sign is "".
