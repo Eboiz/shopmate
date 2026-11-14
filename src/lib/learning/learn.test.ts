@@ -12,6 +12,7 @@ const POLICIES: LearnInput["policies"] = [
 ];
 
 const input = (over: Partial<LearnInput> = {}): LearnInput => ({
+  target: "policy",
   question: "Shop có cho kiểm hàng không?",
   staffReply: "Dạ shop có cho kiểm hàng trước khi nhận ạ",
   policies: POLICIES,
@@ -217,6 +218,30 @@ describe("learnFromStaffReply review 12/11", () => {
   ])("skips %s as product data", async (_label, staffReply, rule) => {
     const evidence = staffReply.replace(/^Dạ /, "").replace(/ ạ$/, "");
     const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(output({ rule, evidence })) });
+    expect(result).toMatchObject({ status: "skip", skipReason: "product_data" });
+  });
+
+  // Review 14/11: product details only stop a policy; stock, size, measurements
+  // and a product's price (with or without "giá") stop both targets.
+  it.each([
+    ["Dạ váy này vải linen ạ", "Váy này vải linen.", "váy này vải linen"],
+    ["Dạ áo khoác dài 70cm ạ", "Áo khoác dài 70cm.", "áo khoác dài 70cm"],
+    ["Dạ quần jean co giãn 4 chiều ạ", "Quần jean co giãn 4 chiều.", "quần jean co giãn 4 chiều"],
+  ])("learns product details for a product, skips them for a policy: %s", async (staffReply, rule, evidence) => {
+    const model = () => ({ model: modelSaying(output({ rule, evidence })) });
+    const product = await learnFromStaffReply(input({ target: "product", staffReply }), model());
+    expect(product).toMatchObject({ status: "learn", rule });
+    const policy = await learnFromStaffReply(input({ target: "policy", staffReply }), model());
+    expect(policy).toMatchObject({ status: "skip", skipReason: "product_data" });
+  });
+
+  it.each([
+    ["Dạ mẫu này còn 3 cái ạ", "Mẫu này còn 3 cái.", "mẫu này còn 3 cái"],
+    ["Dạ 1m60 50kg mặc size M vừa ạ", "1m60 50kg mặc size M vừa.", "1m60 50kg mặc size M vừa"],
+    ["Dạ váy hoa giá 350k ạ", "Váy hoa giá 350k.", "váy hoa giá 350k"],
+    ["Dạ váy hoa 350k ạ", "Váy hoa 350k.", "váy hoa 350k"],
+  ])("skips stock, size and price for a product too: %s", async (staffReply, rule, evidence) => {
+    const result = await learnFromStaffReply(input({ target: "product", staffReply }), { model: modelSaying(output({ rule, evidence })) });
     expect(result).toMatchObject({ status: "skip", skipReason: "product_data" });
   });
 

@@ -22,7 +22,14 @@ export const gapQuestionSchema = z.object({
 // What get_policy returns today for one kind (null = the shop wrote nothing).
 export const policySnapshotSchema = z.object({ kind: policyKindSchema, content: z.string().nullable() });
 
+// What the staff reply is learned for: a shop policy, or one product's entry
+// (#86). A product's details (fabric, fit, length, stretch, washing) are only
+// learned for a product; stock, a size or measurement and a product's price
+// never are, both come from the catalog tools.
+export const learnTargetSchema = z.enum(["policy", "product"]);
+
 export const learnInputSchema = z.object({
+  target: learnTargetSchema,
   // The shopper's message: data only, never a source of the rule.
   question: z.string().max(500),
   staffReply: z.string().min(1).max(2000),
@@ -37,8 +44,8 @@ export const learnInputSchema = z.object({
 // staff didn't write, or lost words to personal-data redaction.
 export const reviewReasonSchema = z.enum(["discount", "amount", "conflict", "vague", "unverified", "model"]);
 // Why nothing was learned.
-// product_data: stock, a size or measurement, a product's price or details,
-// which only the catalog tools may state.
+// product_data: stock, a size or measurement or a product's price, which only
+// the catalog tools may state; for target "policy" also a product's details.
 export const skipReasonSchema = z.enum([
   "one_off",
   "no_rule",
@@ -77,6 +84,7 @@ export const gapTopicProposalSchema = z.object({
 export type GapReason = z.infer<typeof gapReasonSchema>;
 export type GapQuestion = z.infer<typeof gapQuestionSchema>;
 export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;
+export type LearnTarget = z.infer<typeof learnTargetSchema>;
 export type LearnInput = z.infer<typeof learnInputSchema>;
 export type ReviewReason = z.infer<typeof reviewReasonSchema>;
 export type SkipReason = z.infer<typeof skipReasonSchema>;

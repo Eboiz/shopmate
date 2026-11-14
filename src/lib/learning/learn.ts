@@ -95,9 +95,9 @@ export async function learnFromStaffReply(input: LearnInput, deps: LearningDeps)
   // Never cut a rule: the cut part may hold its conditions ("trừ hàng sale").
   if (rule.length > MAX_RULE) return skip("too_long");
   if (!numbersBacked(rule, input.staffReply)) return skip("number_mismatch");
-  // Price, stock, size and product details come from the catalog tools only;
-  // checked by code, not left to the model's kind.
-  if (mentionsProductData(out.rule)) return skip("product_data");
+  // Price, stock and size come from the catalog tools only, and a policy holds
+  // no product details; checked by code, not left to the model's kind.
+  if (mentionsProductData(out.rule, input.target)) return skip("product_data");
 
   const reviewReasons: ReviewReason[] = [];
   if (mentionsOffer(rule)) reviewReasons.push("discount");
