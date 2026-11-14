@@ -60,7 +60,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // whole AI turn is done, which can take several seconds. knownIds are the
   // messages already on screen, so the stored copy can replace this one.
   const [outgoing, setOutgoing] = useState<{ text: string; knownIds: Set<string> } | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  // Whether new content should pull the log down: true while the shopper is
+  // at (or near) the bottom, false once they scroll up to read older messages.
+  const stickToBottom = useRef(true);
   const mainRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // The control that opened the chat gets focus back when it closes.
@@ -156,9 +159,29 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     };
   }, [open, refresh]);
 
+  // Each poll replaces `messages` with a new array even when nothing changed,
+  // so the log follows only what is on screen: the newest message, the
+  // pending one and the typing/waiting line. It scrolls the log itself, not
+  // the page, and leaves it alone while the shopper reads further up.
+  const newestMessageId = messages.at(-1)?.id;
+  const outgoingText = outgoing?.text;
+  const waitingLine = chatStatus(messages, mode, sending, awaitingReply);
+  useLayoutEffect(() => {
+    if (open) stickToBottom.current = true;
+  }, [open]);
+  useLayoutEffect(() => {
+    // Sending a message always brings the shopper back to the bottom.
+    if (outgoingText !== undefined) stickToBottom.current = true;
+  }, [outgoingText]);
   useEffect(() => {
-    if (open) endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open, sending, outgoing]);
+    const log = logRef.current;
+    if (!open || !log || !stickToBottom.current) return;
+    log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+  }, [open, loading, newestMessageId, outgoingText, waitingLine]);
+  function onLogScroll() {
+    const log = logRef.current;
+    if (log) stickToBottom.current = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -384,7 +407,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // Hidden once a poll brings back the stored copy of the same message.
   const showOutgoing = outgoing !== null && !messages.some((message) =>
     message.sender === "shopper" && message.text === outgoing.text && !outgoing.knownIds.has(message.id));
-  const status = chatStatus(messages, mode, sending, awaitingReply);
+  const status = waitingLine;
   if (catalogLoading) {
     return <main className="flex flex-1 flex-col">{detailProductId ? <ProductDetailSkeleton /> : <ShopFrontSkeleton />}</main>;
   }
@@ -645,7 +668,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
           {/* No aria-live here: it would read the whole history again on every
               poll. The single role="status" below announces the wait. */}
-          <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f3ef] px-4 py-5">
+          <div ref={logRef} onScroll={onLogScroll} className="min-h-0 flex-1 overflow-y-auto bg-[#f5f3ef] px-4 py-5">
             {loading ? (
               <LoadingRegion label="Đang tải cuộc trò chuyện…"><ChatSkeleton /></LoadingRegion>
             ) : messages.length === 0 && !showOutgoing ? (
@@ -696,7 +719,6 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 <span className="sr-only">Đã gửi. </span>Đang chờ nhân viên shop trả lời
               </p>
             )}
-            <div ref={endRef} />
           </div>
 
           <div className="border-t border-[#e3dfd8] bg-white p-3">
