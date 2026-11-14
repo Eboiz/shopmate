@@ -8,7 +8,7 @@ import { LoadingRegion, Skeleton } from "@/components/ui/skeleton";
 import { formatPrice } from "@/lib/format";
 import { LOW_STOCK } from "@/lib/stock";
 import { createClient } from "@/lib/supabase/client";
-import { avatarInitial, emptyFilter } from "./inbox/inbox-filter";
+import { avatarInitial, channelLabels, emptyFilter } from "./inbox/inbox-filter";
 import { countConversations, searchConversations, type InboxConversation } from "./inbox/inbox-live";
 import { formatWaiting, waitingMs } from "./inbox/waiting";
 import { listDraftOrders, type DraftOrder } from "./orders/orders-data";
@@ -168,7 +168,10 @@ export function DashboardOverview({ previewData }: DashboardOverviewProps) {
                   <Link href={`/admin/inbox?c=${conversation.id}`} className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-[#f5f3ef] sm:px-6">
                     <span aria-hidden="true" className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#efebe4] font-bold text-[#171717]">{avatarInitial(conversation)}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">{conversation.customerName}</span>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 truncate font-semibold">{conversation.customerName}</span>
+                        <span className="shrink-0 rounded-full border border-[#e3dfd8] bg-white px-2 py-0.5 text-[11px] font-medium text-[#5c5954]">{channelLabels[conversation.channel]}</span>
+                      </span>
                       <span className="block truncate text-xs text-[#706d67]">{conversation.customerMessage ?? (conversation.latestMessage || "Chưa có nội dung văn bản")}</span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1 rounded-full bg-[#fff0eb] px-2 py-1 text-[11px] font-semibold text-[#b2382a]">

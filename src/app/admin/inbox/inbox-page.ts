@@ -1,5 +1,5 @@
 import type { Channel, ConversationMode } from "@/contract";
-import { customerLabel, type InboxFilter, type ModeFilter } from "./inbox-filter";
+import { customerLabel, isUnnamed, type InboxFilter, type ModeFilter } from "./inbox-filter";
 import type { InboxConversation } from "./inbox-live";
 
 // The inbox list is paged on the server (public.search_inbox): the queue
@@ -26,7 +26,7 @@ export function toInboxConversation(row: InboxRow): InboxConversation {
   return {
     id: row.id,
     customerName: customerLabel(row.display_name, row.channel, row.id),
-    unnamed: !row.display_name?.trim() || undefined,
+    unnamed: isUnnamed(row.display_name) || undefined,
     channel: row.channel,
     mode: row.mode,
     lastMessageAt: row.last_message_at,
