@@ -253,7 +253,7 @@ describe("POST /api/shops/[slug]/search", () => {
   it("applies the floor of the query kind and score kind", async () => {
     const hits = [
       { productId: P1, score: 0.66 },
-      { productId: P2, score: 0.48 },
+      { productId: P2, score: 0.5 },
     ];
     search.mockResolvedValueOnce({ hits, reranked: true });
     expect(await body(await post({ q: "váy be" }))).toEqual({ mode: "semantic", productIds: [P1, P2] });
