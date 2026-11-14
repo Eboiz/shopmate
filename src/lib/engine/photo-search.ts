@@ -26,7 +26,10 @@ const TEXT_MAX = 200;
 // (developer decision 2026-11-12): the AI shows up to 3 products and asks.
 // 0.65 sits in the gap between the same kind and other kinds. Cosine scores
 // overlapped too (2026-11-10: 0.672 vs 0.687); their floor is a guess.
-export const PHOTO_SIMILAR_MIN = { reranked: 0.65, cosine: 0.55 } as const;
+// 2026-11-14 (developer, demo): lowered to 0.3 so look-alikes show next to the
+// match (L40S: other items scored 0.33-0.39 for a matched photo; scenery 0.25,
+// receipt 0.09). Not recalibrated.
+export const PHOTO_SIMILAR_MIN = { reranked: 0.3, cosine: 0.55 } as const;
 
 export type PhotoHit = { productId: string; score: number };
 // Always "similar": a photo never proves the exact product (see above).
