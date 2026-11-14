@@ -136,6 +136,44 @@ test("keeps the reply indicator until the answer arrives", async ({ page }) => {
   await expect(page.getByRole("status")).toHaveCount(0);
 });
 
+// A 1×1 PNG, enough for the photo picker to accept and shrink.
+const pixelPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+
+test("a photo sent with text moves into the sending bubble at once", async ({ page }) => {
+  const messages: Array<Record<string, unknown>> = [];
+  let answer: () => void = () => {};
+  const answered = new Promise<void>((resolve) => { answer = resolve; });
+  await page.route("**/api/shops/may-boutique/catalog", (route) => route.fulfill({ json: catalog }));
+  await page.route("**/api/shops/may-boutique/chat", async (route) => {
+    if (route.request().method() === "POST") {
+      await answered;
+      messages.push({ id: "99999999-9999-4999-8999-999999999999", sender: "shopper", text: "có áo này k", reply: null, createdAt: new Date().toISOString() });
+      await route.fulfill({ json: { messages } });
+      return;
+    }
+    await route.fulfill({ json: { messages } });
+  });
+
+  await page.goto("/s/may-boutique");
+  await page.getByRole("button", { name: "Chat với shop" }).first().focus();
+  await page.keyboard.press("Enter");
+  const chat = page.getByRole("dialog", { name: "Trò chuyện với shop" });
+  await chat.locator('input[type="file"]').setInputFiles({ name: "ao.png", mimeType: "image/png", buffer: pixelPng });
+  await expect(chat.getByRole("img", { name: "Ảnh sắp gửi" })).toBeVisible();
+  await chat.getByRole("textbox", { name: "Tin nhắn" }).fill("có áo này k");
+  await chat.getByRole("button", { name: "Gửi", exact: true }).click();
+
+  // While the server is still answering, the photo is in the bubble with the text,
+  // and no longer above the message field.
+  await expect(chat.getByRole("img", { name: "Ảnh đang gửi" })).toBeVisible();
+  await expect(chat.getByText("có áo này k", { exact: true })).toBeVisible();
+  await expect(chat.getByRole("img", { name: "Ảnh sắp gửi" })).toHaveCount(0);
+
+  answer();
+  await expect(chat.getByRole("img", { name: "Ảnh đang gửi" })).toHaveCount(0);
+  await expect(chat.getByRole("img", { name: "Ảnh sắp gửi" })).toHaveCount(0);
+});
+
 test("reuses message id on retry and shows a Vietnamese network error", async ({ page }) => {
   const submitted: Array<Record<string, unknown>> = [];
   await page.route("**/api/shops/may-boutique/catalog", (route) => route.fulfill({ json: catalog }));
