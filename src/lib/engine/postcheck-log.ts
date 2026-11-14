@@ -17,6 +17,9 @@ export const postcheckLogSchema = z.object({
   // R3: the reply was never sent (a newer shopper message arrived, or staff took
   // over first). The next turn's state skips this row (store.ts).
   superseded: z.literal(true).optional(),
+  // PB-17: the input guard refused this turn. It changes nothing, so the next
+  // turn's state skips this row (store.ts) and an order's quote survives it.
+  guardRefused: z.literal(true).optional(),
 });
 
 export type PostcheckLog = z.infer<typeof postcheckLogSchema>;

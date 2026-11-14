@@ -48,8 +48,8 @@ export const GUARD_THRESHOLDS: Record<GuardCategory, number> = {
   harmful: 0.6,
 };
 
-// Sent for injection and leak. Abuse and harmful requests are handed to staff
-// instead (engine.ts, PB-14), so they have no refusal text.
+// Sent for injection, leak and harmful requests: the AI refuses them itself
+// (PB-17). Only abuse is handed to staff instead (engine.ts, PB-14).
 export const GUARD_REFUSAL_TEXT =
   "Dạ, mình chỉ hỗ trợ được về sản phẩm, size, đơn hàng và chính sách của shop thôi ạ. Bạn cần tư vấn món nào thì cứ nhắn mình nhé!";
 
