@@ -79,7 +79,7 @@ type Offer = { clause: string; kinds: string[]; numbers: string[]; sentenceNumbe
 //   refusal only when a negation governs every offer word in the clause.
 // - policy (lenient): any negation in the clause makes it no offer, so a rule
 //   like "Hàng giảm giá không đổi trả" never backs a discount.
-function offersIn(text: string, strict: boolean): Offer[] {
+function offersIn(text: string, strict: boolean, deferToStaff = true): Offer[] {
   return prepare(text)
     .split(/[.!?;\n]+/)
     .flatMap((sentence) => {
@@ -99,10 +99,17 @@ function offersIn(text: string, strict: boolean): Offer[] {
         } else if (/\b(khong|chua|not|no)\b/.test(unblocked)) {
           return [];
         }
-        if (numbers.length === 0 && DEFERS_TO_STAFF.test(clause)) return [];
+        if (deferToStaff && numbers.length === 0 && DEFERS_TO_STAFF.test(clause)) return [];
         return [{ clause, kinds: [...new Set(matches.map((m) => m.kind))], numbers, sentenceNumbers, sentence }];
       });
     });
+}
+
+// PB-35b: true when the text makes any offer (discount, gift, free service, code),
+// read strictly like a reply: a learned rule that does must wait for the owner.
+// A rule has no staff to defer to: "Nhân viên tặng quà" is an offer.
+export function mentionsOffer(text: string): boolean {
+  return offersIn(text, true, false).length > 0;
 }
 
 // Condition markers per sentence (folded text): who the offer is for, and the

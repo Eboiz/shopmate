@@ -6,3 +6,4 @@ export * from "./enums";
 export * from "./reply";
 export * from "./engine";
 export * from "./tools";
+export * from "./learning";

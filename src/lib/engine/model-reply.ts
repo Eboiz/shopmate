@@ -24,16 +24,17 @@ function strip(node: unknown): unknown {
   return node;
 }
 
-function replyJsonSchema(): Record<string, unknown> {
-  const schema: Record<string, unknown> = z.toJSONSchema(modelReplySchema);
+// A Zod schema as a JSON schema structured output accepts (also PB-35b's learning).
+export function toStructuredOutputSchema(zodSchema: z.ZodType): Record<string, unknown> {
+  const schema: Record<string, unknown> = z.toJSONSchema(zodSchema);
   delete schema.$schema;
   return strip(schema) as Record<string, unknown>;
 }
 
-export const MODEL_REPLY_JSON_SCHEMA = replyJsonSchema();
+export const MODEL_REPLY_JSON_SCHEMA = toStructuredOutputSchema(modelReplySchema);
 
 // The first balanced {...} in raw, skipping braces inside strings.
-function firstJsonObject(raw: string): unknown {
+export function firstJsonObject(raw: string): unknown {
   for (let start = raw.indexOf("{"); start >= 0; start = raw.indexOf("{", start + 1)) {
     let depth = 0;
     let inString = false;
