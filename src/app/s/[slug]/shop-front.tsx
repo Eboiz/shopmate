@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { z } from "zod";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -22,11 +23,18 @@ import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/sho
 import { cartCount, cartMessage, stockChangeMessage, useCart, variantStock, type CartItem } from "./cart";
 import { onlyChoice, productOptions } from "./product-options";
 import { cartItemFor, QuickAdd } from "./quick-add";
-import { CartPanel } from "./cart-panel";
+import { CartPanel, type CheckoutCustomer, type CheckoutResult } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
 import { SmartSearch } from "./smart-search";
 import { GroupTiles, ShopFooter, ShopHeader, ShopHero, ShopMarquee, SizeBand, type GroupLink } from "./storefront-sections";
+
+const checkoutResponseSchema = z.object({
+  orderId: z.string().optional(),
+  total: z.number().optional(),
+  message: z.string().optional(),
+  error: z.string().optional(),
+});
 
 type Props = { slug: string; previewCatalog?: ShopCatalog; detailProductId?: string };
 
@@ -344,6 +352,52 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     setOpen(true);
   }
 
+  // Checkout without the AI: one id per basket being ordered, so a retry after
+  // a lost answer returns the same order instead of a second one.
+  const checkoutIdRef = useRef<string | null>(null);
+  async function placeOrder(customer: CheckoutCustomer): Promise<CheckoutResult> {
+    if (cart.items.length === 0) return { ok: false, message: "Giỏ hàng đang trống." };
+    if (previewCatalog) return { ok: false, message: "Trang xem thử không gửi được đơn." };
+    checkoutIdRef.current ??= crypto.randomUUID();
+    let response: Response;
+    try {
+      response = await fetch(`/api/shops/${encodeURIComponent(slug)}/orders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientOrderId: checkoutIdRef.current,
+          items: cart.items.map(({ productId, color, size, quantity, price }) => ({ productId, color, size, quantity, unitPrice: price })),
+          customer,
+        }),
+      });
+    } catch {
+      return { ok: false, message: "Mất kết nối. Bạn kiểm tra mạng rồi bấm đặt hàng lại nhé." };
+    }
+    const body: unknown = await response.json().catch(() => null);
+    const parsed = checkoutResponseSchema.safeParse(body);
+    if (response.ok && parsed.success && parsed.data.total !== undefined) {
+      checkoutIdRef.current = null;
+      cart.clear();
+      void refresh();
+      return { ok: true, total: parsed.data.total };
+    }
+    // A refused order wrote nothing: the next attempt (after the shopper fixes
+    // the basket) is a new one. Stock or price changes reload the basket's stock.
+    if (response.status === 409) {
+      checkoutIdRef.current = null;
+      fetch(catalogEndpoint, { cache: "no-store" })
+        .then(async (fresh) => {
+          if (!fresh.ok) return;
+          const next = shopCatalogSchema.parse(await fresh.json());
+          setCatalog(next);
+          checkStock(next.products);
+        })
+        .catch(() => {});
+    }
+    const message = parsed.success ? (parsed.data.message ?? parsed.data.error) : undefined;
+    return { ok: false, message: message ?? "Chưa gửi được đơn hàng. Bạn thử lại sau ít phút nhé." };
+  }
+
   function sendCart() {
     if (cart.items.length === 0) return;
     // Last check before the order leaves: a change keeps the cart open so the
@@ -642,6 +696,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       onRemove={cart.remove}
       onRestore={cart.restore}
       onSend={sendCart}
+      onCheckout={placeOrder}
+      onOpenChat={() => { closeCart(); setOpen(true); }}
       onClose={closeCart}
     />
   );
@@ -857,7 +913,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                       </div>
                     )}
                     {(message.reply?.text || message.text) && (
-                      <div className={`break-words rounded-xl p-3 text-sm leading-6 ${message.sender === "shopper" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white text-[#171717]"}`}>
+                      <div className={`whitespace-pre-line break-words rounded-xl p-3 text-sm leading-6 ${message.sender === "shopper" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white text-[#171717]"}`}>
                         {message.reply?.text || message.text}
                       </div>
                     )}

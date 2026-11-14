@@ -46,3 +46,28 @@ export async function decideDraftOrder(id: string, decision: OrderDecision) {
   if (!response.ok) throw new Error(`Could not update the order (${response.status})`);
   return decisionSuccessSchema.parse(await response.json());
 }
+
+const createSuccessSchema = z.object({ orderId: z.string().min(1), total: vndSchema });
+const createFailureSchema = z.object({ error: z.string().optional(), message: z.string().optional() });
+
+export type ManualOrderInput = {
+  clientOrderId: string;
+  conversationId: string | null;
+  items: { variantId: string; quantity: number; unitPrice: number }[];
+  customer: { name: string; phone: string; address: string };
+};
+
+// POST /api/admin/orders: an order staff type in. A refusal (bad phone, stock,
+// a changed price) comes back as its message for the form to show.
+export async function createManualOrder(input: ManualOrderInput) {
+  const response = await fetch(ordersEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (response.ok) return { ok: true as const, ...createSuccessSchema.parse(await response.json()) };
+  if (response.status >= 500) throw new Error(`Could not create the order (${response.status})`);
+  const body = createFailureSchema.safeParse(await response.json().catch(() => ({})));
+  const message = (body.success && (body.data.message ?? body.data.error)) || "Chưa tạo được đơn hàng.";
+  return { ok: false as const, message };
+}
