@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryMessage, ToolCallLog } from "@/contract";
 import {
-  answersOrderConfirm, isOrderConfirmation, isOrderIntent, isOrderMessage, latestQuote, missingCustomerDetails,
+  answersOrderConfirm, isContactOnly, isOrderConfirmation, isOrderIntent, isOrderMessage, latestQuote, missingCustomerDetails,
   ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText,
   orderCreatedText, orderOutOfStockText, orderSummary, orderWriteError, sameItems,
   sameQuote,
@@ -43,6 +43,68 @@ describe("PB-11 order flow", () => {
       expect(isOrderConfirmation([...history.slice(0, -1), { sender: "shopper", text: answer }])).toBe(false);
     }
     expect(isOrderConfirmation([{ sender: "shopper", text: "xác nhận" }])).toBe(false);
+  });
+
+  it("isContactOnly: a phone or a contact field, with no order change", () => {
+    expect(isContactOnly("0912 345 678")).toBe(true);
+    expect(isContactOnly("SĐT 0912345678")).toBe(true);
+    expect(isContactOnly("Size L nhé")).toBe(false);
+    expect(isContactOnly("ok")).toBe(false);
+  });
+
+  it("lets contact details sit between the summary and the confirmation", () => {
+    const summary = { sender: "ai", text: "Dạ, đơn hàng dự kiến:\n1. Váy...\nBạn xác nhận đơn này chứ?" } as const;
+    const withBetween = (text: string, last = "ok") => isOrderConfirmation([
+      { sender: "shopper", text: "Mình lấy 2 váy size M màu be." },
+      summary,
+      { sender: "shopper", text },
+      { sender: "shopper", text: last },
+    ]);
+    expect(withBetween("Thảo, 0912345678, giao Q1")).toBe(true);
+    expect(withBetween("Tên Thảo, địa chỉ 12 Nguyễn Trãi Q1")).toBe(true);
+    // Names and addresses that contain order words are still contact details.
+    expect(withBetween("Tên Huy, số 0912345678, giao Q1")).toBe(true);
+    expect(withBetween("Tên Đạt, 0912345678")).toBe(true);
+    expect(withBetween("Địa chỉ 12 Cái Lân, Hạ Long")).toBe(true);
+    // ...but an explicit change inside a contact segment still voids it.
+    expect(withBetween("Tên Thảo đổi sang size L")).toBe(false);
+    // A phone number does not excuse a cancel in the same segment.
+    expect(withBetween("0912345678 thôi không mua nữa")).toBe(false);
+    expect(withBetween("SĐT 0912345678 thêm 10 cái")).toBe(false);
+    expect(withBetween("Tên Thảo, bớt 12 cái")).toBe(false);
+    expect(withBetween("Tên Thảo, lấy thêm cái nữa")).toBe(false);
+    expect(withBetween("Địa chỉ 12 Cái Lân, thêm 1 váy")).toBe(false);
+    expect(withBetween("SĐT 0912345678 thôi không mua nữa")).toBe(false);
+    expect(withBetween("Thảo 0912345678")).toBe(true);
+    // Contact details plus a change still void it; contact details are not a confirmation.
+    expect(withBetween("Thảo 0912345678, mà đổi sang size L nhé")).toBe(false);
+    expect(withBetween("0912345678 lấy thêm 1 cái")).toBe(false);
+    expect(withBetween("Thảo, 0912345678, giao Q1", "Thảo, 0912345678, giao Q1")).toBe(false);
+  });
+
+  it("requires every shopper message after the summary to be a confirmation", () => {
+    const summary = { sender: "ai", text: "Dạ, đơn hàng dự kiến:\n1. Váy...\nBạn xác nhận đơn này chứ?" } as const;
+    // Shopper changes the order after the summary, then says "ok": a new summary is needed.
+    expect(isOrderConfirmation([
+      { sender: "shopper", text: "Mình lấy 2 váy size M màu be." },
+      summary,
+      { sender: "shopper", text: "Không lấy M nữa, đổi sang L" },
+      { sender: "shopper", text: "ok" },
+    ])).toBe(false);
+    // A cancellation after the summary also invalidates the confirmation.
+    expect(isOrderConfirmation([
+      { sender: "shopper", text: "Mình lấy 2 váy size M màu be." },
+      summary,
+      { sender: "shopper", text: "thôi không mua nữa" },
+      { sender: "shopper", text: "ok" },
+    ])).toBe(false);
+    // A burst of confirmations after the summary is still a confirmation.
+    expect(isOrderConfirmation([
+      { sender: "shopper", text: "Mình lấy 2 váy size M màu be." },
+      summary,
+      { sender: "shopper", text: "ok" },
+      { sender: "shopper", text: "ok nha" },
+    ])).toBe(true);
   });
 
   // PB-19 main flow on the preview, 11/11: "Đúng rồi, bạn chốt đơn giúp mình nhé."

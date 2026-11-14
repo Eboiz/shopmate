@@ -14,7 +14,9 @@ select set_eq(
         -- PB-04: web chat limit per client IP and shop (server only).
         'web_chat_hits',
         -- PB-32: several photos per product.
-        'product_images'],
+        'product_images',
+        -- PB-11 follow-up: confirmed quotes replaced by a re-quote (server only).
+        'superseded_quotes'],
   'the contract has exactly these tables'
 );
 
