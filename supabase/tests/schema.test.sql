@@ -15,6 +15,8 @@ select set_eq(
         'web_chat_hits',
         -- PB-35a: questions the AI couldn't answer, and what it learned.
         'data_gaps', 'learned_facts',
+        -- PB-32: several photos per product.
+        'product_images',
         -- PB-11 follow-up: confirmed quotes replaced by a re-quote (server only).
         'superseded_quotes'],
   'the contract has exactly these tables'

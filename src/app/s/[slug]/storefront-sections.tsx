@@ -4,6 +4,8 @@ import Image from "next/image";
 import { useState, type CSSProperties, type FormEvent } from "react";
 import { formatPrice } from "@/lib/format";
 import { BODY_LIMITS_ERROR, parseBody } from "@/lib/shop/body-limits";
+import { contactItems, type ShopContact } from "@/lib/shop/contact";
+import { DEFAULT_BANNER } from "@/lib/shop/gallery";
 import type { ShopProduct, SizeChartRow } from "@/lib/shop/types";
 import { Icon } from "@/components/ui/icon";
 import { HeaderSearch } from "./header-search";
@@ -158,16 +160,18 @@ export function ShopHeader({ shopName, groups, itemCount, onOpenCart, onAsk, onC
 
 type HeroProps = {
   shopName: string;
+  // PB-32: the owner's banner; null or missing keeps the default photo.
+  bannerUrl?: string | null;
   featured: ShopProduct[];
   onAsk: (text: string) => void;
   onAskAbout: (product: ShopProduct) => void;
 };
 
-export function ShopHero({ shopName, featured, onAsk, onAskAbout }: HeroProps) {
+export function ShopHero({ shopName, bannerUrl, featured, onAsk, onAskAbout }: HeroProps) {
   return (
     <section id="dau-trang" className="mx-auto grid max-w-[1400px] gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[1.45fr_1fr] lg:px-10">
       <div className="relative flex min-h-[440px] items-end overflow-hidden bg-[#33312d] text-white lg:min-h-[580px]">
-        <Image src="/images/hero-boutique.jpg" alt="" fill priority sizes="(max-width: 1024px) 100vw, 60vw" className="object-cover" />
+        <Image src={bannerUrl || DEFAULT_BANNER} alt="" fill priority sizes="(max-width: 1024px) 100vw, 60vw" className="object-cover" />
         <div className="absolute inset-0 bg-gradient-to-b from-[#17171766] via-[#17171799] to-[#171717ee] lg:from-[#17171700] lg:via-[#17171733] lg:to-[#171717e6]" />
         <div className="ui-enter relative z-10 grid max-w-3xl gap-4 p-6 sm:p-10">
           <p className="text-balance text-[clamp(2.25rem,4.4vw,4.25rem)] font-black uppercase leading-[1.06] tracking-[-.035em]">Chọn đúng size,<br />mặc đúng gu<span className="text-[#e9573f]">.</span></p>
@@ -323,15 +327,18 @@ export function SizeBand({ chart, onAsk }: { chart: SizeChartRow[] | null; onAsk
 
 type FooterProps = {
   shopName: string;
+  // PB-32: address, phone and fanpage; an empty field is not shown.
+  contact?: Partial<ShopContact>;
   groups: GroupLink[];
   policyItems: Array<{ title: string; text: string }>;
   onChoose: (name: string) => void;
   onAsk: (text: string) => void;
 };
 
-export function ShopFooter({ shopName, groups, policyItems, onChoose, onAsk }: FooterProps) {
+export function ShopFooter({ shopName, contact, groups, policyItems, onChoose, onAsk }: FooterProps) {
   const head = "mb-4 text-xs font-extrabold uppercase tracking-[.16em]";
   const link = "inline-flex min-h-8 items-center text-left text-sm text-[#45423d] hover:text-[#c2412b]";
+  const contacts = contactItems(contact);
   return (
     // sm:pb-28 leaves room for the floating chat button; on a phone the page
     // already ends with the bottom bar's height (.shop-has-bar).
@@ -340,6 +347,27 @@ export function ShopFooter({ shopName, groups, policyItems, onChoose, onAsk }: F
         <div>
           <p className="text-2xl font-black uppercase tracking-[-.04em]">{shopName}<span className="text-[#e9573f]">.</span></p>
           <p className="mt-3 max-w-[34ch] text-sm leading-6 text-[#45423d]">Hỏi gì cũng được: trợ lý AI trả lời ngay trên trang, nhân viên shop hỗ trợ khi cần.</p>
+          {contacts.length > 0 && (
+            <address className="mt-5 grid gap-2 text-sm not-italic leading-6 text-[#45423d]">
+              {contacts.map((item) =>
+                item.kind === "address" ? (
+                  <p key={item.kind}><span className="font-semibold text-[#171717]">Địa chỉ:</span> {item.text}</p>
+                ) : item.kind === "phone" ? (
+                  <p key={item.kind}>
+                    <span className="font-semibold text-[#171717]">Điện thoại:</span>{" "}
+                    <a href={item.href} className="inline-flex min-h-11 items-center underline-offset-4 hover:text-[#c2412b] hover:underline">{item.text}</a>
+                  </p>
+                ) : (
+                  <p key={item.kind} className="break-words">
+                    <span className="font-semibold text-[#171717]">Fanpage:</span>{" "}
+                    <a href={item.href} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center break-all underline-offset-4 hover:text-[#c2412b] hover:underline">
+                      {item.text}<span className="sr-only"> (mở tab mới)</span>
+                    </a>
+                  </p>
+                ),
+              )}
+            </address>
+          )}
         </div>
         {groups.length > 0 && (
           <div>
