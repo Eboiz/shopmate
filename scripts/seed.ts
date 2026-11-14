@@ -1,14 +1,15 @@
 // Loads one shop from supabase/seed/<data>/*.csv, plus an eval shop with the same
 // data (PB-10) and that shop's owner and staff accounts (PB-19). Two data sets:
 //   demo          Hạnh Boutique, the PO's catalog and test set (PB-28); the default.
-//                 Accounts DEMO_OWNER_* / DEMO_STAFF_*; the only shop with chat channels.
-//   may-boutique  Mây Boutique, the 60-product catalog of PR #41.
-//                 Accounts MAY_BOUTIQUE_OWNER_* / MAY_BOUTIQUE_STAFF_*.
+//                 Accounts DEMO_OWNER_* / DEMO_STAFF_*; channels MESSENGER_*, TELEGRAM_*, ...
+//   may-boutique  Mây Boutique, a menswear / unisex shop (NAM01-NAM30), unlike Hạnh.
+//                 Accounts MAY_BOUTIQUE_OWNER_* / MAY_BOUTIQUE_STAFF_*; channels MAY_BOUTIQUE_MESSENGER_*, ...
 //
 //   pnpm db:seed [--data=<name>]                   local Supabase (`pnpm db:start`)
 //   pnpm db:seed --target=shared --confirm=<ref>   the team's Supabase project
 //   pnpm db:seed --check [--data=<name>]           only read and check the CSV files
-//   pnpm db:seed --only=channels [--target=...]    only the chat channel accounts (PB-15, PB-21, PB-23, PB-27)
+//   pnpm db:seed --only=channels [--data=<name>] [--target=...]
+//                                                  only the chat channel accounts (PB-15, PB-21, PB-23, PB-27)
 //     [--telegram-webhook=<base URL>]             also point the Telegram bot's webhook there
 //
 // Safe to run again: rows are upserted on their natural keys. Each run resets
@@ -38,9 +39,11 @@ if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(dataSet)) fail(`--data=${dataSet}: use a fo
 const dataPath = `supabase/seed/${dataSet}`;
 const demoDir = new URL(`${dataPath}/`, root);
 if (!existsSync(new URL("shop.csv", demoDir))) fail(`${dataPath}/shop.csv not found`);
-// The Facebook Page and the Telegram bot can belong to one shop only: the PO's demo shop.
-const hasChannels = dataSet === "demo";
 const accountPrefix = dataSet === "demo" ? "DEMO" : dataSet.toUpperCase().replaceAll("-", "_");
+// Each shop has its own chat channels (one Facebook Page, bot or number belongs to one
+// shop). The demo shop keeps the unprefixed names; other data sets prefix them:
+// MAY_BOUTIQUE_MESSENGER_PAGE_ID.
+const channelVar = (name: string) => (dataSet === "demo" ? name : `${accountPrefix}_${name}`);
 
 // 1. Read and check every sheet before touching any database.
 const csv = Object.fromEntries(
@@ -72,7 +75,6 @@ if (args.only !== "channels") {
 if (args.accounts !== undefined && args.accounts !== "existing") fail("use --accounts=existing to reuse the current demo accounts");
 if (args.check) process.exit(0);
 if (args.only !== undefined && args.only !== "channels") fail(`unknown --only=${args.only}; use --only=channels`);
-if (args.only === "channels" && !hasChannels) fail("chat channels belong to the demo shop: drop --data");
 
 // 2. Pick the target. Local is the default; the shared project needs its ref typed out.
 const envFile = new URL(".env.local", root);
@@ -288,30 +290,30 @@ async function seedAccount(shop_id: string, a: Account) {
   );
 }
 
-// 5b. The demo shop's chat channels: its Facebook Page (PB-15), Telegram bot
+// 5b. The shop's chat channels: its Facebook Page (PB-15), Telegram bot
 // (PB-21), Instagram account (PB-23) and WhatsApp phone number (PB-27). Tokens come from .env.local and never enter the repo; each webhook finds
 // the shop from these rows. A channel whose variables are missing is skipped.
 const optionalEnv = (name: string) => process.env[name]?.trim() || undefined;
 const messengerEnv = () => {
-  const pageId = optionalEnv("MESSENGER_PAGE_ID");
-  const token = optionalEnv("MESSENGER_PAGE_ACCESS_TOKEN");
+  const pageId = optionalEnv(channelVar("MESSENGER_PAGE_ID"));
+  const token = optionalEnv(channelVar("MESSENGER_PAGE_ACCESS_TOKEN"));
   return pageId && token ? { pageId, token } : null;
 };
 // Instagram sends with the token of the Facebook Page the account is linked to: the
 // Messenger Page token when it is the same Page, else INSTAGRAM_PAGE_ACCESS_TOKEN.
 const instagramEnv = () => {
-  const accountId = optionalEnv("INSTAGRAM_ACCOUNT_ID");
-  const token = optionalEnv("INSTAGRAM_PAGE_ACCESS_TOKEN") ?? optionalEnv("MESSENGER_PAGE_ACCESS_TOKEN");
+  const accountId = optionalEnv(channelVar("INSTAGRAM_ACCOUNT_ID"));
+  const token = optionalEnv(channelVar("INSTAGRAM_PAGE_ACCESS_TOKEN")) ?? optionalEnv(channelVar("MESSENGER_PAGE_ACCESS_TOKEN"));
   return accountId && token ? { accountId, token } : null;
 };
 const whatsappEnv = () => {
-  const phoneNumberId = optionalEnv("WHATSAPP_PHONE_NUMBER_ID");
-  const token = optionalEnv("WHATSAPP_ACCESS_TOKEN");
+  const phoneNumberId = optionalEnv(channelVar("WHATSAPP_PHONE_NUMBER_ID"));
+  const token = optionalEnv(channelVar("WHATSAPP_ACCESS_TOKEN"));
   return phoneNumberId && token ? { phoneNumberId, token } : null;
 };
 const telegramEnv = () => {
-  const token = optionalEnv("TELEGRAM_BOT_TOKEN");
-  const secret = optionalEnv("TELEGRAM_WEBHOOK_SECRET");
+  const token = optionalEnv(channelVar("TELEGRAM_BOT_TOKEN"));
+  const secret = optionalEnv(channelVar("TELEGRAM_WEBHOOK_SECRET"));
   return token && secret ? { token, secret } : null;
 };
 
@@ -340,27 +342,27 @@ async function seedChannels(shop_id: string, slug: string) {
   if (messenger) {
     await seedChannelAccount(shop_id, "messenger", messenger.pageId, messenger.token);
     console.log(`✓ messenger: Page ${messenger.pageId} → ${slug}`);
-  } else console.warn("! MESSENGER_PAGE_ID or MESSENGER_PAGE_ACCESS_TOKEN not set in .env.local: no Messenger channel");
+  } else console.warn(`! ${channelVar("MESSENGER_PAGE_ID")} or ${channelVar("MESSENGER_PAGE_ACCESS_TOKEN")} not set in .env.local: no Messenger channel`);
 
   const instagram = instagramEnv();
   if (instagram) {
     await seedChannelAccount(shop_id, "instagram", instagram.accountId, instagram.token);
     console.log(`✓ instagram: account ${instagram.accountId} → ${slug}`);
-  } else console.warn("! INSTAGRAM_ACCOUNT_ID (or a Page token) not set in .env.local: no Instagram channel");
+  } else console.warn(`! ${channelVar("INSTAGRAM_ACCOUNT_ID")} (or a Page token) not set in .env.local: no Instagram channel`);
 
   const whatsapp = whatsappEnv();
   if (whatsapp) {
     await seedChannelAccount(shop_id, "whatsapp", whatsapp.phoneNumberId, whatsapp.token);
     console.log(`✓ whatsapp: phone number ${whatsapp.phoneNumberId} → ${slug}`);
-  } else console.warn("! WHATSAPP_PHONE_NUMBER_ID or WHATSAPP_ACCESS_TOKEN not set in .env.local: no WhatsApp channel");
+  } else console.warn(`! ${channelVar("WHATSAPP_PHONE_NUMBER_ID")} or ${channelVar("WHATSAPP_ACCESS_TOKEN")} not set in .env.local: no WhatsApp channel`);
 
   const telegram = telegramEnv();
   if (!telegram) {
-    console.warn("! TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET not set in .env.local: no Telegram channel");
+    console.warn(`! ${channelVar("TELEGRAM_BOT_TOKEN")} or ${channelVar("TELEGRAM_WEBHOOK_SECRET")} not set in .env.local: no Telegram channel`);
     return;
   }
   // The bot id is the number before ":" in its token. Never print the token itself.
-  const botId = telegram.token.match(/^(\d+):[\w-]+$/)?.[1] ?? fail("TELEGRAM_BOT_TOKEN is not a bot token (<id>:<secret>)");
+  const botId = telegram.token.match(/^(\d+):[\w-]+$/)?.[1] ?? fail(`${channelVar("TELEGRAM_BOT_TOKEN")} is not a bot token (<id>:<secret>)`);
   const row = await seedChannelAccount(shop_id, "telegram", botId, telegram.token, telegram.secret);
   console.log(`✓ telegram: bot ${botId} → ${slug}`);
 
@@ -392,7 +394,7 @@ if (args.only === undefined) {
   const shops = [data.shop, { name: `${data.shop.name} (eval)`, slug: `${data.shop.slug}-eval` }];
   const [demoId, evalId] = await Promise.all(shops.map((s) => seedShop(s.name, s.slug, data, imageUrls)));
   for (const a of accounts) await seedAccount(demoId, a);
-  if (hasChannels) await seedChannels(demoId, data.shop.slug);
+  await seedChannels(demoId, data.shop.slug);
 
   // 6. Read back what is now in the database, per shop.
   async function count(table: "products" | "variants" | "size_charts" | "pairings" | "policies" | "profiles", shop_id: string, withoutPhoto = false) {
@@ -494,7 +496,8 @@ if (args.only === undefined) {
   // passwords, so it is safe on the shared project while the team tests there. It
   // ends without process.exit: exiting while fetch sockets are open crashes Node on Windows.
   if (!messengerEnv() && !instagramEnv() && !telegramEnv() && !whatsappEnv()) {
-    fail("no channel to seed: set MESSENGER_PAGE_ID + MESSENGER_PAGE_ACCESS_TOKEN, INSTAGRAM_ACCOUNT_ID (+ INSTAGRAM_PAGE_ACCESS_TOKEN), TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_SECRET or WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN in .env.local");
+    const v = channelVar;
+    fail(`no channel to seed: set ${v("MESSENGER_PAGE_ID")} + ${v("MESSENGER_PAGE_ACCESS_TOKEN")}, ${v("INSTAGRAM_ACCOUNT_ID")} (+ ${v("INSTAGRAM_PAGE_ACCESS_TOKEN")}), ${v("TELEGRAM_BOT_TOKEN")} + ${v("TELEGRAM_WEBHOOK_SECRET")} or ${v("WHATSAPP_PHONE_NUMBER_ID")} + ${v("WHATSAPP_ACCESS_TOKEN")} in .env.local`);
   }
   const shop = must(
     await db.from("shops").select("id").eq("slug", data.shop.slug).maybeSingle(),

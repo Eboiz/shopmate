@@ -90,9 +90,9 @@ The database holds two shops, each with an eval copy (`<slug>-eval`, PB-10):
 | `--data` | Shop | Data | Accounts (`.env.local`) | Chat channels |
 | --- | --- | --- | --- | --- |
 | `demo` (default) | Hạnh Boutique, `hanh-boutique` | the PO's workbook and its 60 test questions (PB-28) | `DEMO_OWNER_*`, `DEMO_STAFF_*` | Messenger, Telegram, WhatsApp |
-| `may-boutique` | Mây Boutique, `may-boutique` | 60 products SP01-SP60 (PR #41) | `MAY_BOUTIQUE_OWNER_*`, `MAY_BOUTIQUE_STAFF_*` | web chat only |
+| `may-boutique` | Mây Boutique, `may-boutique` | 30 menswear / unisex products NAM01-NAM30, own photos | `MAY_BOUTIQUE_OWNER_*`, `MAY_BOUTIQUE_STAFF_*` | web chat; its own Messenger Page once `MAY_BOUTIQUE_MESSENGER_*` is set |
 
-A Facebook Page, Telegram bot or WhatsApp number belongs to one shop, so only `demo` stores channels. Photos are stored in Storage by product code, so the two data sets never share a code.
+A Facebook Page, Telegram bot or WhatsApp number belongs to one shop. `demo` reads the channel variables as named below (`MESSENGER_PAGE_ID`...); any other data set reads them with its prefix (`MAY_BOUTIQUE_MESSENGER_PAGE_ID`...), so `pnpm db:seed --only=channels --data=may-boutique` stores Mây's Page. Setting up a second Page: `docs/guide-tao-page-may-boutique.md`. Photos are stored in Storage by product code, so the two data sets never share a code. Migration `20261114120000_may_boutique_menswear.sql` removes Mây's old SP01-SP60 rows before re-seeding an existing database.
 
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
 
