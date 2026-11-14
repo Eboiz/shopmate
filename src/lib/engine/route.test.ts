@@ -17,6 +17,8 @@ import {
   STAFF_NO_DATA_TEXT,
   STAFF_NO_POLICY_TEXT,
   STAFF_POLICY_SILENT_TEXT,
+  UNCLEAR_MAX_BUTTONS,
+  unclearButtons,
   type RouteInput,
   type ToolResult,
 } from "./route";
@@ -424,6 +426,26 @@ describe("routeTurn", () => {
 
   it("catalogGroups: the shop page's order, no 'Khác'", () => {
     expect(catalogGroups([...catalog, { id: "x", name: "Túi", category: "phu_kien", colors: [], sizes: [] }])).toEqual(["Áo khoác", "Váy & đầm"]);
+  });
+
+  it("PB-46: an unclear message keeps every group; 'Gặp nhân viên' goes first when buttons run out", async () => {
+    const five = ["Áo", "Áo khoác", "Váy & đầm", "Chân váy", "Quần"];
+    expect(UNCLEAR_MAX_BUTTONS).toBe(5);
+    expect(unclearButtons(five)).toEqual(five);
+    expect(unclearButtons(five.slice(0, 4))).toEqual([...five.slice(0, 4), STAFF_BUTTON]);
+    expect(unclearButtons([])).toEqual([STAFF_BUTTON]);
+
+    const all: CatalogItem[] = [
+      { id: "p1", name: "Áo sơ mi", category: "ao", colors: [], sizes: [] },
+      { id: "p2", name: "Áo khoác dạ", category: "ao_khoac", colors: [], sizes: [] },
+      { id: "p3", name: "Đầm suông", category: "vay", colors: [], sizes: [] },
+      { id: "p4", name: "Chân váy chữ A", category: "chan_vay", colors: [], sizes: [] },
+      { id: "p5", name: "Quần ống rộng", category: "quan", colors: [], sizes: [] },
+    ];
+    expect(catalogGroups(all)).toEqual(five);
+    const out = await setup().run({ catalog: all, decision: decision({ intent: "unclear" }) });
+    expect(out).toMatchObject({ kind: "write", quickReplies: five });
+    if (out.kind === "write") for (const label of out.quickReplies ?? []) expect(quickReplySchema.safeParse(label).success).toBe(true);
   });
 
   it("a failed handoff tool is reported, so the engine moves the conversation itself", async () => {

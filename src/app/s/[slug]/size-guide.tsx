@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import { recommendSize } from "@/lib/engine/tools/size-recommendation";
+import { BODY_LIMITS, BODY_LIMITS_ERROR, parseBody } from "@/lib/shop/body-limits";
 import type { SizeChartRow } from "@/lib/shop/types";
 
 type Props = {
@@ -18,14 +19,14 @@ export function SizeGuide({ rows, availableSizes, onPick, onAsk }: Props) {
   const [height, setHeight] = useState("");
   const [weight, setWeight] = useState("");
   const id = useId();
-  const heightCm = Number(height);
-  const weightKg = Number(weight);
-  const ready = height !== "" && weight !== "" && heightCm > 0 && weightKg > 0;
-  const result = ready
+  // PB-46: the same limits and message as the shop page's size form.
+  const body = parseBody(height, weight);
+  const outOfLimits = height.trim() !== "" && weight.trim() !== "" && body === null;
+  const result = body
     ? recommendSize(
         rows.map((row) => ({ size: row.size, height_min_cm: row.heightMinCm, height_max_cm: row.heightMaxCm, weight_min_kg: row.weightMinKg, weight_max_kg: row.weightMaxKg })),
-        heightCm,
-        weightKg,
+        body.heightCm,
+        body.weightKg,
       )
     : null;
   const hit = result?.status === "ok" ? result.size : null;
@@ -38,14 +39,15 @@ export function SizeGuide({ rows, availableSizes, onPick, onAsk }: Props) {
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label className="grid gap-1 text-sm font-semibold">
           Chiều cao (cm)
-          <input type="number" inputMode="numeric" min={100} max={220} value={height} onChange={(event) => setHeight(event.target.value)} placeholder="158" className="ui-field min-h-11 w-32 px-3 text-base font-normal" />
+          <input type="number" inputMode="decimal" min={BODY_LIMITS.heightCm.min} max={BODY_LIMITS.heightCm.max} value={height} onChange={(event) => setHeight(event.target.value)} placeholder="158" className="ui-field min-h-11 w-32 px-3 text-base font-normal" />
         </label>
         <label className="grid gap-1 text-sm font-semibold">
           Cân nặng (kg)
-          <input type="number" inputMode="numeric" min={25} max={150} value={weight} onChange={(event) => setWeight(event.target.value)} placeholder="50" className="ui-field min-h-11 w-32 px-3 text-base font-normal" />
+          <input type="number" inputMode="decimal" min={BODY_LIMITS.weightKg.min} max={BODY_LIMITS.weightKg.max} value={weight} onChange={(event) => setWeight(event.target.value)} placeholder="50" className="ui-field min-h-11 w-32 px-3 text-base font-normal" />
         </label>
       </div>
       <div aria-live="polite" className="mt-3 min-h-6 text-sm">
+        {outOfLimits && <p className="text-[#b2382a]">{BODY_LIMITS_ERROR}</p>}
         {hit && (
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="font-semibold">Size {hit} hợp với bạn.</span>
@@ -59,7 +61,7 @@ export function SizeGuide({ rows, availableSizes, onPick, onAsk }: Props) {
         {result?.status === "out_of_range" && (
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>Số đo nằm ngoài bảng size.</span>
-            <button type="button" onClick={() => onAsk(`Mình cao ${heightCm}cm, nặng ${weightKg}kg thì mặc size nào vừa?`)} className="min-h-11 font-semibold text-[#c2412b] underline-offset-4 hover:underline">Hỏi shop tư vấn</button>
+            <button type="button" onClick={() => onAsk(`Mình cao ${body?.heightCm}cm, nặng ${body?.weightKg}kg thì mặc size nào vừa?`)} className="min-h-11 font-semibold text-[#c2412b] underline-offset-4 hover:underline">Hỏi shop tư vấn</button>
           </p>
         )}
       </div>
