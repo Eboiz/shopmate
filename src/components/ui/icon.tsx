@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-export type IconName = "chevron" | "phone" | "check" | "clock" | "grid" | "chat" | "box" | "hanger" | "spark" | "arrow" | "search" | "send" | "close" | "refresh" | "login" | "logout" | "menu" | "up" | "store" | "cart" | "trash" | "book";
+export type IconName = "chevron" | "phone" | "check" | "clock" | "grid" | "chat" | "box" | "hanger" | "spark" | "arrow" | "search" | "send" | "close" | "refresh" | "login" | "logout" | "menu" | "up" | "store" | "cart" | "trash" | "book" | "image";
 
 export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconName }) {
   const common = { fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
@@ -28,6 +28,7 @@ export function Icon({ name, ...props }: SVGProps<SVGSVGElement> & { name: IconN
       {name === "clock" && <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>}
       {name === "phone" && <path d="M5 3h3.5l1.7 4.3-2.2 1.4a11 11 0 0 0 5.3 5.3l1.4-2.2L19 13.5V17a2 2 0 0 1-2 2A14 14 0 0 1 3 5a2 2 0 0 1 2-2Z" />}
       {name === "store" && <path d="M4 10v10h16V10M3 10l2-6h14l2 6M3 10h18M9 20v-6h6v6" />}
+      {name === "image" && <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m21 16-5-5-9 9" /></>}
     </svg>
   );
 }

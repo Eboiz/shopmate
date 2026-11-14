@@ -5,8 +5,19 @@ import {
   cursorArgs, filterArgs, toInboxConversation, toPage, type InboxCounts, type InboxCursor, type InboxPage,
 } from "./inbox-page";
 
-// staff_id is set on staff messages: who on the team wrote it.
-export type InboxMessage = { id: string; sender: MessageSender; text: string; created_at: string; staff_id: string | null };
+// staff_id is set on staff messages: who on the team wrote it. photoUrls (PB-30):
+// the shopper's photos, signed for an hour from the private bucket (staff may
+// read only their shop's folder); photoError when signing failed.
+export type InboxMessage = {
+  id: string;
+  sender: MessageSender;
+  text: string;
+  created_at: string;
+  staff_id: string | null;
+  photoUrls: string[];
+  photoError?: true;
+};
+export { PHOTO_PREVIEW } from "./inbox-page";
 export type InboxConversation = {
   id: string;
   customerName: string;
@@ -68,15 +79,28 @@ export async function getConversation(id: string): Promise<InboxConversation | n
 }
 
 export async function listInboxMessages(conversationId: string): Promise<InboxMessage[]> {
-  const { data, error } = await createClient().from("messages")
-    .select("id, sender, text, created_at, staff_id")
+  const db = createClient();
+  const { data, error } = await db.from("messages")
+    .select("id, sender, text, created_at, staff_id, photo_paths")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .limit(historyLimit);
 
   if (error) throw error;
-  return data.reverse();
+  // One signing call for every photo in the history.
+  const paths = data.flatMap((m) => m.photo_paths);
+  let signed = new Map<string, string>();
+  let signError = false;
+  if (paths.length > 0) {
+    const result = await db.storage.from("chat-photos").createSignedUrls(paths, 3600);
+    if (result.error || !result.data) signError = true;
+    else signed = new Map(result.data.flatMap((d) => (d.path && d.signedUrl ? [[d.path, d.signedUrl] as const] : [])));
+  }
+  return data.reverse().map(({ photo_paths, ...message }) => {
+    const photoUrls = photo_paths.flatMap((p) => (signed.has(p) ? [signed.get(p)!] : []));
+    return { ...message, photoUrls, ...(photo_paths.length > photoUrls.length || (signError && photo_paths.length > 0) ? { photoError: true as const } : {}) };
+  });
 }
 
 // Names of the shop's team (RLS limits profiles to the signed-in user's shop),

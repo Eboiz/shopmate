@@ -1,6 +1,7 @@
 import { after, type NextRequest } from "next/server";
 import { parseInstagramEvents } from "@/lib/channels/instagram";
 import { parseMessengerEvents, sendTypingOn, verifyMessengerSignature, type MessagingEvent } from "@/lib/channels/messenger";
+import { messengerPhoto } from "@/lib/channels/photo-download";
 import { receiveChannelMessage } from "@/lib/channels/receive";
 import { parseWhatsAppEvents, sendWhatsAppTyping, type WhatsAppEvent } from "@/lib/channels/whatsapp";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -83,7 +84,7 @@ async function handleEvents(channel: "messenger" | "instagram", events: Messagin
     const incoming = {
       externalId: event.senderId,
       messageId: event.mid,
-      ...(event.type === "text" ? { text: event.text } : { imageUrls: event.imageUrls }),
+      ...(event.type === "text" ? { text: event.text } : { text: "", photos: event.imageUrls.map((url) => messengerPhoto(url)) }),
     };
     try {
       await receiveChannelMessage(
@@ -116,12 +117,22 @@ async function handleWhatsAppEvents(events: WhatsAppEvent[]) {
       console.warn(`whatsapp: unknown phone number ${event.phoneNumberId}, message ignored`);
       continue;
     }
-    // A photo arrives as a media id; the stored text keeps it so staff know a photo
-    // came (the AI hands photos to staff).
+    // A photo arrives as a media id. PB-30 downloads web, Messenger and Telegram
+    // photos only, so a WhatsApp photo is "a photo that could not be kept": the
+    // conversation goes to staff with the photo notice, as before PB-30, and the
+    // stored text keeps the media id for staff.
     const incoming = {
       externalId: event.from,
       messageId: event.messageId,
-      ...(event.type === "text" ? { text: event.text } : { imageUrls: [`whatsapp-media:${event.mediaId}`] }),
+      ...(event.type === "text"
+        ? { text: event.text }
+        : {
+            text: "",
+            photoRefs: [`whatsapp-media:${event.mediaId}`],
+            photos: [async () => {
+              throw new Error(`whatsapp media ${event.mediaId} is not downloaded`);
+            }],
+          }),
     };
     try {
       await receiveChannelMessage(

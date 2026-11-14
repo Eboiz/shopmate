@@ -222,6 +222,20 @@ Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's
 
 PB-31 groups (`src/lib/engine/eval/cases-pb31.ts`): `replay-*` holds the 18 shopper messages of the handoff table in Eboiz/Documents#32, each with its expected result (answer, offer of staff + reason, or handoff + reason); `near-*` holds typos, missing diacritics, other names (đầm/váy, quần bò/quần jean, somi, jacket) and measurements just outside the size chart. Run one group with `EVAL_GROUP=replay- pnpm engine:eval` (or `near-`). Every case is labeled `shouldHandOff`, and the summary has three more columns: **handoff rate** (runs handed to staff), **offer rate** (runs that asked "Bạn có muốn mình nhờ nhân viên…"), and **correct decision** (runs whose answer / offer / handoff matches the label). Report both the handoff rate and correct decision, so a lower handoff rate can't come from the AI making answers up.
 
+### Photo search and photo eval (PB-30)
+
+Shoppers can send a photo on web chat, Messenger and Telegram. The photo goes to a private bucket (`chat-photos`, `<shop_id>/<conversation_id>/<uuid>.<ext>`), Claude sees it, and `search_products` with `photo: n` asks the photo search service, which lives in the separate repo `shopmate-gpu-services` on Modal (EmbeddingGemma 2 + Qwen3-VL reranker + Qdrant Cloud; its README covers deploy and re-indexing). Set `EMBEDDER_URL` and `EMBEDDER_TOKEN` (server only; Vercel Production and Preview too); empty `EMBEDDER_URL` turns photo search off and `search_products` falls back to text search.
+
+A photo never proves the exact product: products scoring at least `PHOTO_SIMILAR_MIN` are returned as `close` (at most 3) and the AI asks which one (calibration in `shopmate-gpu-services/CALIBRATION.md`). The app waits 25 s for the service; a cold Modal container takes over a minute, so warm it before a demo: `curl -L $EMBEDDER_URL/health`.
+
+The photo eval runs on the eval shop of the **shared** project, because Modal only indexes that project. It creates one throwaway conversation in `hanh-boutique-eval`, reads the photos from `src/lib/engine/eval/photos/` (no bucket needed there), and deletes the conversation afterwards:
+
+```bash
+PHOTO_EVAL_SUPABASE_URL=https://<project>.supabase.co PHOTO_EVAL_SUPABASE_SECRET_KEY=... \
+EMBEDDER_URL=... EMBEDDER_TOKEN=... ANTHROPIC_API_KEY=... \
+EVAL_RUNS=3 pnpm engine:eval src/lib/engine/eval/photo.eval.ts
+```
+
 ### Prompt-injection eval (PB-17)
 
 ```bash

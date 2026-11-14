@@ -27,6 +27,11 @@ describe("toInboxConversation", () => {
     });
   });
 
+  it("shows a photo-only message as [Ảnh] (PB-30)", () => {
+    const mapped = toInboxConversation(row({ latest_message: "", customer_message: "", customer_message_at: "2026-11-13T10:00:00+00:00" }));
+    expect(mapped).toMatchObject({ latestMessage: "[Ảnh]", customerMessage: "[Ảnh]" });
+  });
+
   it("labels unnamed shoppers and drops missing messages", () => {
     const mapped = toInboxConversation(row({ display_name: " ", channel: "messenger", latest_message: null, customer_message: "", customer_message_at: null }));
     expect(mapped).toMatchObject({ customerName: "Khách Messenger #3F2A", unnamed: true, latestMessage: undefined, customerMessage: undefined, customerMessageAt: undefined });

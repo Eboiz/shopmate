@@ -481,6 +481,10 @@ function ConversationPanel({ conversation, teamNames, currentUserId, historyVers
   const [tookOver, setTookOver] = useState(false);
   const sendAttempt = useRef<{ text: string; id: string } | null>(null);
   const messageLog = useRef<HTMLDivElement>(null);
+  // New messages pull the log down only while the staff member is at (or near)
+  // the bottom, not while they read further up. The panel is keyed by
+  // conversation, so each one opens at its newest message.
+  const stickToBottom = useRef(true);
   const composer = useRef<HTMLTextAreaElement>(null);
   const newestMessageId = messages?.at(-1)?.id;
   const conversationId = conversation.id;
@@ -509,8 +513,13 @@ function ConversationPanel({ conversation, teamNames, currentUserId, historyVers
 
   useEffect(() => {
     const log = messageLog.current;
-    if (log) log.scrollTop = log.scrollHeight;
+    if (log && stickToBottom.current) log.scrollTop = log.scrollHeight;
   }, [newestMessageId]);
+
+  function onLogScroll() {
+    const log = messageLog.current;
+    if (log) stickToBottom.current = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  }
 
   async function runAction(action: "mode" | "send", request: () => Promise<void>) {
     if (pending) return;
@@ -547,6 +556,8 @@ function ConversationPanel({ conversation, teamNames, currentUserId, historyVers
     }
     setReply("");
     sendAttempt.current = null;
+    // Their own reply always brings the staff member back to the bottom.
+    stickToBottom.current = true;
     if (!result.ok) setError("Tin nhắn đã lưu trong hộp thư. Chưa xác nhận được tin đã đến khách.");
     reload();
   }
@@ -579,7 +590,7 @@ function ConversationPanel({ conversation, teamNames, currentUserId, historyVers
         </Button>
       </header>
 
-      <div ref={messageLog} role="log" aria-label="Tin nhắn" className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#f5f3ef] p-3 md:p-5">
+      <div ref={messageLog} onScroll={onLogScroll} role="log" aria-label="Tin nhắn" className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#f5f3ef] p-3 md:p-5">
         {historyError && <div className="mb-3"><ErrorMessage>Không tải được lịch sử. Bấm Làm mới để thử lại.</ErrorMessage></div>}
         {messages?.length === historyLimit && <p className="mb-3 text-center text-xs text-[#706d67]">Hiển thị {historyLimit} tin gần nhất.</p>}
         {messages?.length ? (
@@ -600,7 +611,22 @@ function ConversationPanel({ conversation, teamNames, currentUserId, historyVers
                     <strong>{senderLabels[message.sender]}</strong>
                     <time className={timeStyles[message.sender]} dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>
                   </p>
-                  <p className="whitespace-pre-wrap wrap-anywhere">{message.text || "Tin nhắn không có nội dung văn bản"}</p>
+                  {message.photoUrls.length > 0 && (
+                    <div className="mb-1 flex flex-wrap gap-1">
+                      {message.photoUrls.map((url, i) => (
+                        <a key={url} href={url} target="_blank" rel="noopener noreferrer" aria-label={`Mở ảnh ${i + 1} của khách`}>
+                          {/* Signed URLs expire after an hour: not for next/image's cache. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt={`Ảnh khách gửi ${i + 1}`} className="max-h-48 max-w-[200px] rounded-lg object-cover" />
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                  {message.photoError && <p className="text-xs opacity-80">Không tải được ảnh.</p>}
+                  {(message.text || message.photoUrls.length === 0) && !message.photoError && (
+                    <p className="whitespace-pre-wrap wrap-anywhere">{message.text || "Tin nhắn không có nội dung văn bản"}</p>
+                  )}
+                  {message.text && message.photoError && <p className="whitespace-pre-wrap wrap-anywhere">{message.text}</p>}
                 </div>
               </li>
             ))}

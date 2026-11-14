@@ -38,7 +38,9 @@ describe("parseTelegramUpdate", () => {
       updateId: "1001",
       chatId: "42",
       fileId: "large",
+      caption: "mẫu này",
     });
+    expect(parseTelegramUpdate(message({ photo }))).toMatchObject({ type: "image", caption: "" });
     expect(parseTelegramUpdate(message({ sticker: { file_id: "st" } }))).toMatchObject({ type: "sticker" });
   });
 

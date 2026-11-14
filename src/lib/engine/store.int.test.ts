@@ -17,7 +17,7 @@ describe("createSupabaseStore", () => {
       expect(
         await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: FX.a.vay01 }),
       ).toEqual({
-        conversation: { shopId: FX.a.shop, mode: "ai" },
+        conversation: { shopId: FX.a.shop, mode: "ai", lastMessageAt: expect.any(String) },
         // PB-31: the description comes along for the tool-loop prompt (the fixture has none)
         product: { id: FX.a.vay01, name: "Váy suông linen", description: null },
         previousTurnMissedProduct: false,
@@ -39,9 +39,32 @@ describe("createSupabaseStore", () => {
       });
       try {
         const own = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
-        expect(own.previousQuote).toEqual({ items, quote });
+        expect(own.previousQuote).toEqual({ items, quote, quoteId: id });
         const other = await store.loadTurnContext({ conversationId: FX.b.conversation, shopId: null, productId: null });
         expect(other.previousQuote).toBeNull();
+      } finally {
+        await db.from("ai_turns").delete().eq("id", id);
+      }
+    });
+
+    it("drops the previous quote when this turn already wrote an order with it", async () => {
+      const items = [{ variantId: FX.a.vay01MBe, quantity: 1 }];
+      const quote = { lines: [{
+        variantId: FX.a.vay01MBe, productId: FX.a.vay01, name: "Váy suông linen",
+        size: "M", color: "be", quantity: 1, unitPrice: 350000, lineTotal: 350000,
+      }], total: 350000 };
+      const id = await store.insertTurn({
+        shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1,
+        tool_calls: [
+          { name: "quote_order", input: { items }, output: quote },
+          { name: "create_draft_order", input: { items, customerName: "Thảo", customerPhone: "0912345678", customerAddress: "Q1" },
+            output: { status: "created", orderId: FX.a.vay01, total: 350000 } },
+        ],
+      });
+      try {
+        // The quote was used: a late replay must not mint a new key from this row.
+        const used = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
+        expect(used.previousQuote).toBeNull();
       } finally {
         await db.from("ai_turns").delete().eq("id", id);
       }
@@ -126,7 +149,7 @@ describe("createSupabaseStore", () => {
       await db.from("conversations").update({ mode: "staff" }).eq("id", FX.a.conversation);
       try {
         const tc = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
-        expect(tc.conversation).toEqual({ shopId: FX.a.shop, mode: "staff" });
+        expect(tc.conversation).toEqual({ shopId: FX.a.shop, mode: "staff", lastMessageAt: expect.any(String) });
       } finally {
         await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
       }

@@ -128,7 +128,9 @@ describe("POST /api/webhooks/messenger", () => {
       ]),
     );
     await runAfter();
-    expect(received.map((r) => r[1])).toEqual([{ externalId: "psid-1", messageId: "p1", imageUrls: ["https://x/1.jpg"] }]);
+    expect(received.map((r) => r[1])).toEqual([
+      { externalId: "psid-1", messageId: "p1", text: "", photos: [expect.any(Function)] },
+    ]);
     expect(info).toHaveBeenCalledWith("messenger: sticker from psid-1 ignored");
     info.mockRestore();
   });
@@ -189,10 +191,13 @@ describe("POST /api/webhooks/messenger (WhatsApp)", () => {
     expect(afterTasks).toHaveLength(0);
   });
 
-  it("passes a photo on with its media id, so the conversation goes to staff", async () => {
+  it("passes a photo on as one that can't be kept, so the conversation goes to staff", async () => {
     await post(waDelivery({ messages: [{ from: "84901234567", id: "wamid.3", type: "image", image: { id: "MEDIA1" } }] }));
     await runAfter();
-    expect(received.map((r) => r[1])).toEqual([{ externalId: "84901234567", messageId: "wamid.3", imageUrls: ["whatsapp-media:MEDIA1"] }]);
+    const [message] = received.map((r) => r[1] as { text: string; photos: (() => Promise<Uint8Array>)[] });
+    expect(message).toMatchObject({ externalId: "84901234567", messageId: "wamid.3", text: "", photoRefs: ["whatsapp-media:MEDIA1"] });
+    expect(message.photos).toHaveLength(1);
+    await expect(message.photos[0]()).rejects.toThrow("whatsapp media MEDIA1 is not downloaded");
   });
 });
 
@@ -252,9 +257,9 @@ describe("POST /api/webhooks/messenger (Instagram)", () => {
     expect(afterTasks).toHaveLength(0);
   });
 
-  it("passes a photo on, so the conversation goes to staff", async () => {
+  it("passes a photo on to be downloaded, like Messenger (PB-30)", async () => {
     await post(igDelivery([{ sender: { id: "igsid-1" }, message: { mid: "ig.p1", attachments: [{ type: "image", payload: { url: "https://lookaside.fbsbx.com/ig/1" } }] } }]));
     await runAfter();
-    expect(received.map((r) => r[1])).toEqual([{ externalId: "igsid-1", messageId: "ig.p1", imageUrls: ["https://lookaside.fbsbx.com/ig/1"] }]);
+    expect(received.map((r) => r[1])).toEqual([{ externalId: "igsid-1", messageId: "ig.p1", text: "", photos: [expect.any(Function)] }]);
   });
 });

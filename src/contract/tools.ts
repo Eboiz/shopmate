@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PhotoInput } from "./photos";
 import {
   handoffReasonSchema,
   idSchema,
@@ -13,6 +14,15 @@ export type ToolContext = {
   shopId: string;
   // null in staff_draft mode (PB-20 has no conversation).
   conversationId: string | null;
+  // PB-30: the photos of the shopper's latest turn, filled by the server.
+  photos?: PhotoInput[];
+  // Set by the server for create_draft_order only, never by the model (tool
+  // inputs stay strict and unchanged): the confirmed quote turn and the prices
+  // the shopper confirmed, so the RPC can replay and price-check the order.
+  order?: {
+    quoteKey: string | null;
+    expectedPrices: { variantId: string; unitPrice: number }[];
+  };
 };
 
 
@@ -31,7 +41,16 @@ export const tools = {
     input: z.strictObject({
       query: z.string().trim().min(1).max(100),
       limit: z.int().min(1).max(10).default(5),
+      // PB-30: search by the shopper's photo; query then describes the item.
+      photo: z
+        .int()
+        .min(1)
+        .max(4)
+        .optional()
+        .describe("Number of the shopper's photo in their latest message (1 = first). Searches by that photo; query then describes the item in it (type, color, style)."),
     }),
+    // PB-30: a photo search is never exact (a photo can't prove the exact
+    // product): products of the same kind are "close" (at most 3), else "none".
     // PB-31: match "close" means none has every word of the query; the products
     // are the most similar ones, for "Ý bạn là A hay B?".
     output: z.object({
@@ -163,6 +182,8 @@ export const tools = {
     output: z.discriminatedUnion("status", [
       z.object({ status: z.literal("created"), orderId: idSchema, total: vndSchema }),
       z.object({ status: z.literal("out_of_stock"), variantIds: z.array(idSchema) }),
+      // The server's expected prices (ctx.order) no longer match the products.
+      z.object({ status: z.literal("price_changed") }),
     ]),
   },
   handoff_to_staff: {

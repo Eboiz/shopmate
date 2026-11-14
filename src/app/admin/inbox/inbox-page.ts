@@ -22,6 +22,12 @@ export type InboxRow = {
   customer_message_at: string | null;
 };
 
+// PB-30: a message with photos and no text shows as this in the list. The
+// list rows carry text only, and a message with empty text is a photo message
+// (every other message needs text).
+export const PHOTO_PREVIEW = "[Ảnh]";
+const preview = (text: string | null) => (text === "" ? PHOTO_PREVIEW : text);
+
 export function toInboxConversation(row: InboxRow): InboxConversation {
   return {
     id: row.id,
@@ -30,8 +36,9 @@ export function toInboxConversation(row: InboxRow): InboxConversation {
     channel: row.channel,
     mode: row.mode,
     lastMessageAt: row.last_message_at,
-    latestMessage: row.latest_message ?? undefined,
-    customerMessage: row.customer_message || undefined,
+    latestMessage: preview(row.latest_message) ?? undefined,
+    // A shopper message exists only when it has a time; then empty text is a photo.
+    customerMessage: (row.customer_message_at ? preview(row.customer_message) : row.customer_message) || undefined,
     customerMessageAt: row.customer_message_at ?? undefined,
   };
 }

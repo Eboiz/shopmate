@@ -51,19 +51,28 @@ export async function learnFromStaffMessage(db: Db, msg: StaffMessage, learn: Le
   try {
     // The policies as get_policy returns them (learned facts included), so the
     // learner sees a conflict with something it learned before.
-    const [policies, facts, shop] = await Promise.all([
+    // The shopper's channel name (Messenger, Telegram…) so the learner can redact
+    // it from the rule even without "anh"/"chị" in front of it.
+    const [policies, facts, shop, conversation] = await Promise.all([
       db.from("policies").select("kind, content").eq("shop_id", msg.shopId),
       db.from("learned_facts").select("policy_kind, text").eq("shop_id", msg.shopId).eq("status", "active").not("policy_kind", "is", null).order("created_at"),
       db.from("shops").select("learning_mode").eq("id", msg.shopId).single(),
+      db.from("conversations").select("shoppers(display_name)").eq("id", msg.conversationId).eq("shop_id", msg.shopId).maybeSingle(),
     ]);
     if (policies.error) throw new Error(`policies: ${policies.error.message}`);
     if (facts.error) throw new Error(`learned_facts: ${facts.error.message}`);
     if (shop.error) throw new Error(`shops: ${shop.error.message}`);
+    if (conversation.error) throw new Error(`conversations: ${conversation.error.message}`);
+    const shopperName = conversation.data?.shoppers?.display_name ?? null;
     const kinds = [...new Set([...policies.data.map((p) => p.kind), ...facts.data.flatMap((f) => (f.policy_kind ? [f.policy_kind] : []))])];
 
     const result = await learn({
+      // A question about a product learns that product's details; any other a
+      // policy, which may hold no product details (PB-35b checks).
+      target: gap.product_id ? "product" : "policy",
       question: gap.question,
       staffReply: msg.text,
+      shopperName,
       policies: kinds.map((kind) => ({
         kind,
         content: withFacts(policies.data.find((p) => p.kind === kind)?.content, facts.data.filter((f) => f.policy_kind === kind).map((f) => f.text)),

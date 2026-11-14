@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
+import { recommendsSize, replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 
 const same: SizeAdvice = { status: "ok", size: "M", sizeByHeight: "M", sizeByWeight: "M" };
 const disagree: SizeAdvice = { status: "ok", size: "M", sizeByHeight: "S", sizeByWeight: "M" };
@@ -49,6 +49,98 @@ describe("replyMatchesSize", () => {
     const jeans: SizeAdvice = { status: "ok", size: "28", sizeByHeight: "27", sizeByWeight: "28" };
     expect(replyMatchesSize("Dạ bạn mặc size 28 ạ (theo chiều cao là 27)", jeans)).toBe(true);
     expect(replyMatchesSize("Dạ bạn mặc size 29 ạ", jeans)).toBe(false);
+  });
+
+  // Bug #10: every named size is in the allowed set {L, M, L}, yet the reply
+  // recommends M instead of the advised L.
+  const taller: SizeAdvice = { status: "ok", size: "L", sizeByHeight: "M", sizeByWeight: "L" };
+
+  it("rejects a reply that recommends another size than the advice", () => {
+    expect(replyMatchesSize("Size L không hợp bạn, hãy chọn size M nhé", taller)).toBe(false);
+  });
+
+  it("rejects a recommending verb naming a size other than the advice", () => {
+    expect(replyMatchesSize("Dạ bạn nên chọn size M nhé, size L hơi rộng.", taller)).toBe(false);
+  });
+
+  it("rejects the advised size negated right after it", () => {
+    expect(replyMatchesSize("Size L không hợp bạn đâu, shop chỉ còn L cho mẫu này thôi ạ.", taller)).toBe(false);
+  });
+
+  it("accepts the fallback reply for both branches", () => {
+    const agrees: SizeAdvice = { status: "ok", size: "L", sizeByHeight: "L", sizeByWeight: "L" };
+    expect(replyMatchesSize(sizeFallbackText(agrees), agrees)).toBe(true);
+    expect(replyMatchesSize(sizeFallbackText(taller), taller)).toBe(true);
+  });
+
+  it("accepts the A1 explanation and a plain recommendation of the advised size", () => {
+    expect(replyMatchesSize("theo chiều cao hợp size M, theo cân nặng hợp size L, nên bạn chọn size L", taller)).toBe(true);
+    expect(replyMatchesSize("bạn mặc size L là vừa ạ", taller)).toBe(true);
+  });
+
+  // Follow-up #1: a bare two-digit number after a verb is a quantity, not a size.
+  it("does not read a bare quantity after a verb as a size", () => {
+    expect(replyMatchesSize("Shop đặt 10 cái cho bạn nhé, bạn mặc size L là vừa", taller)).toBe(true);
+    const jeans: SizeAdvice = { status: "ok", size: "28", sizeByHeight: "27", sizeByWeight: "28" };
+    expect(replyMatchesSize("Dạ shop đặt 10 cái cho bạn nhé, bạn mặc size 28 ạ", jeans)).toBe(true);
+  });
+
+  it("still counts a number as a size when a size word names it", () => {
+    expect(replyMatchesSize("Dạ bạn đặt size 10 nhé", taller)).toBe(false);
+  });
+
+  // Follow-up #2: a clause starting with "nếu" is a conditional alternative.
+  it("accepts a conditional alternative clause", () => {
+    expect(replyMatchesSize("Bạn mặc size L là vừa, nếu thích rộng thì lấy size M", taller)).toBe(true);
+  });
+
+  it("still rejects an unknown size in a conditional clause", () => {
+    expect(replyMatchesSize("nếu thích rộng thì lấy size XL", taller)).toBe(false);
+    expect(replyMatchesSize("Bạn mặc size L là vừa, nếu thích rộng thì lấy size XL", taller)).toBe(false);
+  });
+
+  it("rejects 'nên dùng' another size and an attributed size swapped in for the advice", () => {
+    expect(replyMatchesSize("Size L theo bảng, nhưng mình khuyên bạn nên dùng size M", taller)).toBe(false);
+    expect(replyMatchesSize("Theo chiều cao bạn chọn size M thay cho size L", taller)).toBe(false);
+  });
+
+  it("accepts rejecting another size and 'không bị chật' about the advised one", () => {
+    expect(replyMatchesSize("Bạn không nên chọn size M, cứ mặc size L nhé", taller)).toBe(true);
+    expect(replyMatchesSize("Bạn mặc size L sẽ không bị chật", taller)).toBe(true);
+    expect(replyMatchesSize("Size L hơi chật, size M sẽ hợp với bạn hơn", taller)).toBe(false);
+  });
+
+  it("handles 'nên dùng' under negation and a 'thay vì' before the verb", () => {
+    expect(replyMatchesSize("Bạn không nên dùng size M, cứ mặc size L nhé", taller)).toBe(true);
+    expect(replyMatchesSize("Bạn không nên dùng size L nhé", taller)).toBe(false);
+    expect(replyMatchesSize("Theo chiều cao thì thay vì size L bạn nên dùng size M", taller)).toBe(false);
+  });
+
+  // Follow-up #3: negated advice reads as rejecting it (heuristic).
+  it.each([
+    "Đừng chọn size L nhé, bạn lấy size M",
+    "Không nên mặc size L",
+    "Đừng chọn size L nhé",
+  ])("rejects a negation before the verb naming the advised size: %j", (text) => {
+    expect(replyMatchesSize(text, taller)).toBe(false);
+  });
+
+  it("rejects the advised size called too tight or too loose", () => {
+    expect(replyMatchesSize("Size L hơi chật, size M sẽ hợp với bạn hơn", taller)).toBe(false);
+    expect(replyMatchesSize("Dạ bạn mặc size L nhé, nhưng size L hơi chật đấy ạ", taller)).toBe(false);
+  });
+
+  it("accepts a positive description of the advised size", () => {
+    expect(replyMatchesSize("Size L rộng rãi thoải mái, bạn mặc size L nhé", taller)).toBe(true);
+  });
+});
+
+describe("recommendsSize", () => {
+  it.each(["Bạn mặc size M là vừa", "Dạ chọn size L nhé", "Size M hợp với bạn", "nên dùng size S"])("recommends: %j", (t) => {
+    expect(recommendsSize(t)).toBe(true);
+  });
+  it.each(["Shop còn size M và L ạ", "Bạn đặt 10 cái nhé", "Bạn không nên chọn size M khi chưa đo", "Cho mình xin chiều cao nhé"])("does not: %j", (t) => {
+    expect(recommendsSize(t)).toBe(false);
   });
 });
 

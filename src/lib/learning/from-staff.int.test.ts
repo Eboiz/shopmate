@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearnInput, LearnResult } from "@/contract";
 import { FX, seedTwoShops } from "@/lib/engine/test/two-shops";
+import { scriptedModel } from "@/lib/engine/test/fake-model";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { learnFromStaffMessage } from "./from-staff";
+import { learnFromStaffReply } from "./learn";
 
 // PB-35a: a staff message in a conversation with an open question is learned
 // (PB-35b's learnFromStaffReply, faked here), and the result is stored by the rules
@@ -86,6 +88,15 @@ describe("learnFromStaffMessage", () => {
     expect(await gap(id)).toEqual({ status: "learned", learned_fact_id: fact.id });
   });
 
+  it("passes the shopper's channel name, so the learner can redact it", async () => {
+    const { data: conv } = await db.from("conversations").select("shopper_id").eq("id", FX.a.conversation).single();
+    await db.from("shoppers").update({ display_name: "Ngọc Anh" }).eq("id", conv!.shopper_id);
+    await openGap();
+    const learn = vi.fn<(input: LearnInput) => Promise<LearnResult>>(async () => learnt());
+    await learnFromStaffMessage(db, await staffMessage("Ngọc Anh ơi, shop có cho kiểm hàng ạ"), learn);
+    expect(learn.mock.calls[0][0].shopperName).toBe("Ngọc Anh");
+  });
+
   it("review mode, or a rule that needs review: stored pending", async () => {
     await openGap();
     expect(await learnFromStaffMessage(db, await staffMessage("Dạ được giảm 10% ạ"), async () => learnt({ needsReview: true, reviewReasons: ["discount"] }))).toBe("pending");
@@ -101,6 +112,15 @@ describe("learnFromStaffMessage", () => {
     const [fact] = await facts();
     expect(fact).toMatchObject({ status: "pending", policy_kind: null, product_id: FX.a.vay01, text: "Vải linen, không co giãn." });
     expect((await gap(id))?.status).toBe("learned");
+  });
+
+  it("with the real learner, a product question learns the product's fabric (target product)", async () => {
+    await openGap({ reason: "not_covered_by_data", product_id: FX.a.vay01 });
+    const out = { kind: "general", policyKind: "giao_hang", rule: "Váy này vải linen, không co giãn.", evidence: "váy này vải linen, không co giãn", conflictsWithPolicy: false, vague: false, needsReview: false, reason: "" };
+    const model = scriptedModel([{ content: [{ type: "text" as const, text: JSON.stringify(out), citations: null }] }]);
+    const learn = (input: LearnInput) => learnFromStaffReply(input, { model });
+    expect(await learnFromStaffMessage(db, await staffMessage("Dạ váy này vải linen, không co giãn ạ"), learn)).toBe("pending");
+    expect((await facts())[0]).toMatchObject({ status: "pending", product_id: FX.a.vay01, text: "Váy này vải linen, không co giãn." });
   });
 
   it("skip or an error stores nothing and leaves the question open", async () => {

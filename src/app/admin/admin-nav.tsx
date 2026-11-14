@@ -1,9 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Suspense, use } from "react";
+import { Suspense, use, useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
 import { ADMIN_NAV, isNavItemActive } from "@/lib/admin-nav";
 import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";

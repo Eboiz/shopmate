@@ -12,6 +12,7 @@ import { ProductCard } from "@/components/ui/product-card";
 import { ChatSkeleton, LoadingRegion, TypingDots } from "@/components/ui/skeleton";
 import type { ConversationMode } from "@/contract";
 import { chatStatus } from "@/lib/chat/chat-status";
+import { preparePhoto } from "@/lib/chat/prepare-photo";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
 import { compareSizes } from "@/lib/size-order";
 import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, readShopFilters, searchFromQuery, shopFilterQuery, type ProductGroup, type ShopFilters, type ShopSort } from "@/lib/shop/catalog-view";
@@ -52,6 +53,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const [sendError, setSendError] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  // PB-30: one photo waiting to be sent (already checked and shrunk), and its preview URL.
+  const [photo, setPhoto] = useState<{ blob: Blob; url: string } | null>(null);
+  const [photoError, setPhotoError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
   const [awaitingReply, setAwaitingReply] = useState(false);
   // The conversation's mode from the last poll (PB-42): outside `ai` no AI
   // turn runs, so the chat says it is waiting for staff instead of typing.
@@ -60,7 +65,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // whole AI turn is done, which can take several seconds. knownIds are the
   // messages already on screen, so the stored copy can replace this one.
   const [outgoing, setOutgoing] = useState<{ text: string; knownIds: Set<string> } | null>(null);
-  const endRef = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
+  // Whether new content should pull the log down: true while the shopper is
+  // at (or near) the bottom, false once they scroll up to read older messages.
+  const stickToBottom = useRef(true);
   const mainRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // The control that opened the chat gets focus back when it closes.
@@ -69,7 +77,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   const mobileChatRef = useRef<HTMLButtonElement>(null);
   const wasOpenRef = useRef(false);
   const refreshSequence = useRef(0);
-  const pendingSend = useRef<{ text: string; productId: string | null; clientMessageId: string } | null>(null);
+  const pendingSend = useRef<{ text: string; productId: string | null; photo: Blob | null; clientMessageId: string } | null>(null);
   const previousReplies = useRef<Set<string>>(new Set());
   // A question asked from the page (header, hero, chips, size form) while the
   // chat was closed or still loading; sent once its history is in.
@@ -156,9 +164,29 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     };
   }, [open, refresh]);
 
+  // Each poll replaces `messages` with a new array even when nothing changed,
+  // so the log follows only what is on screen: the newest message, the
+  // pending one and the typing/waiting line. It scrolls the log itself, not
+  // the page, and leaves it alone while the shopper reads further up.
+  const newestMessageId = messages.at(-1)?.id;
+  const outgoingText = outgoing?.text;
+  const waitingLine = chatStatus(messages, mode, sending, awaitingReply);
+  useLayoutEffect(() => {
+    if (open) stickToBottom.current = true;
+  }, [open]);
+  useLayoutEffect(() => {
+    // Sending a message always brings the shopper back to the bottom.
+    if (outgoingText !== undefined) stickToBottom.current = true;
+  }, [outgoingText]);
   useEffect(() => {
-    if (open) endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, open, sending, outgoing]);
+    const log = logRef.current;
+    if (!open || !log || !stickToBottom.current) return;
+    log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
+  }, [open, loading, newestMessageId, outgoingText, waitingLine]);
+  function onLogScroll() {
+    const log = logRef.current;
+    if (log) stickToBottom.current = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -299,9 +327,31 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     setOpen(true);
   }
 
+  async function addPhoto(file: File) {
+    setPhotoError("");
+    const prepared = await preparePhoto(file);
+    if (!prepared.ok) {
+      setPhotoError(prepared.error);
+      return;
+    }
+    setPhoto((old) => {
+      if (old) URL.revokeObjectURL(old.url);
+      return { blob: prepared.blob, url: URL.createObjectURL(prepared.blob) };
+    });
+  }
+
+  function removePhoto() {
+    setPhoto((old) => {
+      if (old) URL.revokeObjectURL(old.url);
+      return null;
+    });
+    setPhotoError("");
+  }
+
   async function send(text: string, productId: string | null = selected?.id ?? null) {
     const message = text.trim();
-    if (!message || sending) return;
+    const attached = photo?.blob ?? null;
+    if ((!message && !attached) || sending) return;
     if (previewCatalog) {
       setSendError("Đây là bản xem thử giao diện. Chat thật cần kết nối dữ liệu shop.");
       return;
@@ -310,20 +360,31 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     setSendError("");
     refreshSequence.current += 1;
     const retry = pendingSend.current;
-    const clientMessageId = retry?.text === message && retry.productId === productId
+    // A retry of the same text, product and photo reuses the id, so the server dedupes it.
+    const clientMessageId = retry?.text === message && retry.productId === productId && retry.photo === attached
       ? retry.clientMessageId
       : crypto.randomUUID();
-    pendingSend.current = { text: message, productId, clientMessageId };
+    pendingSend.current = { text: message, productId, photo: attached, clientMessageId };
     previousReplies.current = new Set(messages.filter((item) => item.sender !== "shopper").map((item) => item.id));
     setOutgoing({ text: message, knownIds: new Set(messages.map((item) => item.id)) });
     setDraft("");
     let responseError = "";
     try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: message, productId, clientMessageId }),
-      });
+      let response: Response;
+      if (attached) {
+        const form = new FormData();
+        form.set("text", message);
+        if (productId) form.set("productId", productId);
+        form.set("clientMessageId", clientMessageId);
+        form.set("photo", attached, attached.type === "image/png" ? "photo.png" : attached.type === "image/webp" ? "photo.webp" : "photo.jpg");
+        response = await fetch(endpoint, { method: "POST", body: form });
+      } else {
+        response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: message, productId, clientMessageId }),
+        });
+      }
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as { error?: string } | null;
         responseError = typeof data?.error === "string" && data.error !== "Failed to fetch"
@@ -336,6 +397,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         cartMessageRef.current = null;
         cart.clear();
       }
+      if (attached) removePhoto();
       // Only an `ai` conversation answers; with staff the poll shows the wait.
       if (mode === "ai") setAwaitingReply(true);
       await refresh();
@@ -384,7 +446,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // Hidden once a poll brings back the stored copy of the same message.
   const showOutgoing = outgoing !== null && !messages.some((message) =>
     message.sender === "shopper" && message.text === outgoing.text && !outgoing.knownIds.has(message.id));
-  const status = chatStatus(messages, mode, sending, awaitingReply);
+  const status = waitingLine;
   if (catalogLoading) {
     return <main className="flex flex-1 flex-col">{detailProductId ? <ProductDetailSkeleton /> : <ShopFrontSkeleton />}</main>;
   }
@@ -520,7 +582,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           search={search}
           onSearch={searchProducts}
         />
-        <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
+        <ShopHero shopName={shopName} bannerUrl={catalog.shop.bannerUrl} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
 
         <section id="san-pham" aria-labelledby="san-pham-title" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -594,7 +656,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
         {groupLinks.length > 1 && <GroupTiles groups={groupLinks} onChoose={showGroup} onAsk={askText} />}
         <SizeBand chart={sizeChart} onAsk={askText} />
-        <ShopFooter shopName={shopName} groups={groupLinks} policyItems={policyItems} onChoose={showGroup} onAsk={askText} />
+        <ShopFooter shopName={shopName} contact={catalog.shop.contact} groups={groupLinks} policyItems={policyItems} onChoose={showGroup} onAsk={askText} />
         </>}
       </main>
 
@@ -645,7 +707,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
           {/* No aria-live here: it would read the whole history again on every
               poll. The single role="status" below announces the wait. */}
-          <div className="min-h-0 flex-1 overflow-y-auto bg-[#f5f3ef] px-4 py-5">
+          <div ref={logRef} onScroll={onLogScroll} className="min-h-0 flex-1 overflow-y-auto bg-[#f5f3ef] px-4 py-5">
             {loading ? (
               <LoadingRegion label="Đang tải cuộc trò chuyện…"><ChatSkeleton /></LoadingRegion>
             ) : messages.length === 0 && !showOutgoing ? (
@@ -658,9 +720,22 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                       {senderLabel[message.sender]}
                       {status === "waiting_staff" && index === messages.length - 1 && " · Đã gửi"}
                     </p>
-                    <div className={`break-words rounded-xl p-3 text-sm leading-6 ${message.sender === "shopper" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white text-[#171717]"}`}>
-                      {message.reply?.text || message.text}
-                    </div>
+                    {message.photoUrls.length > 0 && (
+                      <div className="mb-1 flex flex-wrap justify-end gap-1">
+                        {message.photoUrls.map((url, i) => url ? (
+                          // Signed Supabase URLs expire after an hour: next/image would cache them.
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img key={i} src={url} alt="Ảnh bạn gửi" className="max-h-60 max-w-[240px] rounded-xl object-cover" />
+                        ) : (
+                          <p key={i} className="text-xs text-[#706d67]">Không tải được ảnh.</p>
+                        ))}
+                      </div>
+                    )}
+                    {(message.reply?.text || message.text) && (
+                      <div className={`break-words rounded-xl p-3 text-sm leading-6 ${message.sender === "shopper" ? "rounded-br-sm bg-[#171717] text-white" : "rounded-bl-sm border border-[#e3dfd8] bg-white text-[#171717]"}`}>
+                        {message.reply?.text || message.text}
+                      </div>
+                    )}
                     {message.reply && message.reply.products.length > 0 && (
                       <div className="mt-2 grid gap-2">
                         {message.reply.products.map((product) => (
@@ -696,7 +771,6 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 <span className="sr-only">Đã gửi. </span>Đang chờ nhân viên shop trả lời
               </p>
             )}
-            <div ref={endRef} />
           </div>
 
           <div className="border-t border-[#e3dfd8] bg-white p-3">
@@ -712,7 +786,31 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
             )}
             {error && <ErrorMessage className="mb-2">{error}</ErrorMessage>}
             {sendError && <ErrorMessage className="mb-2">{sendError}</ErrorMessage>}
+            {photoError && <ErrorMessage className="mb-2">{photoError}</ErrorMessage>}
+            {photo && (
+              <div className="mb-2 flex items-center gap-2">
+                {/* eslint-disable-next-line @next/next/no-img-element -- a local blob: URL */}
+                <img src={photo.url} alt="Ảnh sắp gửi" className="size-16 rounded-lg object-cover" />
+                <button type="button" aria-label="Xóa ảnh" onClick={removePhoto} disabled={sending} className="flex min-h-11 min-w-11 items-center justify-center rounded-full border border-[#8f8a82] hover:border-[#171717] disabled:opacity-50">
+                  <Icon name="close" width={16} height={16} />
+                </button>
+              </div>
+            )}
             <form onSubmit={submit} className="flex gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) void addPhoto(file);
+                }}
+              />
+              <button type="button" aria-label="Gửi ảnh" onClick={() => fileRef.current?.click()} disabled={sending || loading} className="flex min-h-11 min-w-11 shrink-0 items-center justify-center border border-[#8f8a82] hover:border-[#171717] disabled:opacity-50">
+                <Icon name="image" />
+              </button>
               {/* readOnly, not disabled, while sending: a disabled field drops
                   focus and closes the phone keyboard after every message. */}
               <input
@@ -720,12 +818,20 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 aria-label="Tin nhắn"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
+                onPaste={(event) => {
+                  const item = [...event.clipboardData.items].find((i) => i.kind === "file" && i.type.startsWith("image/"));
+                  const file = item?.getAsFile();
+                  if (file) {
+                    event.preventDefault();
+                    void addPhoto(file);
+                  }
+                }}
                 maxLength={1000}
                 className="ui-field min-h-11 min-w-0 flex-1 px-3 text-base"
                 placeholder="Nhập câu hỏi của bạn"
                 readOnly={sending || loading}
               />
-              <Button type="submit" aria-label="Gửi" title="Gửi" className="w-11 shrink-0 px-0!" disabled={loading || !draft.trim()} loading={sending}>{!sending && <Icon name="send" className="size-5 shrink-0" />}</Button>
+              <Button type="submit" aria-label="Gửi" title="Gửi" className="w-11 shrink-0 px-0!" disabled={loading || (!draft.trim() && !photo)} loading={sending}>{!sending && <Icon name="send" className="size-5 shrink-0" />}</Button>
             </form>
           </div>
         </section>
