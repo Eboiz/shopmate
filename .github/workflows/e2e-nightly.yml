@@ -151,7 +151,6 @@ jobs:
         continue-on-error: true
         timeout-minutes: 20
         env:
-          ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
         run: |
@@ -164,7 +163,6 @@ jobs:
         continue-on-error: true
         timeout-minutes: 40
         env:
-          ANTHROPIC_BASE_URL: https://api.agentshop247.com/api/claude
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           ANTHROPIC_DEFAULT_SONNET_MODEL: claude-sonnet-5-5
           CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
@@ -234,10 +232,10 @@ jobs:
     timeout-minutes: 45
     outputs:
       ran: ${{ steps.changes.outputs.ran }}
-    # Same AI settings as Vercel production, from the repository secrets (the URL and
-    # model fall back to the values production used on 12/11 when a secret is unset).
+    # Same AI settings as Vercel production, from the repository secrets: the key
+    # calls api.anthropic.com directly (no gateway since 14/11); the model falls
+    # back to the one production uses when the secret is unset.
     env:
-      ANTHROPIC_API_URL: ${{ secrets.ANTHROPIC_API_URL || 'https://api.agentshop247.com/api/claude' }}
       ANTHROPIC_MODEL: ${{ secrets.ANTHROPIC_MODEL || 'claude-haiku-5-5' }}
       OPENROUTER_API_URL: ${{ secrets.OPENROUTER_API_URL }}
     steps:
