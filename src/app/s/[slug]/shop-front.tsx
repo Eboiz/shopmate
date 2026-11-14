@@ -14,6 +14,8 @@ import type { ConversationMode } from "@/contract";
 import { chatStatus } from "@/lib/chat/chat-status";
 import { preparePhoto } from "@/lib/chat/prepare-photo";
 import { chatHistorySchema, type ChatMessage } from "@/lib/chat/types";
+import { SEARCH_MIN_TEXT, searchErrors, searchResponseSchema } from "@/lib/search/request";
+import { applyResult, searchLabel, type SearchResult, type SearchState } from "@/lib/search/search-state";
 import { compareSizes } from "@/lib/size-order";
 import { displayColor, firstSentence, groupRank, matchesQuery, OTHER_GROUP, PRODUCT_GROUPS, productGroup, readShopFilters, searchFromQuery, shopFilterQuery, type ProductGroup, type ShopFilters, type ShopSort } from "@/lib/shop/catalog-view";
 import { shopCatalogSchema, type ShopCatalog, type ShopProduct } from "@/lib/shop/types";
@@ -23,6 +25,7 @@ import { cartItemFor, QuickAdd } from "./quick-add";
 import { CartPanel } from "./cart-panel";
 import { ProductDetailView } from "./product-detail-view";
 import { ProductDetailSkeleton, ShopFrontSkeleton } from "./shop-skeleton";
+import { SmartSearch } from "./smart-search";
 import { GroupTiles, ShopFooter, ShopHeader, ShopHero, ShopMarquee, SizeBand, type GroupLink } from "./storefront-sections";
 
 type Props = { slug: string; previewCatalog?: ShopCatalog; detailProductId?: string };
@@ -40,6 +43,26 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // useSearchParams inside a transition, which would drop keystrokes.
   const searchParams = useSearchParams();
   const [search, setSearch] = useState(() => searchFromQuery(searchParams));
+  // PB-34: description/photo search of the grid. The photo is only kept in the
+  // page (A1); searchSeq drops answers of a search that is no longer the latest.
+  // photoSeq drops a photo whose preparation ends after a newer pick or a reset.
+  const [searchState, setSearchState] = useState<SearchState>({ status: "idle" });
+  const [searchPhoto, setSearchPhoto] = useState<Blob | null>(null);
+  const searchSeq = useRef(0);
+  const photoSeq = useRef(0);
+  // Leaves the description/photo search: drops any pending answer and goes back
+  // to the instant filter; dropPhoto also forgets the photo (and one still being
+  // prepared). Only refs and state setters, so it is stable across renders.
+  const endSearch = useCallback((dropPhoto: boolean) => {
+    searchSeq.current += 1;
+    setSearchState({ status: "idle" });
+    if (dropPhoto) {
+      photoSeq.current += 1;
+      setSearchPhoto(null);
+    }
+  }, []);
+  // The latest typed text, for a photo whose preparation ends after more typing.
+  const searchTextRef = useRef("");
   // How many products "Xem thêm" has revealed, for one set of filters.
   const [more, setMore] = useState({ key: "", count: PAGE_SIZE });
   const [cartOpen, setCartOpen] = useState(false);
@@ -103,9 +126,17 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   useLayoutEffect(() => {
     const syncSearch = () => setSearch(searchFromQuery(new URLSearchParams(window.location.search)));
     syncSearch();
-    window.addEventListener("popstate", syncSearch);
-    return () => window.removeEventListener("popstate", syncSearch);
-  }, []);
+    // Back/forward also leaves a description/photo search (PB-34).
+    const onPopState = () => {
+      endSearch(true);
+      syncSearch();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [endSearch]);
+  useEffect(() => {
+    searchTextRef.current = search;
+  }, [search]);
 
   useEffect(() => {
     if (previewCatalog) return;
@@ -496,10 +527,16 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       return groupRank(a.group) - groupRank(b.group) || a.index - b.index;
     })
     .map((item) => item.product);
+  // A description/photo search shows its ranked products instead (AC1, AC3);
+  // ids the catalog no longer has are dropped.
+  const semantic = searchState.status === "done" ? searchState : null;
+  const listed = semantic
+    ? semantic.productIds.flatMap((id) => products.find((product) => product.id === id) ?? [])
+    : filtered;
   // Any filter change starts the list again from the first page.
-  const filterKey = [group, sizeFilter, sort, search].join("|");
+  const filterKey = [group, sizeFilter, sort, search, semantic?.seq ?? ""].join("|");
   const shown = more.key === filterKey ? more.count : PAGE_SIZE;
-  const visibleProducts = filtered.slice(0, shown);
+  const visibleProducts = listed.slice(0, shown);
   const filtering = group !== "" || sizeFilter !== "" || search.trim() !== "";
   // A choice adds a history entry (back undoes it); typing in the search box replaces it.
   function setFilters(change: Partial<ShopFilters>, history: "push" | "replace" = "push") {
@@ -510,7 +547,66 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
     if (url !== `${pathname}${query}${hash}`) window.history[history === "push" ? "pushState" : "replaceState"](null, "", url);
     if (change.search !== undefined) setSearch(change.search);
   }
-  const clearFilters = () => setFilters({ group: "", size: "", search: "" });
+  const clearFilters = () => {
+    endSearch(true);
+    setFilters({ group: "", size: "", search: "" });
+  };
+
+  // PB-34: Enter, the search button, or a new photo runs the description search.
+  async function runSearch(text: string, photo: Blob | null) {
+    const trimmed = text.trim();
+    if (!photo && !trimmed) return;
+    if (!photo && trimmed.length < SEARCH_MIN_TEXT) {
+      setSearchState({ status: "error", message: searchErrors.tooShort });
+      return;
+    }
+    const seq = ++searchSeq.current;
+    setSearchState({ status: "loading", seq, label: searchLabel(trimmed, photo !== null) });
+    // Group, size and sort don't apply to search results (A2).
+    setFilters({ group: "", size: "", sort: "group" });
+    const form = new FormData();
+    form.set("q", trimmed);
+    if (photo) form.set("photo", photo, "photo");
+    let result: SearchResult;
+    try {
+      const response = await fetch(`/api/shops/${encodeURIComponent(slug)}/search`, { method: "POST", body: form });
+      const json: unknown = await response.json().catch(() => null);
+      const parsed = searchResponseSchema.safeParse(json);
+      if (response.ok && parsed.success) result = { ok: true, body: parsed.data, hasPhoto: photo !== null };
+      else {
+        const error = json && typeof json === "object" && "error" in json && typeof json.error === "string" ? json.error : searchErrors.failed;
+        result = { ok: false, message: error };
+      }
+    } catch {
+      result = { ok: false, message: searchErrors.failed };
+    }
+    setSearchState((current) => applyResult(current, seq, result));
+  }
+  async function pickSearchPhoto(file: File) {
+    const pick = ++photoSeq.current;
+    const prepared = await preparePhoto(file);
+    // A newer photo, "Xóa ảnh" or leaving the search came first: drop this one.
+    if (pick !== photoSeq.current) return;
+    if (!prepared.ok) {
+      searchSeq.current += 1;
+      setSearchState({ status: "error", message: prepared.error });
+      return;
+    }
+    setSearchPhoto(prepared.blob);
+    void runSearch(searchTextRef.current, prepared.blob);
+  }
+  const removeSearchPhoto = () => endSearch(true);
+  // "Xóa tìm kiếm": the full list again, with no text and no photo.
+  function clearSearch() {
+    endSearch(true);
+    setFilters({ search: "" }, "replace");
+  }
+  // Empty search results: open the chat with the typed text as a draft (AC3).
+  function askWithDraft(text: string) {
+    setSelected(null);
+    setDraft(text);
+    setOpen(true);
+  }
   const groupLinks: GroupLink[] = groupChips.map((name) => ({
     name,
     count: groupCounts.get(name) ?? 0,
@@ -518,11 +614,13 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   }));
   // Menus, tiles and the footer pick a group and bring the grid into view.
   function showGroup(name: string) {
+    endSearch(true);
     setFilters({ group: name as ProductGroup, search: "" });
     document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
   }
   // The header search shows all its matches in the grid, across every group.
   function searchProducts(query: string) {
+    endSearch(true);
     setFilters({ group: "", size: "", search: query });
     document.getElementById("san-pham")?.scrollIntoView({ block: "start" });
   }
@@ -587,34 +685,61 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         <section id="san-pham" aria-labelledby="san-pham-title" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
             <h2 id="san-pham-title" className="text-[clamp(1.9rem,3.6vw,3rem)] font-black uppercase leading-none tracking-[-.04em]">Khám phá sản phẩm<span className="text-[#e9573f]">.</span></h2>
-            <p className="text-sm font-semibold tabular-nums text-[#706d67]">{filtered.length} / {products.length} sản phẩm</p>
+            <p className="text-sm font-semibold tabular-nums text-[#706d67]">{listed.length} / {products.length} sản phẩm</p>
           </div>
           {products.length > 0 && (
             <div className="mb-7">
               {groupTabs.length > 2 && (
                 <div role="group" aria-label="Nhóm sản phẩm" className="-mx-4 flex gap-6 overflow-x-auto border-b border-[#e3dfd8] px-4 [scrollbar-width:none] sm:mx-0 sm:px-0">
                   {groupTabs.map((tab) => (
-                    <button key={tab.label} type="button" aria-pressed={group === tab.name} onClick={() => setFilters({ group: tab.name })} className={`-mb-px inline-flex min-h-12 shrink-0 items-center gap-1.5 border-b-2 text-xs font-extrabold uppercase tracking-[.12em] transition-colors ${group === tab.name ? "border-[#171717] text-[#171717]" : "border-transparent text-[#706d67] hover:text-[#171717]"}`}>
+                    <button key={tab.label} type="button" aria-pressed={group === tab.name} onClick={() => { endSearch(false); setFilters({ group: tab.name }); }} className={`-mb-px inline-flex min-h-12 shrink-0 items-center gap-1.5 border-b-2 text-xs font-extrabold uppercase tracking-[.12em] transition-colors ${group === tab.name ? "border-[#171717] text-[#171717]" : "border-transparent text-[#706d67] hover:text-[#171717]"}`}>
                       {tab.label} <span className="font-semibold tabular-nums tracking-normal">{tab.count}</span>
                     </button>
                   ))}
                 </div>
               )}
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-                <label className="flex min-h-11 items-center gap-2 border-b border-[#8f8a82] transition-shadow focus-within:border-[#171717] focus-within:shadow-[0_1px_0_#171717] sm:min-w-80"><span className="sr-only">Tìm sản phẩm</span><input type="search" value={search} onChange={(event) => setFilters({ search: event.target.value }, "replace")} placeholder="Tìm theo tên, nhóm, màu..." className="w-full bg-transparent px-1 py-2 text-sm outline-none placeholder:text-[#7a766f]" /></label>
+                <SmartSearch
+                  value={search}
+                  onChange={(value) => {
+                    // Typing goes back to the instant filter and drops a pending
+                    // answer (AC1); the photo stays for the next Enter.
+                    if (searchState.status !== "idle") endSearch(false);
+                    setFilters({ search: value }, "replace");
+                  }}
+                  onSubmit={() => void runSearch(search, searchPhoto)}
+                  photo={searchPhoto}
+                  onPhoto={(file) => void pickSearchPhoto(file)}
+                  onRemovePhoto={removeSearchPhoto}
+                  busy={searchState.status === "loading"}
+                  error={searchState.status === "error" ? searchState.message : ""}
+                />
                 <div className="flex flex-wrap gap-3">
-                  {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => setFilters({ size: event.target.value })} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
-                  <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => setFilters({ sort: event.target.value as ShopSort })} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="group">Theo nhóm</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label>
+                  {allSizes.length > 0 && <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Size <select value={sizeFilter} onChange={(event) => { endSearch(false); setFilters({ size: event.target.value }); }} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="">Tất cả</option>{allSizes.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>}
+                  <label className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.1em]">Sắp xếp <select value={sort} onChange={(event) => { endSearch(false); setFilters({ sort: event.target.value as ShopSort }); }} className="min-h-11 border border-[#8f8a82] bg-white px-3 text-sm font-medium normal-case tracking-normal"><option value="group">Theo nhóm</option><option value="price-asc">Giá thấp đến cao</option><option value="price-desc">Giá cao đến thấp</option></select></label>
                 </div>
               </div>
             </div>
           )}
-          {products.length === 0 ? <EmptyState title="Chưa có sản phẩm" description="Vui lòng quay lại sau." /> : filtered.length === 0 ? (
+          {semantic && (
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="min-w-0 text-lg font-black [overflow-wrap:anywhere]">{semantic.label}</h3>
+              <button type="button" onClick={clearSearch} className="inline-flex min-h-11 items-center border-[1.5px] border-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] hover:bg-white">Xóa tìm kiếm</button>
+            </div>
+          )}
+          {products.length === 0 ? <EmptyState title="Chưa có sản phẩm" description="Vui lòng quay lại sau." /> : semantic && listed.length === 0 ? (
+            <div className="py-6 text-center">
+              <EmptyState title="Không tìm thấy sản phẩm" description="Thử bỏ bớt bộ lọc, hoặc hỏi trợ lý AI tìm giúp." />
+              <div className="mt-5 flex flex-wrap justify-center gap-3">
+                <button type="button" onClick={() => askWithDraft(search.trim())} className="inline-flex min-h-11 items-center bg-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] text-white hover:bg-[#c2412b]">Hỏi trợ lý AI</button>
+              </div>
+            </div>
+          ) : listed.length === 0 ? (
             <div className="py-6 text-center">
               <EmptyState title="Không tìm thấy sản phẩm" description="Thử bỏ bớt bộ lọc, hoặc hỏi trợ lý AI tìm giúp." />
               <div className="mt-5 flex flex-wrap justify-center gap-3">
                 {filtering && <button type="button" onClick={clearFilters} className="inline-flex min-h-11 items-center border-[1.5px] border-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] hover:bg-white">Xóa bộ lọc</button>}
-                <button type="button" onClick={() => { if (search.trim()) askText(`Shop có ${search.trim()} không?`); else setOpen(true); }} className="inline-flex min-h-11 items-center bg-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] text-white hover:bg-[#c2412b]">Hỏi trợ lý AI</button>
+                <button type="button" onClick={() => { if (search.trim()) askWithDraft(search.trim()); else setOpen(true); }} className="inline-flex min-h-11 items-center bg-[#171717] px-5 text-xs font-extrabold uppercase tracking-[.12em] text-white hover:bg-[#c2412b]">Hỏi trợ lý AI</button>
               </div>
             </div>
           ) : (
@@ -644,10 +769,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                   />
                 ))}
               </div>
-              {filtered.length > visibleProducts.length && (
+              {listed.length > visibleProducts.length && (
                 <div className="mt-10 flex flex-col items-center gap-2">
                   <button type="button" onClick={() => setMore({ key: filterKey, count: shown + PAGE_SIZE })} className="inline-flex min-h-12 items-center border-[1.5px] border-[#171717] px-6 text-xs font-extrabold uppercase tracking-[.12em] transition-colors hover:bg-[#171717] hover:text-white">Xem thêm</button>
-                  <p className="text-xs tabular-nums text-[#706d67]">Đang xem {visibleProducts.length} / {filtered.length}</p>
+                  <p className="text-xs tabular-nums text-[#706d67]">Đang xem {visibleProducts.length} / {listed.length}</p>
                 </div>
               )}
             </>

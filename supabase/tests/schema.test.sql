@@ -13,6 +13,8 @@ select set_eq(
         'orders', 'order_items', 'ai_turns',
         -- PB-04: web chat limit per client IP and shop (server only).
         'web_chat_hits',
+        -- PB-34: search bar rate limit (server only).
+        'search_hits',
         -- PB-35a: questions the AI couldn't answer, and what it learned.
         'data_gaps', 'learned_facts',
         -- PB-32: several photos per product.

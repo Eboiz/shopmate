@@ -301,6 +301,25 @@ Read only. It uses `NEXT_PUBLIC_SUPABASE_URL` and `SUPABASE_SECRET_KEY` from the
 
 `ai_turns` stores `latency_ms`, `ttft_ms`, `input_tokens`, `output_tokens`, `model_calls`, `tool_calls`, `model` and `prompt_version`. Known limits: per-call timings, cache tokens and `duplicateToolCalls` are only in the log line; `unknown_tool` calls are not in `ai_turns.tool_calls`; the engine has no tuned prompt yet (`v0`, PB-10).
 
+## Search by description or photo (PB-34)
+
+The grid's search bar on `/s/<shop-slug>` still filters the list as you type (name, group, color).
+Enter or the search button (at least 2 characters), a picked photo (`Tìm bằng ảnh`) or a pasted one
+(Ctrl+V) runs a search by meaning: `POST /api/shops/<slug>/search` (`multipart/form-data`, `q` and an
+optional `photo`, JPEG/PNG/WebP up to 5 MB, shrunk in the browser first) → `{ mode: "semantic",
+productIds }` (this shop's products above the score floor, best first, at most 10) or
+`{ mode: "unavailable" }`. The photo is sent to the search service and dropped, never stored.
+
+- **Search service:** the PB-30 embedder on Modal (`EMBEDDER_URL`, `EMBEDDER_TOKEN`, server-only).
+  Not set, down or slower than 8 s: a text search keeps the instant filter, a photo search says
+  `Tìm bằng ảnh đang tạm ngưng…`. `SEARCH_EMBEDDER_MOCK=1` uses fake results built from the catalog
+  for local dev (ignored in production).
+- **Limits:** `search_take` (`src/lib/guard/search-limit.ts`, table `search_hits`): 20 searches per
+  minute per client IP in one shop, 120 per minute per shop; over that, 429 with a Vietnamese error.
+- **Code:** `src/lib/search/` (contract with the embedder, ranking, state), route
+  `src/app/api/shops/[slug]/search/route.ts`, UI `src/app/s/[slug]/smart-search.tsx`. Spec and plan
+  under `docs/superpowers/{specs,plans}/2026-11-10-pb-34-describe-search.md`.
+
 ## Auth
 
 - `/admin/*` needs a signed-in user. `src/proxy.ts` redirects signed-out visitors to `/login?next=...`, and `src/app/admin/layout.tsx` checks the user again on the server.
