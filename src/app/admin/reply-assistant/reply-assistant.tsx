@@ -111,11 +111,11 @@ export function ReplyAssistant({ generateDraftAction }: {
           </div>
         </div>
 
-        {!draft && status === "idle" && <EmptyState title="Chưa có bản nháp" description="Nhập câu hỏi của khách rồi chọn Tạo bản nháp." />}
+        {!draft && status === "idle" && <EmptyState icon="spark" title="Chưa có bản nháp" description="Nhập câu hỏi của khách rồi chọn Tạo bản nháp." />}
         {status === "loading" && <div role="status" className="rounded-xl border border-[#e3dfd8] bg-[#f5f3ef] px-5 py-10 text-center text-sm text-[#706d67]">ShopMate đang soạn câu trả lời…</div>}
         {status === "error" && <ErrorMessage>Chưa tạo được bản nháp. Vui lòng thử lại.</ErrorMessage>}
         {status === "personal" && (
-          <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+          <div role="status" className="rounded-xl border border-[#f3d3c9] bg-[#fff6f3] p-5 text-sm text-[#7a2a1d]">
             <p className="font-bold">Hãy tự trả lời khách</p>
             <p className="mt-2 leading-6">Đây là khiếu nại. Hãy đọc lại nội dung và phản hồi trực tiếp cho khách.</p>
           </div>

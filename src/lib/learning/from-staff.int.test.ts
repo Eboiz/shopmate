@@ -86,6 +86,15 @@ describe("learnFromStaffMessage", () => {
     expect(await gap(id)).toEqual({ status: "learned", learned_fact_id: fact.id });
   });
 
+  it("passes the shopper's channel name, so the learner can redact it", async () => {
+    const { data: conv } = await db.from("conversations").select("shopper_id").eq("id", FX.a.conversation).single();
+    await db.from("shoppers").update({ display_name: "Ngọc Anh" }).eq("id", conv!.shopper_id);
+    await openGap();
+    const learn = vi.fn<(input: LearnInput) => Promise<LearnResult>>(async () => learnt());
+    await learnFromStaffMessage(db, await staffMessage("Ngọc Anh ơi, shop có cho kiểm hàng ạ"), learn);
+    expect(learn.mock.calls[0][0].shopperName).toBe("Ngọc Anh");
+  });
+
   it("review mode, or a rule that needs review: stored pending", async () => {
     await openGap();
     expect(await learnFromStaffMessage(db, await staffMessage("Dạ được giảm 10% ạ"), async () => learnt({ needsReview: true, reviewReasons: ["discount"] }))).toBe("pending");

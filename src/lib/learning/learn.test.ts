@@ -189,3 +189,49 @@ describe("learnFromStaffReply output handling", () => {
     expect(model.calls).toHaveLength(2);
   });
 });
+
+describe("learnFromStaffReply review 12/11", () => {
+  it("needs review when the evidence drops the staff's negation", async () => {
+    const staffReply = "Dạ shop không cho kiểm hàng trước khi nhận ạ";
+    const out = output({ rule: "Shop cho kiểm hàng trước khi nhận.", evidence: "cho kiểm hàng trước khi nhận" });
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
+    expect(result).toMatchObject({ status: "learn", needsReview: true });
+    if (result.status === "learn") expect(result.reviewReasons).toContain("unverified");
+  });
+
+  it.each([
+    ["Dạ shop giao trong ngày cho đơn ở 12 Lê Lợi thôi ạ", "Shop giao trong ngày cho đơn ở 12 Lê Lợi thôi.", "shop giao trong ngày cho đơn ở 12 Lê Lợi thôi"],
+    ["Dạ shop giao nội thành Quận 1 Hồ Chí Minh trong ngày ạ", "Shop giao nội thành Quận 1 Hồ Chí Minh trong ngày.", "shop giao nội thành Quận 1 Hồ Chí Minh trong ngày"],
+    ["Dạ shop giao 63 Tỉnh Thành ạ", "Shop giao 63 Tỉnh Thành.", "shop giao 63 Tỉnh Thành"],
+  ])("needs review when redaction changes the rule: %s", async (staffReply, rule, evidence) => {
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(output({ rule, evidence })) });
+    expect(result).toMatchObject({ status: "learn", needsReview: true });
+    if (result.status === "learn") expect(result.reviewReasons).toContain("unverified");
+  });
+
+  it.each([
+    ["stock", "Dạ mẫu này còn 3 cái ạ", "Mẫu này còn 3 cái."],
+    ["measurements and size", "Dạ 1m60 50kg mặc size M vừa ạ", "1m60 50kg mặc size M vừa."],
+    ["a product price", "Dạ váy hoa giá 350k ạ", "Váy hoa giá 350k."],
+    ["product details", "Dạ váy hoa chất voan, màu đỏ ạ", "Váy hoa chất voan, màu đỏ."],
+  ])("skips %s as product data", async (_label, staffReply, rule) => {
+    const evidence = staffReply.replace(/^Dạ /, "").replace(/ ạ$/, "");
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(output({ rule, evidence })) });
+    expect(result).toMatchObject({ status: "skip", skipReason: "product_data" });
+  });
+
+  it("needs review for another money amount", async () => {
+    const staffReply = "Dạ phí ship nội thành 30k ạ";
+    const out = output({ rule: "Phí ship nội thành 30k.", evidence: "phí ship nội thành 30k" });
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
+    expect(result).toMatchObject({ status: "learn", needsReview: true });
+    if (result.status === "learn") expect(result.reviewReasons).toContain("amount");
+  });
+
+  it("leaves a general size policy alone", async () => {
+    const staffReply = "Dạ shop cho đổi size trong 7 ngày ạ";
+    const out = output({ policyKind: "doi_tra", rule: "Shop cho đổi size trong 7 ngày.", evidence: "shop cho đổi size trong 7 ngày" });
+    const result = await learnFromStaffReply(input({ staffReply }), { model: modelSaying(out) });
+    expect(result).toMatchObject({ status: "learn", needsReview: false, reviewReasons: [] });
+  });
+});

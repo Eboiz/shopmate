@@ -33,10 +33,14 @@ import { pb06Cases } from "./cases-pb06";
 import { pb09Cases } from "./cases-pb09";
 import { pb14Cases } from "./cases-pb14";
 import { pb31Cases } from "./cases-pb31";
+import { pb39Cases } from "./cases-pb39";
+import { pb08Cases, pb11Cases, pb20Cases } from "./cases-ai02-04";
+import { pb40Cases } from "./cases-pb40";
+import { pb45Cases } from "./cases-pb45";
 import { aggregate, scoreRun, type ActualCall, type Decision, type RunOutcome, type RunScore } from "./score";
 
 const RUNS = Number(process.env.EVAL_RUNS ?? 3);
-const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases, ...pb09Cases, ...pb14Cases, ...pb31Cases];
+const allCases = [...evalCases, ...pb05EvalCases, ...pb06Cases, ...pb09Cases, ...pb14Cases, ...pb31Cases, ...pb39Cases, ...pb08Cases, ...pb11Cases, ...pb20Cases, ...pb40Cases, ...pb45Cases];
 const group = process.env.EVAL_GROUP;
 const cases = allCases.filter(
   (c) => (!process.env.EVAL_CASE || c.id === process.env.EVAL_CASE) && (!group || c.id.startsWith(group)),
@@ -70,6 +74,9 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
     assertLocalDb();
     // Through ANTHROPIC_API_URL (the team gateway) when set, like the engine.
     model = createDefaultModel();
+    if (process.env.JEV_IN_TESTS === "true" && !process.env.OPENROUTER_API_KEY?.trim()) {
+      console.warn("engine eval: OPENROUTER_API_KEY is not set, so every turn uses the LLM tool loop, not the Jev router production uses.");
+    }
     db = createAdminClient();
     store = createSupabaseStore(db);
     await seedTwoShops(db);
@@ -102,10 +109,13 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
             return store.insertTurn(r);
           },
         };
-        const result = await runEngine(
-          { mode: "customer", conversationId: FX.a.conversation, history: c.history, productId: c.productId ?? null },
-          { model, db, store: capturing, onMetrics: (m) => void (metrics = m) },
-        );
+        const deps = { model, db, store: capturing, onMetrics: (m: TurnMetrics) => void (metrics = m) };
+        const result = c.mode === "staff_draft"
+          ? await runEngine({ mode: "staff_draft", history: c.history, productId: c.productId ?? null }, { ...deps, staffShopId: FX.a.shop })
+          : await runEngine(
+            { mode: "customer", conversationId: FX.a.conversation, history: c.history, productId: c.productId ?? null },
+            deps,
+          );
         await result.turnLogged;
         const turn = row as TablesInsert<"ai_turns"> | null;
         if (!turn) throw new Error(`${c.id}: no ai_turns row`);
@@ -118,6 +128,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY)("engine eval (real Claude)", () 
           // PB-31 soft handoff: the reason staff was offered for, and the buttons.
           handoffOffer: (turn.handoff_offer ?? null) as RunOutcome["handoffOffer"],
           quickReplies: result.output.reply.quickReplies,
+          products: result.output.reply.products,
         };
         const score = scoreRun(c, calls, outcome);
         if (!score.passed) {

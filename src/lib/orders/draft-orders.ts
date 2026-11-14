@@ -15,6 +15,8 @@ export type OrderDecision = "confirmed" | "cancelled";
 // The shape /admin/orders reads (src/app/admin/orders/orders-data.ts).
 export type DraftOrderView = {
   id: string;
+  // The chat the order came from, so staff can open it from the order (?c= in the inbox).
+  conversationId: string;
   createdAt: string;
   customer: { name: string; phone: string; address: string };
   items: { id: string; name: string; size: string; color: string; quantity: number; unitPrice: number }[];
@@ -25,7 +27,7 @@ export async function listDraftOrders(db: Db, shopId: string): Promise<DraftOrde
   const { data, error } = await db
     .from("orders")
     .select(
-      "id, created_at, customer_name, customer_phone, customer_address, total, order_items(id, quantity, unit_price, variants(size, color, products(name)))",
+      "id, conversation_id, created_at, customer_name, customer_phone, customer_address, total, order_items(id, quantity, unit_price, variants(size, color, products(name)))",
     )
     .eq("shop_id", shopId)
     .eq("status", "draft")
@@ -35,6 +37,7 @@ export async function listDraftOrders(db: Db, shopId: string): Promise<DraftOrde
 
   return data.map((order) => ({
     id: order.id,
+    conversationId: order.conversation_id,
     createdAt: order.created_at,
     customer: { name: order.customer_name, phone: order.customer_phone, address: order.customer_address },
     items: order.order_items

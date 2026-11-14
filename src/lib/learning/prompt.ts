@@ -2,10 +2,13 @@
 // what changed and why.
 import { policyKindSchema, type LearnInput } from "@/contract";
 
+// v1.2 (review 2026-11-12): the gaps prompt spells out its JSON shape; the
+// gateway doesn't enforce output_config.format, and "theo schema" got
+// {"groups": ...} and policyKind "draft". Learn prompt unchanged.
 // v1.1 (eval 2026-11-12, v1.0: 4/12): keep the staff's own words; a conflict is
 // only two statements that can't both hold (an exception is not one);
 // needsReview only for a reason the other fields don't cover; one JSON object.
-export const LEARNING_PROMPT_VERSION = "v1.1";
+export const LEARNING_PROMPT_VERSION = "v1.2";
 
 const TAGS = ["chinh_sach", "cau_hoi_cua_khach", "tin_nhan_vien", "cau_hoi"];
 const TAG_RE = new RegExp(`</?\\s*(${TAGS.join("|")})\\s*>`, "gi");
@@ -60,7 +63,7 @@ export function buildGapsSystemPrompt(): string {
     '- title: tên chủ đề ngắn, tối đa 80 ký tự, không có con số, ví dụ "Kiểm hàng trước khi nhận".',
     `- policyKind: loại chính sách gần nhất:\n${POLICY_KINDS}`,
     "- draft: MỘT câu chính sách để chủ shop điền. MỌI thông tin (có/không, số ngày, số tiền, điều kiện, nơi, giờ) phải là chỗ trống trong ngoặc vuông, ví dụ: Shop [có/không] cho khách kiểm hàng trước khi thanh toán. Không bao giờ viết con số, giảm giá, quà tặng hay miễn phí bên ngoài ngoặc vuông.",
-    "Trả về đúng JSON theo schema.",
+    'Trả về đúng MỘT đối tượng JSON dạng {"topics": [{"title": "Kiểm hàng trước khi nhận", "policyKind": "giao_hang", "refs": ["q1", "q3"], "draft": "Shop [có/không] cho khách kiểm hàng trước khi thanh toán."}]}. policyKind chỉ là doi_tra, giao_hang hoặc khuyen_mai. Không có chủ đề nào thì {"topics": []}. Không viết gì ngoài JSON.',
   ].join("\n");
 }
 

@@ -1,7 +1,7 @@
 // Basic labeled cases for the engine (PB-03): did it call the right tools, with
 // the right arguments, and only when needed? Small on purpose (shop A of the
 // two-shop fixture); deeper sets come with PB-10.
-import type { HandoffReason, HistoryMessage, ToolCallLog, ToolName } from "@/contract";
+import type { HandoffReason, HistoryMessage, ProductCard, ToolCallLog, ToolName } from "@/contract";
 import { findUnbackedDiscount } from "../discount-guard";
 import type { OfferReason } from "../handoff-offer";
 import { fold } from "../text";
@@ -31,7 +31,12 @@ export type EvalCase = {
   finds?: string;
   // When set, the reply's quick replies must pass this check.
   quickReplies?: { label: string; ok: (quickReplies: string[]) => boolean };
+  // PB-40: when set, the reply's product cards must pass this check.
+  products?: { label: string; ok: (products: ProductCard[]) => boolean };
   history: HistoryMessage[]; // the last message is the shopper's
+  // staff_draft: the reply assistant (PB-20), run for shop A without a
+  // conversation. Default customer.
+  mode?: "customer" | "staff_draft";
   productId?: string; // the product the shopper is looking at (an id in FX.a)
   expected: ExpectedCall[]; // [] means NO tool is needed
   // The conversation's previous AI turn (its ai_turns.tool_calls), seeded before

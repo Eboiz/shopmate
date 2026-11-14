@@ -32,10 +32,22 @@ export const learnInputSchema = z.object({
 });
 
 // Why a learned rule must wait for the owner even in "auto" mode.
-// unverified: the rule flips the staff's negation or says much the staff didn't write.
-export const reviewReasonSchema = z.enum(["discount", "conflict", "vague", "unverified", "model"]);
+// amount: a money amount that isn't an offer (a ship fee).
+// unverified: the rule flips the negation of the staff's sentence, says much the
+// staff didn't write, or lost words to personal-data redaction.
+export const reviewReasonSchema = z.enum(["discount", "amount", "conflict", "vague", "unverified", "model"]);
 // Why nothing was learned.
-export const skipReasonSchema = z.enum(["one_off", "no_rule", "evidence_not_found", "number_mismatch", "too_long", "invalid_output"]);
+// product_data: stock, a size or measurement, a product's price or details,
+// which only the catalog tools may state.
+export const skipReasonSchema = z.enum([
+  "one_off",
+  "no_rule",
+  "evidence_not_found",
+  "number_mismatch",
+  "too_long",
+  "product_data",
+  "invalid_output",
+]);
 
 export const learnResultSchema = z.discriminatedUnion("status", [
   z.object({

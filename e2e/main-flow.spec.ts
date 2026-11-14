@@ -106,7 +106,9 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   await expect(lines.first()).toContainText(`${COLOR} · Cỡ ${SIZE} · SL 1`);
 
   // 5. Staff confirm it, and stock goes down by exactly the one item ordered.
-  await order.getByRole("button", { name: "Xác nhận" }).click();
+  // Confirming takes two steps: the recap, then "Xác nhận đơn này".
+  await order.getByRole("button", { name: "Xác nhận", exact: true }).click();
+  await order.getByRole("button", { name: "Xác nhận đơn này" }).click();
   await expect(staff.getByText(`Đã xác nhận đơn của ${customer}.`)).toBeVisible({ timeout: 30_000 });
   expect(await readStock(staff, PRODUCT, SIZE, COLOR)).toBe(stockBefore - 1);
 });

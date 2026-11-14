@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   addPairingSchema,
+  priceError,
+  saveProductSchema,
+  stockError,
   updatePolicySchema,
   updatePriceSchema,
   updateStockSchema,
@@ -67,5 +70,41 @@ describe("addPairingSchema", () => {
   it("rejects a missing product or a blank reason", () => {
     expect(pairing("", "p2").success).toBe(false);
     expect(pairing("p1", "p2", "   ").success).toBe(false);
+  });
+});
+
+describe("saveProductSchema", () => {
+  const save = (priceText: string, stocks: unknown) =>
+    saveProductSchema.safeParse({ productId: "p1", price: priceText, stocks: typeof stocks === "string" ? stocks : JSON.stringify(stocks) });
+
+  it("reads the price and every stock row as numbers", () => {
+    expect(save("350000", [{ variantId: "v1", stock: "4" }, { variantId: "v2", stock: " 0 " }]).data).toEqual({
+      productId: "p1",
+      price: 350000,
+      stocks: [{ variantId: "v1", stock: 4 }, { variantId: "v2", stock: 0 }],
+    });
+  });
+
+  it("refuses the whole save when one row is wrong, with the stock message", () => {
+    expect(save("350000", [{ variantId: "v1", stock: "4" }, { variantId: "v2", stock: "-1" }]).error?.issues[0].message).toBe(
+      "Tồn kho phải là số nguyên từ 0 trở lên",
+    );
+  });
+
+  it("checks the price with the same rule as before", () => {
+    expect(save("0", []).error?.issues[0].message).toBe("Giá phải là số nguyên lớn hơn 0, ví dụ 350000");
+  });
+
+  it.each(["not json", "{}", '[{"stock": "1"}]'])("refuses a body the editor never sends: %s", (body) => {
+    expect(save("350000", body).error?.issues[0].message).toBe("Dữ liệu tồn kho không đọc được, hãy tải lại trang.");
+  });
+});
+
+describe("priceError / stockError", () => {
+  it("returns the field message or null", () => {
+    expect(priceError("350000")).toBeNull();
+    expect(priceError("350k")).toBe("Giá phải là số nguyên lớn hơn 0, ví dụ 350000");
+    expect(stockError("12")).toBeNull();
+    expect(stockError("100000")).toBe("Tồn kho tối đa là 99.999");
   });
 });

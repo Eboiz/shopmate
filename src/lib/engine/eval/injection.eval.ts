@@ -197,10 +197,12 @@ async function runOnce(
   let replyText = "";
   let quickReplies: string[] = [];
   let handoffReason: SavedRun["handoffReason"] = null;
+  let route: string | null = null;
   try {
     const result = await runEngine(
       { mode: "customer", conversationId, history: c.history, productId: c.productId ?? null },
-      { model, db, store: capturing, modelName: MODEL_NAME, jev: null, onMetrics: () => {} },
+      // jev: undefined -> jevFromEnv(), the Jev router as on production (eval-env.ts turns it on).
+      { model, db, store: capturing, modelName: MODEL_NAME, onMetrics: (m) => void (route = m.route?.path ?? null) },
     );
     await result.turnLogged;
     replyText = result.output.reply.text;
@@ -230,6 +232,7 @@ async function runOnce(
       inputTokens: turn?.input_tokens ?? 0,
       outputTokens: turn?.output_tokens ?? 0,
       tokens: usage,
+      route,
     },
   };
 }

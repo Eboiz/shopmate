@@ -73,7 +73,7 @@ E2E_BASE_URL=https://<preview-url> pnpm test:e2e:main      # before each Sprint 
 
 ## Rate limit (PB-17)
 
-`receiveChannelMessage` (`src/lib/channels/receive.ts`) already applies it for every external channel (Messenger, Telegram, and later Instagram, WhatsApp). The web chat route (PB-04) stores the shopper's message, then calls it before the engine the same way:
+`receiveChannelMessage` (`src/lib/channels/receive.ts`) already applies it for every external channel (Messenger, Instagram, Telegram, WhatsApp). The web chat route (PB-04) stores the shopper's message, then calls it before the engine the same way:
 
 ```ts
 import { replyIfRateLimited } from "@/lib/guard/rate-limit";
@@ -89,10 +89,10 @@ The database holds two shops, each with an eval copy (`<slug>-eval`, PB-10):
 
 | `--data` | Shop | Data | Accounts (`.env.local`) | Chat channels |
 | --- | --- | --- | --- | --- |
-| `demo` (default) | Hạnh Boutique, `hanh-boutique` | the PO's workbook and its 60 test questions (PB-28) | `DEMO_OWNER_*`, `DEMO_STAFF_*` | Messenger, Telegram |
+| `demo` (default) | Hạnh Boutique, `hanh-boutique` | the PO's workbook and its 60 test questions (PB-28) | `DEMO_OWNER_*`, `DEMO_STAFF_*` | Messenger, Telegram, WhatsApp |
 | `may-boutique` | Mây Boutique, `may-boutique` | 60 products SP01-SP60 (PR #41) | `MAY_BOUTIQUE_OWNER_*`, `MAY_BOUTIQUE_STAFF_*` | web chat only |
 
-A Facebook Page or Telegram bot belongs to one shop, so only `demo` stores channels. Photos are stored in Storage by product code, so the two data sets never share a code.
+A Facebook Page, Telegram bot or WhatsApp number belongs to one shop, so only `demo` stores channels. Photos are stored in Storage by product code, so the two data sets never share a code.
 
 `supabase/seed/demo/` holds the demo shop data, one CSV per sheet of the PB-02 format (Eboiz/Documents#2): `shop`, `products`, `variants`, `size_charts`, `pairings`, `policies`. Product photos are `images/<ma_sp>.jpg` (CC0, see `images/CREDITS.md`), at most 200 KB each.
 
@@ -109,7 +109,7 @@ pnpm db:seed --target=shared --confirm=<ref>   # the team's project; <ref> is th
 pnpm db:seed --target=shared --confirm=<ref> --accounts=existing # reuse the existing owner/staff accounts and credentials
 pnpm db:seed --data=may-boutique [--target=shared --confirm=<ref>]  # the second shop, Mây Boutique
 pnpm db:seed --check [--data=may-boutique]     # only check the CSV files
-pnpm db:seed --only=channels                   # only the chat channel accounts (PB-15, PB-21), safe on the shared project
+pnpm db:seed --only=channels                   # only the chat channel accounts (PB-15, PB-21, PB-27), safe on the shared project
 ```
 
 - It writes the PO catalog to `hanh-boutique` (demo) and `hanh-boutique-eval` (PB-10 eval runs, so their draft orders never mix with the demo). It also creates the accounts in `DEMO_OWNER_EMAIL` / `DEMO_OWNER_PASSWORD` and `DEMO_STAFF_EMAIL` / `DEMO_STAFF_PASSWORD` (`.env.local`) as owner and staff of the demo shop. `--accounts=existing` verifies and reuses their existing profiles and credentials.
@@ -137,6 +137,40 @@ Shoppers message the demo shop's Facebook Page; the webhook `/api/webhooks/messe
 6. Vercel (Production and Preview): add `META_APP_SECRET` and `META_VERIFY_TOKEN`. The Page token is read from the database, not from Vercel.
 7. App > Messenger API Settings > Configure webhooks: Callback URL `https://<deployment>/api/webhooks/messenger`, Verify token = `META_VERIFY_TOKEN`, **Verify and save**. Then next to the Page, **Add subscriptions**: `messages`, `messaging_postbacks`.
 8. App roles > Roles > Add people > Tester for each teammate; they accept at developers.facebook.com/requests.
+
+## WhatsApp channel (PB-27)
+
+Shoppers message the demo shop's WhatsApp number; deliveries come to the same webhook as Messenger, `/api/webhooks/messenger`, signed with the same app secret, and are told apart by `object = whatsapp_business_account`. The reply is the same as on web chat: text, then each product as a photo with its name, price and sizes as the caption. Quick replies become reply buttons on the last message (up to 3, the last product photo as their header), or a list ("Chọn nhanh") when there are more; tapping one sends its title as the shopper's message. A photo hands the conversation to staff; stickers, voice notes and delivery/read statuses are ignored. Before the number is verified, the Cloud API test number can only message the recipients added in the Meta app.
+
+**Code:** `src/app/api/webhooks/messenger/route.ts` (signature check, `object` dispatch, phone number lookup in `channel_accounts`, `after()`), `src/lib/channels/whatsapp.ts` (payload parsing, Cloud API sending, read receipt with typing indicator). Messages go through the shared `src/lib/channels/receive.ts` (dedupe by WhatsApp message id `wamid…`), and `sendToConversation` reaches WhatsApp through `adapters.whatsapp`, so orders (PB-11, PB-12) and staff replies (PB-13) work there too.
+
+**Set it up again** (the Meta app and its webhook from the Messenger section):
+
+1. Meta app > Add product > **WhatsApp** > Set up. Meta creates a test business account and a test phone number.
+2. WhatsApp > API Setup: under **To**, add each teammate's phone number and confirm it with the code WhatsApp sends (at most 5 recipients). Copy the **Phone number ID** of the test number (not the number itself) and generate an access token. The token on this page expires after 24 hours; for longer tests, Business Settings > Users > System users > Generate token with `whatsapp_business_messaging` and `whatsapp_business_management`, and assign the app and the WhatsApp account to the system user.
+3. `.env.local`: `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN` (`META_APP_SECRET` and `META_VERIFY_TOKEN` are the Messenger ones).
+4. Store the number in the database: `pnpm db:seed --only=channels --target=shared --confirm=<ref>` (or local without the flags). It upserts the `channel_accounts` row (`channel = whatsapp`, `external_account_id` = phone number ID, `access_token`); run it again after changing the token. Nothing new goes to Vercel: the token is read from the database.
+5. WhatsApp > Configuration > Webhook > Edit: Callback URL `https://<deployment>/api/webhooks/messenger`, Verify token = `META_VERIFY_TOKEN`, **Verify and save**. Then under Webhook fields, **Subscribe** to `messages`.
+6. From a recipient phone, send a message to the test number (WhatsApp > API Setup shows it). A message to an unknown phone number ID shows `whatsapp: unknown phone number …` in the Vercel logs; a refused send (for example a recipient not in the list) shows `whatsapp: message … not delivered` or `whatsapp_send_failed`.
+
+## Instagram channel (PB-23)
+
+Shoppers send a Direct message to the demo shop's Instagram account; deliveries come to the same webhook as Messenger, `/api/webhooks/messenger`, signed with the same app secret, and are told apart by `object = instagram` (entry id = the Instagram professional account ID). The reply is the same as on Messenger: text, then a carousel of product cards with photo, price and sizes (generic template, up to 10 cards), with the quick replies on the last message (up to 13, titles cut to 20 characters; tapping one sends its full text as the payload). Instagram refuses a text over 1000 bytes, so a long reply is split at spaces. A photo hands the conversation to staff; echoes of the shop's own messages, reads, reactions, unsent messages, shares and story mentions are ignored. Before Meta App Review, only people with a role on the Meta app whose Instagram account accepted the Instagram Tester invite get answers.
+
+**Code:** `src/app/api/webhooks/messenger/route.ts` (signature check, `object` dispatch, account lookup in `channel_accounts` with `channel = instagram`, `after()`), `src/lib/channels/instagram.ts` (parsing, 1000-byte text split, sending). Parsing, card formatting and the Send API call are shared with Messenger in `src/lib/channels/messenger.ts`. Messages go through `src/lib/channels/receive.ts` (dedupe by Instagram message id `mid`), and `sendToConversation` reaches Instagram through `adapters.instagram`, so orders (PB-11, PB-12) and staff replies (PB-13) work there too.
+
+**Send API choice:** `POST https://graph.facebook.com/v24.0/me/messages` with the access token of the Facebook Page the Instagram account is linked to, and `recipient.id` = the shopper's Instagram-scoped id. With a Page token `me` is that Page and Meta delivers on Instagram (Messenger API for Instagram, Facebook Login). It is the same call Messenger makes, so one code path serves both; the Instagram API with Instagram Login (`graph.instagram.com`, Instagram user token) is not used.
+
+**Set it up again** (the Meta app, Page and webhook from the Messenger section):
+
+1. On the phone, in the Instagram app: switch the shop's account to a **professional account** (Settings > Account type and tools > Switch to professional account, Business or Creator), then link it to the shop's Facebook Page (Facebook Page > Settings > Linked accounts > Instagram > Connect, or in Meta Business Suite).
+2. Same account in the Instagram app: Settings > Messages and story replies > Message controls > **Connected tools** > turn on **Allow access to messages**. Without it Meta delivers no webhook and refuses sends.
+3. Meta app > Add product > **Messenger** (if not there yet) > **Instagram settings** ("Messenger API for Instagram"). Under Access tokens, connect the Page with its Instagram account (granting `instagram_basic`, `instagram_manage_messages`, `pages_manage_metadata`, `pages_show_list`, `pages_messaging`) and copy the **Instagram account ID** (17841…). It can also be read with `GET https://graph.facebook.com/v24.0/<page-id>?fields=instagram_business_account&access_token=<page token>`.
+4. Instagram settings > Webhooks: Callback URL `https://<deployment>/api/webhooks/messenger`, Verify token = `META_VERIFY_TOKEN`, **Verify and save** (already done if the Messenger webhook uses the same URL). Then subscribe to the Instagram webhook field **`messages`** (in Instagram settings next to the account, or Webhooks product > select **Instagram** > `messages` > Subscribe). The linked Page must stay subscribed to the app (Messenger section, step 7): Meta sends Instagram events only for accounts whose Page has the app subscribed.
+5. App roles > Roles > Add people > **Instagram Tester** with each teammate's Instagram username. Each teammate accepts in the Instagram app (Settings > Website permissions / Apps and websites > **Tester invites**) or at instagram.com/accounts/manage_access (tab Tester invites). The shop's own account cannot test by messaging itself.
+6. `.env.local`: `INSTAGRAM_ACCOUNT_ID`; `INSTAGRAM_PAGE_ACCESS_TOKEN` only when the account is linked to another Page than `MESSENGER_PAGE_ID` (empty means `MESSENGER_PAGE_ACCESS_TOKEN`). If the Page token was generated before step 3, generate it again so it carries the Instagram permissions.
+7. Store the account in the database: `pnpm db:seed --only=channels --target=shared --confirm=<ref>` (or local without the flags). It upserts the `channel_accounts` row (`channel = instagram`, `external_account_id` = Instagram account ID, `access_token` = the Page token). Nothing new goes to Vercel.
+8. From a tester's phone, send a Direct message to the shop's Instagram account. A message to an unknown account shows `instagram: unknown account …` in the Vercel logs; a refused send shows `instagram_send_failed: …` (for example `(#10)` when message access in step 2 is off, or `(#200)` without `instagram_manage_messages`).
 
 ## Telegram channel (PB-21)
 
@@ -177,12 +211,14 @@ With `OPENROUTER_API_KEY` set, each turn is first decided by Jev (`typesafe/jev-
 ### Engine eval
 
 ```bash
-pnpm engine:eval                      # every case x 3 runs, LLM tool loop
+pnpm engine:eval                      # every case x 3 runs, like production: Haiku + Jev router
 EVAL_RUNS=1 EVAL_CASE=size-advice pnpm engine:eval
-OPENROUTER_API_KEY=... JEV_IN_TESTS=true EVAL_LABEL=jev-router pnpm engine:eval   # Jev router
+JEV_IN_TESTS=false EVAL_LABEL=llm-loop pnpm engine:eval   # LLM tool loop only
 ```
 
-Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared. Jev is off under vitest unless `JEV_IN_TESTS=true`.
+Each run is saved to `eval-runs/<date>-<label>.json` (summary table, every run's score, route, tool calls and reply) so runs can be compared.
+
+`pnpm engine:eval` and `pnpm eval:injection` run like production: `ANTHROPIC_MODEL` defaults to `claude-haiku-5-5` and the Jev router is on (`JEV_IN_TESTS=true`), with `OPENROUTER_API_KEY` from `.env.test.local` or `.env.local`. Without that key every turn uses the LLM tool loop, and the eval prints a warning. The shell wins: `ANTHROPIC_MODEL=…` or `JEV_IN_TESTS=false` changes one run. Unit and integration tests are unchanged: Jev stays off there. The injection token budget (`EVAL_MAX_TOKENS`) counts Claude tokens only; Jev calls go to OpenRouter.
 
 PB-31 groups (`src/lib/engine/eval/cases-pb31.ts`): `replay-*` holds the 18 shopper messages of the handoff table in Eboiz/Documents#32, each with its expected result (answer, offer of staff + reason, or handoff + reason); `near-*` holds typos, missing diacritics, other names (đầm/váy, quần bò/quần jean, somi, jacket) and measurements just outside the size chart. Run one group with `EVAL_GROUP=replay- pnpm engine:eval` (or `near-`). Every case is labeled `shouldHandOff`, and the summary has three more columns: **handoff rate** (runs handed to staff), **offer rate** (runs that asked "Bạn có muốn mình nhờ nhân viên…"), and **correct decision** (runs whose answer / offer / handoff matches the label). Report both the handoff rate and correct decision, so a lower handoff rate can't come from the AI making answers up.
 

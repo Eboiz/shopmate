@@ -25,13 +25,16 @@ import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { createLangfuseSink } from "./langfuse";
+import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
+import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { normalizeSizeInput } from "./measurements";
 import { answersAiMessage, searchMissed } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
-import { isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
+import { ASK_PAIRING_PRODUCT_TEXT, isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
-import { isCatalogQuestion } from "./product-match";
-import { catalogOverview, groupListing, isGroupName, routeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { isCatalogQuestion, productCoveringMessage } from "./product-match";
+import { catalogOverview, groupListing, isGroupName, routeTurn, unsoldSizeTurn, type RouteOutcome, type ToolRunner } from "./route";
+import { missedMentions, mustMentionNote, sizesNamedIn } from "./size-request";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
 import { createSupabaseStore, type EngineStore } from "./store";
 import { toolDefinitions, toolHandlers } from "./tools";
@@ -181,6 +184,23 @@ function withOffer(text: string): Pick<Reply, "text" | "quickReplies"> {
   return { text: asked ? t : `${t} ${OFFER_QUESTION}`, quickReplies: OFFER_QUICK_REPLIES };
 }
 
+// PB-39: the reply sent when the model said twice that data is missing while
+// this turn's tools returned it (or kept promising a later update): written from
+// the tool results with the product cards. With nothing looked up, the customer
+// is offered staff instead (PB-31).
+function missingFallback(
+  claims: readonly MissingClaim[],
+  logs: readonly ToolCallLog[],
+  sizeAdvice: SizeAdvice | null,
+  mode: EngineInput["mode"],
+): { text: string; productIds: string[]; offer: OfferReason | null } {
+  const policyKinds = claims.filter((c) => c !== "price" && c !== "stock" && c !== "promise");
+  const text = dataReplyText(logs, sizeAdvice, policyKinds.length ? policyKinds : undefined);
+  if (text) return { text, productIds: productIdsInLogs(logs), offer: null };
+  if (mode === "customer") return { text: offerTextFor("not_covered_by_data", null, false), productIds: [], offer: "not_covered_by_data" };
+  return { text: STAFF_DRAFT_GIVE_UP_TEXT, productIds: [], offer: null };
+}
+
 const isWriteTool =(name: string) => Object.hasOwn(tools, name) && tools[name as keyof typeof tools].writes;
 
 function blockedOrderRun(input: unknown, code: string, extra: object = {}): ToolRun {
@@ -189,6 +209,32 @@ function blockedOrderRun(input: unknown, code: string, extra: object = {}): Tool
     content: JSON.stringify({ error: code, ...extra }),
     isError: true,
   };
+}
+
+// PB-40: the last step on every path. Cards keep to the shopper's budget,
+// excluded garments and count ("có 300 nghìn, không thích váy, gợi ý 2 món");
+// a customer's buttons don't push another size than the one they asked for
+// when this turn looked up stock (BOT-02).
+async function keepToShopper(
+  reply: Reply,
+  text: string,
+  opts: { mode: EngineInput["mode"]; shopperSize: string | null; stockSizes: Set<string>; categories: () => Promise<CatalogItem[]> },
+): Promise<Reply> {
+  let out = reply;
+  const constraints = shopperConstraints(text);
+  if (out.products.length > 0 && hasConstraints(constraints)) {
+    const category = constraints.excludeGroups.length > 0
+      ? new Map((await opts.categories().catch(() => [])).map((p) => [p.id, p.category]))
+      : new Map<string, string | null>();
+    const kept = new Set(
+      fitConstraints(out.products.map((c) => ({ ...c, category: category.get(c.productId) ?? null })), constraints).map((c) => c.productId),
+    );
+    out = { ...out, products: out.products.filter((c) => kept.has(c.productId)) };
+  }
+  if (opts.mode === "customer" && opts.stockSizes.size > 0) {
+    out = { ...out, quickReplies: dropOtherSizeReplies(out.quickReplies, opts.shopperSize, opts.stockSizes) };
+  }
+  return out;
 }
 
 export async function runEngine(rawInput: EngineInput, partialDeps: Partial<EngineDeps> = {}): Promise<EngineResult> {
@@ -253,6 +299,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
   let sizeRetried = false;
   let sizeFallback = false;
+  // PB-39 post-check: the reply claimed missing data the tools returned.
+  let missingRetried = false;
+  let missingClaims: MissingClaim[] = [];
   let modelReply: ReturnType<typeof parseModelReply>["reply"] | null = null;
   let finalFirstTokenAt: number | null = null;
   const pairingState: { called: boolean; failed: boolean; needsProduct: boolean; items: ToolOutput<"get_pairings">["pairings"] } = {
@@ -375,6 +424,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     }
   }
 
+  // PB-45: without Jev (or when it failed) a size the product or the shop doesn't
+  // sell is still answered by the server, not by the tool loop. routeTurn does
+  // the same check with Jev's product.
+  const jevSkipped = !deps.jev || route.fallbackReason === "jev_error";
+  if (!routed && jevSkipped && !orderInProgress && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
+    const catalog = await deps.store.catalog(ctx.shopId);
+    const product = catalog.find((p) => p.id === tc.product?.id) ?? productCoveringMessage(lastText, catalog);
+    routed = await unsoldSizeTurn(
+      { mode, history: input.history, catalog, runTool, cards: (ids) => deps.store.productCards(ctx.shopId, ids) },
+      product,
+    );
+    if (routed) route = { path: "size_guard" };
+  }
+
   if (routed) {
     switch (routed.kind) {
       case "handoff":
@@ -455,6 +518,39 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
               products: await deps.store.productCards(ctx.shopId, write.productIds),
               quickReplies: [],
             };
+            break;
+          }
+          // PB-45: every color in stock must be named ("Còn màu nào khác?"):
+          // one more try, then the reply written from get_stock.
+          const missed = missedMentions(parsed.reply.text, write.mustMention ?? []);
+          if (missed.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${mustMentionNote(missed)}`;
+              continue;
+            }
+            reply = {
+              text: dataReplyText(logs, null) ?? FALLBACK_TEXT,
+              products: await deps.store.productCards(ctx.shopId, write.productIds),
+              quickReplies: [],
+            };
+            break;
+          }
+          // PB-39: "chưa có giá / chưa có thông tin" while the facts have it, or
+          // "để mình kiểm tra và cập nhật": one more try, then the data itself.
+          const claims = falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: Boolean(write.offer) });
+          if (claims.length > 0) {
+            if (canRetry) {
+              task = `${write.task}
+${missingRetryNote(claims)}`;
+              continue;
+            }
+            const fb = missingFallback(claims, logs, write.sizeAdvice ?? null, mode);
+            const ids = write.productIds.length ? write.productIds : fb.productIds;
+            reply = fb.offer
+              ? offerReply(fb.text)
+              : { text: fb.text, products: await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+            offerMade = fb.offer;
             break;
           }
           const discount = mode === "customer" && findUnbackedDiscount(parsed.reply.text, policyTextsFrom(logs)) !== null;
@@ -548,6 +644,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         continue;
       }
       sizeFallback = !sizeOk;
+      // PB-39: "chưa có giá" while get_stock returned one, "chưa có phí ship"
+      // while get_policy(giao_hang) did, or a promise to check and update later.
+      const claims = parsed.ok && !isMatchingQuestion(input.history)
+        ? falseMissingClaims(parsed.reply.text, logs, { customer: mode === "customer", offer: offersStaff(parsed.reply) })
+        : [];
+      if (claims.length > 0 && !missingRetried && !sizeFallback) {
+        missingRetried = true;
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: missingRetryNote(claims) },
+        );
+        continue;
+      }
+      missingClaims = claims;
       modelReply = parsed.reply;
       finalFirstTokenAt = firstTokenAt;
       // PB-09 AC3: a reply promising a discount the shop's policy text doesn't
@@ -555,7 +665,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       // shopper's own amount ("không giảm 50% được"). Still failing: the server
       // refuses when the shopper asked for a discount or a price; a discount the
       // AI offered unasked hands off (below the loop).
-      if (mode === "customer" && modelReply && !pairingState.called) {
+      if (mode === "customer" && modelReply && !pairingState.called && missingClaims.length === 0) {
         const discount = findUnbackedDiscount(modelReply.text, policyTextsFrom(logs)) !== null;
         const echoed = echoedShopperAmounts(modelReply.text, input.history, logs.map((l) => l.output)).length > 0;
         if (discount || echoed) {
@@ -829,12 +939,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       products: await deps.store.productCards(ctx.shopId, [productId]),
       quickReplies: [],
     };
+  } else if (missingClaims.length > 0) {
+    const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice ?? null;
+    const fb = missingFallback(missingClaims, logs, advice, mode);
+    const ids = fb.productIds.length ? fb.productIds : tc.product ? [tc.product.id] : [];
+    reply = fb.offer
+      ? offerReply(fb.text)
+      : { text: fb.text, products: fb.text === STAFF_DRAFT_GIVE_UP_TEXT ? [] : await deps.store.productCards(ctx.shopId, ids), quickReplies: [] };
+    offerMade = fb.offer;
   } else if (pairingState.called) {
     const cards = pairingState.items.length === 0
       ? []
       : await deps.store.productCards(ctx.shopId, pairingState.items.map((pairing) => pairing.productId));
     reply = pairingState.needsProduct
-      ? { text: "Bạn muốn phối cùng sản phẩm nào? Hãy chọn món hoặc cho shop biết tên sản phẩm nhé.", products: [], quickReplies: [] }
+      ? { text: ASK_PAIRING_PRODUCT_TEXT, products: [], quickReplies: [] }
       : pairingState.failed && pairingState.items.length === 0
         ? { text: "Shop chưa kiểm tra được món phối lúc này. Vui lòng thử lại sau nhé.", products: [], quickReplies: [] }
         : matchingReply(pairingState.items, cards);
@@ -865,7 +983,19 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // A complaint the word list catches returned early above (PB-20); one only Jev
   // caught sets personalReplyNeeded here.
-  const output = engineOutputSchema.parse({ reply: reply!, personalReplyNeeded });
+  // PB-31 AC12: the pairing question comes with the shop's paired products as
+  // buttons (both paths end here). Without them the shopper types the name.
+  if (mode === "customer" && reply?.text === ASK_PAIRING_PRODUCT_TEXT && reply.quickReplies.length === 0 && deps.store.pairedProductNames) {
+    const names = await deps.store.pairedProductNames(ctx.shopId).catch(() => []);
+    reply = { ...reply, quickReplies: names };
+  }
+  reply = await keepToShopper(reply!, lastText, {
+    mode,
+    shopperSize: knownShopperSize(input.history),
+    stockSizes: sizesInToolOutputs(logs.filter((l) => l.name === "get_stock").map((l) => l.output)),
+    categories: () => (deps.store.catalog ? deps.store.catalog(ctx.shopId) : Promise.resolve([])),
+  });
+  const output = engineOutputSchema.parse({ reply, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 
   const metrics: TurnMetrics = {

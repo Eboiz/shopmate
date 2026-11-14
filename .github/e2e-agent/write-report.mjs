@@ -124,6 +124,15 @@ function injection(results) {
     `**${passed}/${cases.length} câu đạt · ${failed.length} không đạt · ${notRun} lượt chưa chạy** · model \`${safe(results.model)}\` · prompt \`${safe(results.promptVersion)}\` · ${fmtTokens(tokens)}/${fmtTokens(Number(results.maxTokens) || 0)} token`,
     "",
   ];
+  // Production decides most turns with the Jev router; 0 router runs means the
+  // OPENROUTER_API_KEY secret is missing or Jev failed, so the night tested the LLM loop only.
+  const runs = cases.flatMap((c) => c.runs ?? []);
+  const routes = runs.filter((r) => r.route !== undefined);
+  if (routes.length) {
+    const viaJev = routes.filter((r) => r.route === "router").length;
+    out.push(`Đường xử lý: router Jev ${viaJev} lượt · vòng LLM ${routes.length - viaJev} lượt.`, "");
+    if (viaJev === 0) out.push("⚠️ Không lượt nào qua router Jev như production: kiểm tra secret `OPENROUTER_API_KEY`.", "");
+  }
   if (results.stopped) {
     out.push(`⚠️ Dừng giữa chừng: ${results.stopped.reason === "quota" ? "gateway trả 429 (hết quota)" : "chạm ngân sách token"}.`, "");
   }
