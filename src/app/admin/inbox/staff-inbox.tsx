@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import type { Channel, ConversationMode, MessageSender } from "@/contract";
 import { Button } from "@/components/ui/button";
@@ -588,6 +589,11 @@ function ConversationPanel({ conversation, teamNames, currentUserId, historyVers
           onClick={() => void runAction("mode", changeMode)}>
           {isStaff ? "Trả lại cho AI" : "Tiếp quản"}
         </Button>
+        <Link href={`/admin/orders/new?c=${conversation.id}`} title="Tạo đơn cho khách này" aria-label="Tạo đơn cho khách này"
+          className="inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-[#d5d0c8] bg-white px-3 text-sm font-semibold hover:border-[#171717] hover:bg-[#f5f3ef]">
+          <Icon name="cart" className="size-4" />
+          <span className="hidden sm:inline">Tạo đơn</span>
+        </Link>
       </header>
 
       <div ref={messageLog} onScroll={onLogScroll} role="log" aria-label="Tin nhắn" className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[#f5f3ef] p-3 md:p-5">
@@ -597,7 +603,7 @@ function ConversationPanel({ conversation, teamNames, currentUserId, historyVers
           <ol className="space-y-3">
             {messages.map((message) => message.sender === "system" ? (
               <li key={message.id} className="flex justify-center">
-                <p className="max-w-[90%] rounded-full bg-[#e9e5de] px-3 py-1 text-center text-xs text-[#5c5954]">
+                <p className={`max-w-[90%] whitespace-pre-line bg-[#e9e5de] px-3 py-1 text-xs text-[#5c5954] ${message.text?.includes("\n") ?"rounded-xl py-2 text-left" : "rounded-full text-center"}`}>
                   <span className="sr-only">{senderLabels.system}: </span>
                   {message.text || "Tin nhắn không có nội dung văn bản"}
                   <time className="ml-2" dateTime={message.created_at}>{inboxDate.format(new Date(message.created_at))}</time>

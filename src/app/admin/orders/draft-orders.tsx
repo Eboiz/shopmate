@@ -31,7 +31,7 @@ const orderDate = new Intl.DateTimeFormat("vi-VN", {
   timeZone: "Asia/Ho_Chi_Minh",
 });
 
-export function DraftOrders() {
+export function DraftOrders({ justCreated = false }: { justCreated?: boolean }) {
   const [state, setState] = useState<OrdersState>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
   const [notice, setNotice] = useState<{ outcome: ProcessedOrder; customer: string; notificationSent?: boolean }>();
@@ -93,6 +93,12 @@ export function DraftOrders() {
 
   return (
     <div className="space-y-3">
+      {justCreated && !notice && (
+        <p role="status" className="flex items-center gap-2 rounded-lg bg-[#eef4ea] px-3 py-2.5 text-sm font-medium text-[#2f6b3a]">
+          <Icon name="check" className="size-4 shrink-0" />
+          Đã tạo đơn. Kiểm tra lại rồi bấm Xác nhận để trừ tồn kho.
+        </p>
+      )}
       {notice?.outcome === "not_draft" && (
         <ErrorMessage>Đơn của {notice.customer} đã được xử lý trước đó.</ErrorMessage>
       )}
@@ -110,7 +116,7 @@ export function DraftOrders() {
         <ErrorMessage>Đơn đã được xử lý nhưng chưa gửi được tin báo tự động. Hãy nhắn trực tiếp cho khách.</ErrorMessage>
       )}
       {state.orders.length === 0 ? (
-        <EmptyState icon="box" title="Không có đơn chờ xác nhận" description="Khi khách chốt đơn trong chat, đơn sẽ hiện ở đây để shop kiểm tra." />
+        <EmptyState icon="box" title="Không có đơn chờ xác nhận" description="Khi khách chốt đơn trong chat hoặc đặt từ giỏ hàng, đơn sẽ hiện ở đây để shop kiểm tra." />
       ) : (
         <ul aria-label="Đơn chờ xác nhận" className="space-y-3">
           {state.orders.map((order) => (
