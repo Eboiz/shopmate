@@ -118,6 +118,15 @@ describe("runEngine with Jev routing", () => {
     expect(metrics[0].route).toMatchObject({ path: "router", intent: "stock", product: "viewing", jevModel: "typesafe/jev-1.13" });
   });
 
+  it("router write: a quick reply promising a discount is dropped (PB-07 guards apply to quick replies)", async () => {
+    const { run } = setup(jevSaying({}), [
+      finalJson({ text: "Dạ còn ạ", productIds: [], quickReplies: ["Giảm 50% nhé", "Xem váy"] }),
+    ]);
+    const result = await run(input("váy này còn không"));
+    expect(result.output.reply.text).toBe("Dạ còn ạ");
+    expect(result.output.reply.quickReplies).toEqual(["Xem váy"]);
+  });
+
   it("complaint: hands off without any model call", async () => {
     const { model, handlers, store, metrics, run } = setup(jevSaying({ intent: { type: "choice", choice: "complaint", confidence: 0.99 } }), []);
     const result = await run(input("đồ giao bị rách"));
@@ -289,7 +298,13 @@ describe("runEngine with Jev routing", () => {
 
     it("BOT-05: after a handback, 'phí ship bao nhiêu?' reads giao_hang although Jev picked doi_tra", async () => {
       const policies = { doi_tra: "Đổi trong 7 ngày", giao_hang: "Phí ship đồng giá 30.000đ cho mọi đơn." };
-      const s = setup(jevSaying({ intent: { type: "choice", choice: "policy", confidence: 0.9 }, policy_kind: { type: "choice", choice: "doi_tra" } }), [
+      // policy_answers: the shipping text answers the question (a failing
+      // coverage check would count as "not covered", #11).
+      const s = setup(jevSaying({
+        intent: { type: "choice", choice: "policy", confidence: 0.9 },
+        policy_kind: { type: "choice", choice: "doi_tra" },
+        policy_answers: { type: "noul", noul: 0.9 },
+      }), [
         reply("Dạ, hiện shop chưa có thông tin về phí giao hàng ạ. Về đổi trả, shop hỗ trợ đổi trong 7 ngày."),
         reply("Dạ, shop chưa có thông tin phí ship ạ."),
       ]);
@@ -307,6 +322,22 @@ describe("runEngine with Jev routing", () => {
       // wrong twice: the shop's shipping text, as written
       expect(result.output.reply.text).toContain("30.000đ");
       expect(result.output.reply.text).not.toContain("7 ngày");
+    });
+
+    it("a promised update on a policy that doesn't cover the question keeps the route's staff offer", async () => {
+      // Codex 14/11: the PB-39 fallback used to drop the router's policy_not_covered offer.
+      const s = setup(jevSaying({
+        intent: { type: "choice", choice: "policy", confidence: 0.9 },
+        policy_kind: { type: "choice", choice: "giao_hang" },
+        policy_answers: { type: "noul", noul: 0.1 },
+      }), [reply("Dạ để mình kiểm tra và cập nhật cho bạn nhé"), reply("Dạ mình xem lại rồi báo bạn sau nhé")]);
+      s.handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: "Phí ship đồng giá 30.000đ cho mọi đơn." } as never);
+      const result = await s.run(input("chủ nhật shop có giao không?"));
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain("30.000đ");
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      await result.turnLogged;
+      expect(s.store.insertTurn.mock.calls[0][0].handoff_offer).toBe("policy_not_covered");
     });
 
     it("a promised update with nothing looked up: one retry, then the staff offer (not_covered_by_data)", async () => {
@@ -371,7 +402,8 @@ describe("runEngine with Jev routing", () => {
     });
 
     it("(d) 'mặc không vừa thì đổi được không' is answered from doi_tra even when Jev says product_detail", async () => {
-      const { handlers, run } = setup(intent("product_detail"), [reply("Dạ, shop đổi size trong 7 ngày ạ.")]);
+      // Jev says the policy answers it (a failing coverage check now counts as not covered, #11).
+      const { handlers, run } = setup(intent("product_detail", { policy_answers: { type: "noul", noul: 0.9 } }), [reply("Dạ, shop đổi size trong 7 ngày ạ.")]);
       handlers.get_policy.mockResolvedValue({ kind: "doi_tra", content: "Đổi size trong 7 ngày" } as never);
       const result = await run(input("Mua về mặc không vừa thì đổi được không shop?"));
       expect(handlers.get_policy).toHaveBeenCalledWith({ kind: "doi_tra" }, expect.anything(), expect.anything());
