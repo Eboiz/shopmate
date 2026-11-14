@@ -8,7 +8,7 @@ import { policyKindSchema, type LearnInput } from "@/contract";
 // v1.1 (eval 2026-11-12, v1.0: 4/12): keep the staff's own words; a conflict is
 // only two statements that can't both hold (an exception is not one);
 // needsReview only for a reason the other fields don't cover; one JSON object.
-export const LEARNING_PROMPT_VERSION = "v1.2";
+export const LEARNING_PROMPT_VERSION = "v1.3";
 
 const TAGS = ["chinh_sach", "cau_hoi_cua_khach", "tin_nhan_vien", "cau_hoi", "yeu_cau"];
 const TAG_RE = new RegExp(`</?\\s*(${TAGS.join("|")})\\s*>`, "gi");

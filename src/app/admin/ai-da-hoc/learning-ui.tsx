@@ -313,7 +313,15 @@ export function RequestCard({ gap, canEdit }: { gap: GapView; canEdit: boolean }
 const formatPrice = (price: number) => `${new Intl.NumberFormat("vi-VN").format(price)}đ`;
 
 function MissingItemCard({ group, canEdit }: { group: MissingItemProposal; canEdit: boolean }) {
-  const [state, formAction, pending] = useActionState(dismissQuestions, INITIAL_FORM_STATE);
+  // "Đã xem" hides the group at once: the analysed groups are client state, so a
+  // refresh of the page data alone would leave it on screen.
+  const [dismissed, setDismissed] = useState(false);
+  const [state, formAction, pending] = useActionState(async (prev: FormState, formData: FormData) => {
+    const next = await dismissQuestions(prev, formData);
+    if (!next.error) setDismissed(true);
+    return next;
+  }, INITIAL_FORM_STATE);
+  if (dismissed) return null;
   return (
     <form action={formAction} className="ui-card flex flex-col gap-3 p-4">
       <input type="hidden" name="gapIds" value={group.questionIds.join(",")} />

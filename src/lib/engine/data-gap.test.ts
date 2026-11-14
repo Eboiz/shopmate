@@ -101,6 +101,14 @@ describe("gapOfTurn (PB-35a: which turns record a question the AI couldn't answe
     expect(gapOfTurn(turn({ question: "có áo sơ mi không", logs: [search(["p1"])] }))).toBeNull();
   });
 
+  it("a search with no exact match keeps the offer's reason when staff was offered for a policy or a found product", () => {
+    const closeSearch: ToolCallLog = { name: "search_products", input: { query: "áo blazer co giãn", limit: 5 }, output: { match: "close", products: [{ productId: "p1" }] } };
+    expect(gapOfTurn(turn({ question: "áo blazer có co giãn không", offerMade: "not_covered_by_data", logs: [closeSearch] }))).toEqual({
+      reason: "not_covered_by_data", question: "áo blazer có co giãn không", productId: "p1",
+    });
+    expect(gapOfTurn(turn({ question: "áo blazer đổi được không", offerMade: "policy_not_covered", logs: [closeSearch, policy()] }))?.reason).toBe("policy_not_covered");
+  });
+
   it("only records customer turns, and caps the question at 500 characters", () => {
     expect(gapOfTurn(turn({ mode: "staff_draft", offerMade: "policy_not_covered", logs: [policy()] }))).toBeNull();
     expect(gapOfTurn(turn({ question: "a".repeat(800), offerMade: "policy_not_covered", logs: [policy()] }))?.question).toHaveLength(500);

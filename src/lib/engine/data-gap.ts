@@ -53,7 +53,12 @@ export function gapOfTurn(turn: GapTurn): Gap | null {
     return { reason: "product_not_found", question, productId: null };
   }
   if (turn.handoff !== null) return null;
-  if (searchFoundNoExactMatch(turn.logs)) {
+  // A search with no exact match is a missing item only when the AI offered no
+  // staff, or offered it because the search found nothing at all. A turn the AI
+  // offered staff for a policy, or for a detail of a product it did find ("áo
+  // blazer có co giãn không" -> close), keeps that reason, so PB-35a learns it.
+  if (searchFoundNoExactMatch(turn.logs)
+    && (turn.offerMade === null || (turn.offerMade === "not_covered_by_data" && searchedProducts(turn.logs).length === 0))) {
     return { reason: "product_not_found", question, productId: null };
   }
   if (turn.offerMade === null || turn.offerMade === "size_out_of_range") return null;
