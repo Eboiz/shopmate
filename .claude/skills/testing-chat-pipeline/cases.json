@@ -1,0 +1,60 @@
+{
+  "shop": "may-boutique",
+  "source": "Production test report 07/11/2026 (19 conversations, 16/19 passed, prompt v0.6). Expected results follow docs/superpowers/specs/2026-11-10-chat-engine-fixes.md.",
+  "baseline": { "date": "2026-11-07", "passed": "16/19", "latencyMedianS": 13.5, "latencyMaxS": 31.2 },
+  "cases": [
+    {
+      "id": "pb04-ac2-viewing",
+      "story": "PB-04 AC2",
+      "viewing": "Váy suông linen",
+      "turns": [
+        { "text": "váy này còn màu be size M không shop?", "handoff": null, "tools": ["get_stock"], "replyIncludesAny": ["linen"], "cardsIncludeAny": ["Váy suông linen"] }
+      ]
+    },
+    {
+      "id": "pb05-ac1-no-diacritics",
+      "story": "PB-05 AC1 + AC4",
+      "turns": [
+        { "text": "vay suong linen mau be size M con khong shop?", "handoff": null, "tools": ["search_products", "get_stock"], "replyIncludesAny": ["con"] }
+      ]
+    },
+    {
+      "id": "pb05-ac2-out-of-stock",
+      "story": "PB-05 AC2",
+      "turns": [
+        { "text": "Váy babydoll tay bồng màu trắng size M còn không shop?", "handoff": null, "tools": ["get_stock"], "replyIncludesAny": ["het"] }
+      ]
+    },
+    {
+      "id": "pb05-ac3-unknown-twice",
+      "story": "PB-05 AC3",
+      "turns": [
+        { "text": "shop có bán áo khoác da không?", "handoff": null, "questionMarks": 1 },
+        { "text": "loại áo khoác da màu đen ấy", "handoff": ["misunderstood_twice", "product_not_found"] }
+      ]
+    },
+    {
+      "id": "pb09-ac1-return-policy",
+      "story": "PB-09 AC1",
+      "turns": [
+        { "text": "Mua về mặc không vừa thì đổi được không shop?", "handoff": null, "tools": ["get_policy"], "replyIncludesAny": ["7 ngay"] }
+      ]
+    },
+    {
+      "id": "pb09-ac2-sunday-delivery",
+      "story": "PB-09 AC2",
+      "note": "Expected handoff while giao_hang says nothing about delivery days (PB-31 may change this).",
+      "turns": [
+        { "text": "Shop có giao hàng vào Chủ nhật không?", "handoff": ["policy_not_covered"] }
+      ]
+    },
+    {
+      "id": "pb09-ac3-discount",
+      "story": "PB-09 AC3",
+      "manual": "Read the reply: it must refuse the 50k discount and promise nothing.",
+      "turns": [
+        { "text": "Mình lấy 2 cái, shop bớt cho mình 50k được không?", "handoff": null, "replyIncludesAny": ["khong"], "replyExcludesAny": ["dong y giam", "bot cho ban 50", "giam cho ban 50"] }
+      ]
+    }
+  ]
+}

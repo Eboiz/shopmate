@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  avatarInitial, customerLabel, foldSearch, formatListTime, initialOf,
+  avatarInitial, customerLabel, foldSearch, formatListTime, initialOf, isUnnamed,
 } from "./inbox-filter";
 
 describe("foldSearch", () => {
@@ -36,6 +36,30 @@ describe("customerLabel", () => {
   it("tells unnamed shoppers apart by channel and conversation", () => {
     expect(customerLabel(null, "messenger", "3f2a9c")).toBe("Khách Messenger #3F2A");
     expect(customerLabel("   ", "web", "b81d00")).toBe("Khách Web chat #B81D");
+  });
+
+  it("treats placeholder names like \"Khách hàng\" as no name", () => {
+    expect(customerLabel("Khách hàng", "messenger", "3f2a9c")).toBe("Khách Messenger #3F2A");
+    expect(customerLabel("  KHÁCH  HÀNG ", "web", "b81d00")).toBe("Khách Web chat #B81D");
+    expect(customerLabel("khach hang", "web", "b81d00")).toBe("Khách Web chat #B81D");
+    expect(customerLabel("Khách", "telegram", "ab12cd")).toBe("Khách Telegram #AB12");
+    expect(customerLabel("Customer", "instagram", "ab12cd")).toBe("Khách Instagram #AB12");
+    expect(customerLabel("guest", "whatsapp", "ab12cd")).toBe("Khách WhatsApp #AB12");
+  });
+
+  it("keeps real names that merely contain a placeholder word", () => {
+    expect(customerLabel("Khách Lan", "web", "3f2a9c")).toBe("Khách Lan");
+    expect(customerLabel("Guest House Minh", "web", "3f2a9c")).toBe("Guest House Minh");
+  });
+});
+
+describe("isUnnamed", () => {
+  it("is true for empty and placeholder names only", () => {
+    expect(isUnnamed(null)).toBe(true);
+    expect(isUnnamed(undefined)).toBe(true);
+    expect(isUnnamed("  ")).toBe(true);
+    expect(isUnnamed("Khách Hàng")).toBe(true);
+    expect(isUnnamed("Lan Anh")).toBe(false);
   });
 });
 

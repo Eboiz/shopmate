@@ -488,7 +488,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   return (
     <>
-      <main ref={mainRef} className="flex-1">
+      <main ref={mainRef} className={`flex-1 ${detailProductId ? "" : "shop-has-bar"}`}>
         {detailProductId ? detailProduct ? (
           <ProductDetailView
             key={detailProduct.id}
@@ -599,7 +599,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       </main>
 
       {!detailProductId && (
-        <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
+        <div className="shop-bar fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
           <button ref={mobileChatRef} type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap bg-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em] text-white"><span aria-hidden="true" className="size-[7px] rounded-full bg-[#4cc47a]" />Chat với shop</button>
           <button type="button" onClick={openCart} aria-label={`Giỏ đặt hàng, ${itemCount} món`} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap border-[1.5px] border-[#171717] px-3 text-sm font-extrabold tabular-nums"><Icon name="cart" className="size-5" />{itemCount}</button>
         </div>
