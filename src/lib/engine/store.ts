@@ -2,8 +2,10 @@ import { quickReplySchema, toolCallLogSchema, type ConversationMode, type Handof
 import type { CatalogItem } from "./jev";
 import { searchMissed } from "./misunderstood";
 import { latestQuote, type PendingQuote } from "./order-flow";
+import { postcheckLogSchema } from "./postcheck-log";
 import { sortSizes } from "./text";
 import { setAiMode, setNeedsHuman } from "./tools/handoff-to-staff";
+import { cachedCatalog } from "./turn-cache";
 import type { Db } from "./types";
 
 export type TurnContextArgs = {
@@ -16,8 +18,9 @@ export type TurnContext = {
   conversation: { shopId: string; mode: ConversationMode } | null; // always null in staff_draft
   // description (PB-31): the shop's text, for details questions on the tool loop.
   product: { id: string; name: string; description?: string | null } | null;
-  // customer only: the conversation's previous AI turn searched for a product and
-  // found nothing (see searchMissed), and did not hand off. Missing means false.
+  // customer only: the conversation's previous AI turn missed the product (its
+  // ai_turns.postcheck.productMiss, or searchMissed for older rows) and did not
+  // hand off. Missing means false.
   previousTurnMissedProduct?: boolean;
   // Last customer turn's quote, used only after its summary was shown to the
   // shopper. The engine checks the next shopper message before allowing a write.
@@ -53,6 +56,31 @@ export type EngineStore = {
 const MAX_CARDS = 10;
 const PAIRED_BUTTONS = 3;
 
+// Every admin client reads the same database, so one cache per process is
+// enough; it keeps the first store's client for its loads.
+let sharedCatalog: ((shopId: string) => Promise<CatalogItem[]>) | null = null;
+
+async function loadCatalog(db: Db, shopId: string): Promise<CatalogItem[]> {
+  const [products, variants] = await Promise.all([
+    db.from("products").select("id, name, category, description, price").eq("shop_id", shopId).order("name"),
+    db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
+  ]);
+  if (products.error) throw new Error(`products: ${products.error.message}`);
+  if (variants.error) throw new Error(`variants: ${variants.error.message}`);
+  return products.data.map((p) => {
+    const own = variants.data.filter((v) => v.product_id === p.id);
+    return {
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      description: p.description,
+      price: p.price,
+      colors: [...new Set(own.map((v) => v.color))],
+      sizes: sortSizes(own.map((v) => v.size)),
+    };
+  });
+}
+
 export function createSupabaseStore(db: Db): EngineStore {
   async function product(shopId: string, productId: string | null) {
     if (productId === null) return null;
@@ -67,23 +95,40 @@ export function createSupabaseStore(db: Db): EngineStore {
   }
 
   async function previousTurnState(shopId: string, conversationId: string) {
-    const { data, error } = await db
+    const { data: rows, error } = await db
       .from("ai_turns")
-      .select("tool_calls, handoff_reason, handoff_offer")
+      .select("tool_calls, handoff_reason, postcheck, handoff_offer")
       .eq("conversation_id", conversationId)
       .eq("shop_id", shopId)
       .eq("mode", "customer")
       // A turn the input guard refused changes nothing: the turn before it
       // decides (an order's quote, a staff offer), see engine.ts.
       .is("postcheck->>guardRefused", null)
+      // R3: pending and superseded rows are filtered in the query, so any number
+      // of them never pushes the last delivered turn out of the limit.
+      .is("postcheck->>pending", null)
+      .is("postcheck->>superseded", null)
       .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
     if (error) throw new Error(`ai_turns: ${error.message}`);
+    // R3: a superseded turn's reply was never sent, so the shopper never saw its
+    // offer, quote or clarifying question, and a pending one's may not be; the
+    // last turn whose reply went out decides. (Filtered above; checked again here.)
+    const data = rows.find((row) => {
+      const postcheck = postcheckLogSchema.safeParse(row.postcheck).data;
+      return postcheck?.superseded !== true && postcheck?.pending !== true;
+    });
     if (!data || data.handoff_reason !== null) return { previousTurnMissedProduct: false, previousQuote: null, previousHandoffOffer: null };
     const logs = toolCallLogSchema.array().safeParse(data.tool_calls);
+    // Rows the current engine wrote carry the guard's verdict in postcheck
+    // (PB-05 AC3); older rows have none and fall back to the tool_calls shape.
+    const postcheck = postcheckLogSchema.safeParse(data.postcheck);
+    const missedProduct =
+      postcheck.success && postcheck.data.productMiss !== undefined
+        ? postcheck.data.productMiss
+        : logs.success && searchMissed(logs.data);
     return {
-      previousTurnMissedProduct: logs.success && searchMissed(logs.data),
+      previousTurnMissedProduct: missedProduct,
       previousQuote: logs.success ? latestQuote(logs.data) : null,
       previousHandoffOffer: data.handoff_offer,
     };
@@ -135,26 +180,8 @@ export function createSupabaseStore(db: Db): EngineStore {
         .slice(0, MAX_CARDS);
     },
 
-    async catalog(shopId) {
-      const [products, variants] = await Promise.all([
-        db.from("products").select("id, name, category, description, price").eq("shop_id", shopId).order("name"),
-        db.from("variants").select("product_id, size, color").eq("shop_id", shopId),
-      ]);
-      if (products.error) throw new Error(`products: ${products.error.message}`);
-      if (variants.error) throw new Error(`variants: ${variants.error.message}`);
-      return products.data.map((p) => {
-        const own = variants.data.filter((v) => v.product_id === p.id);
-        return {
-          id: p.id,
-          name: p.name,
-          category: p.category,
-          description: p.description,
-          price: p.price,
-          colors: [...new Set(own.map((v) => v.color))],
-          sizes: sortSizes(own.map((v) => v.size)),
-        };
-      });
-    },
+    // F5: one read per shop every 30 s per process (names, colours, sizes only).
+    catalog: (shopId) => (sharedCatalog ??= cachedCatalog((id) => loadCatalog(db, id)))(shopId),
 
     async pairedProductNames(shopId) {
       const { data: pairs, error } = await db.from("pairings").select("product_a_id, product_b_id").eq("shop_id", shopId);
@@ -175,4 +202,33 @@ export function createSupabaseStore(db: Db): EngineStore {
       return data.id;
     },
   };
+}
+
+// R3 (receive.ts): a channel turn is logged pending (engine.ts); the channel
+// marks it "delivered" (the reply went out, the next turn reads its state) or
+// "superseded" (never sent: the next turn skips it). Other postcheck fields are
+// kept as stored. Tried twice; a failure is logged, never thrown: the row then
+// stays pending, which the next turn skips (the safe side).
+export async function markTurn(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded"): Promise<boolean> {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    if (await markOnce(db, shopId, turnId, outcome, attempt === 2)) return true;
+  }
+  return false;
+}
+
+async function markOnce(db: Db, shopId: string, turnId: string, outcome: "delivered" | "superseded", last: boolean): Promise<boolean> {
+  try {
+    const { data, error } = await db.from("ai_turns").select("postcheck").eq("id", turnId).eq("shop_id", shopId).single();
+    if (error) throw new Error(error.message);
+    const stored = data.postcheck;
+    const rest = { ...(stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored : {}) };
+    delete rest.pending;
+    const postcheck = outcome === "superseded" ? { ...rest, superseded: true } : rest;
+    const { error: updateError } = await db.from("ai_turns").update({ postcheck }).eq("id", turnId).eq("shop_id", shopId);
+    if (updateError) throw new Error(updateError.message);
+    return true;
+  } catch (e) {
+    if (last) console.error(`engine: failed to mark the turn ${outcome}`, e);
+    return false;
+  }
 }

@@ -18,6 +18,7 @@ import { isComplaint, PERSONAL_REPLY_TEXT } from "./complaint";
 import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, policyTextsFrom } from "./discount-guard";
 import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffer } from "./refusal-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
+import { refusedHandoff, type RefusedHandoff } from "./handoff-guard";
 import { toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
 import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
@@ -28,11 +29,18 @@ import { createLangfuseSink } from "./langfuse";
 import { dataReplyText, falseMissingClaims, missingRetryNote, productIdsInLogs, type MissingClaim } from "./missing-claim";
 import { dropOtherSizeReplies, fitConstraints, hasConstraints, shopperConstraints } from "./shopper-constraints";
 import { normalizeSizeInput } from "./measurements";
-import { answersAiMessage, searchMissed } from "./misunderstood";
+import { findUncheckedNumbers, NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import type { PostcheckLog } from "./postcheck-log";
+import { findEnglish, VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
+import { answeredFromData } from "./resume";
+import { fold } from "./text";
+import { turnToolCache } from "./turn-cache";
+import { answersAiMessage, productMissed, shopperTurnText } from "./misunderstood";
 import { isOrderIntent, latestQuote, orderCreatedText, orderOutOfStockText, orderSummary, ORDER_SUMMARY_EDIT, ORDER_SUMMARY_YES, orderWriteError, sameQuote, type PendingQuote } from "./order-flow";
 import { ASK_PAIRING_PRODUCT_TEXT, isMatchingQuestion, knownShopperSize, matchingReply } from "./pairing-suggestions";
 import { buildReplySystemPrompt, buildSystemPrompt, PROMPT_VERSION, resolveViewingProduct, VIEWING_PRODUCT_REF } from "./prompt";
 import { isCatalogQuestion, productCoveringMessage } from "./product-match";
+import { filterQuickReplies, type QuickReply } from "./quick-replies";
 import { catalogOverview, groupListing, isGroupName, routeTurn, unsoldSizeTurn, type RouteOutcome, type ToolRunner } from "./route";
 import { missedMentions, mustMentionNote, sizesNamedIn } from "./size-request";
 import { replyMatchesSize, sizeCorrection, sizeFallbackText, sizesInToolOutputs, type SizeAdvice } from "./size-postcheck";
@@ -74,8 +82,14 @@ function sizeStatusOf(content: unknown): SizeStatus {
 
 export const STAFF_DRAFT_GIVE_UP_TEXT =
   "Chưa soạn được câu trả lời cho câu hỏi này. Bạn kiểm tra dữ liệu và tự trả lời khách nhé.";
-// Sequential. Raise above 1 only after measuring (see README, engine metrics); see runBatch.
-export const TOOL_CONCURRENCY = 1;
+// Read-only tool batches run in parallel (F5); a batch with a write tool stays
+// sequential (concurrency 1, see runBatch callers).
+export const TOOL_CONCURRENCY = 4;
+// Effort of the tool-loop model call. "low" only if the paid eval does not drop
+// (plan Task 9); the router's reply call is always "low".
+export const LOOP_EFFORT: "low" | "medium" = "medium";
+// F7: a search for one letter ("a") finds nothing useful and costs a round trip.
+export const SHORT_QUERY_ERROR = "query cần ít nhất 2 chữ cái: tên hoặc loại sản phẩm.";
 export const DEFAULT_MODEL = "claude-sonnet-5-5";
 
 // onFirstToken is called ONCE, when the first text token of the response arrives (TTFT).
@@ -102,6 +116,10 @@ export type EngineDeps = {
   // default; LANGFUSE_CAPTURE_CONTENT=true turns it on.
   captureContent: boolean;
   toolConcurrency: number;
+  // R3: the channel decides after the turn whether its reply goes out, so the
+  // logged row is written pending and is not read as the previous turn until
+  // the channel marks it (receive.ts, store.ts markTurn).
+  deliveryPending: boolean;
   // PB-10: Jev decides the turn and the model only writes the reply (route.ts).
   // null: every turn runs the LLM tool loop (no OPENROUTER_API_KEY, or tests).
   jev: JevClient | null;
@@ -115,6 +133,13 @@ export type EngineResult = {
   output: EngineOutput;
   handoffReason: HandoffReason | null;
   turnLogged: Promise<string | null>;
+  // The ai_turns row id as soon as the row is written (turnLogged also waits
+  // for the metrics sink); null when the write failed. Never rejects.
+  turnRow: Promise<string | null>;
+  // The create_draft_order RPC ran this turn, so its reply says what happened
+  // to that order: the channel sends it even when the shopper has written again
+  // meanwhile, or staff took over (receive.ts, R3).
+  orderWritten: boolean;
 };
 
 // Runs fn over items with at most `concurrency` at a time; results come back in
@@ -160,6 +185,7 @@ function resolveDeps(deps: Partial<EngineDeps>): EngineDeps {
     onMetrics: deps.onMetrics ?? defaultMetricsSink(),
     captureContent: deps.captureContent ?? process.env.LANGFUSE_CAPTURE_CONTENT === "true",
     toolConcurrency: deps.toolConcurrency ?? TOOL_CONCURRENCY,
+    deliveryPending: deps.deliveryPending ?? false,
     jev: deps.jev !== undefined ? deps.jev : jevFromEnv(),
   };
 }
@@ -222,6 +248,24 @@ function blockedOrderRun(input: unknown, code: string, extra: object = {}): Tool
   };
 }
 
+// PB-09 (F3, F4): a refused handoff is an error tool_result, so the model answers
+// from the data instead. isError means it is not counted as a handoff below.
+function shortQueryRun(input: unknown): ToolRun | null {
+  const query = (input as { query?: unknown } | null)?.query;
+  if (typeof query !== "string") return null;
+  const letters = fold(query).match(/\p{L}/gu)?.length ?? 0;
+  if (letters >= 2) return null;
+  return { log: { name: "search_products", input, error: "query_too_short" }, content: SHORT_QUERY_ERROR, isError: true };
+}
+
+function refusedHandoffRun(input: unknown, refused: RefusedHandoff): ToolRun {
+  return {
+    log: { name: "handoff_to_staff", input, error: refused.code },
+    content: refused.message,
+    isError: true,
+  };
+}
+
 // PB-40: the last step on every path. Cards keep to the shopper's budget,
 // excluded garments and count ("có 300 nghìn, không thích váy, gợi ý 2 món");
 // a customer's buttons don't push another size than the one they asked for
@@ -272,6 +316,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
       output: { reply: { text: PERSONAL_REPLY_TEXT, products: [], quickReplies: [] }, personalReplyNeeded: true },
       handoffReason: null,
       turnLogged: Promise.resolve(null),
+      turnRow: Promise.resolve(null),
+      orderWritten: false,
     };
   }
   // ONE read for everything needed before the model call.
@@ -292,6 +338,44 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     ctx = { shopId: deps.staffShopId!, conversationId: null };
   }
 
+  // Cards for the model's productIds. VIEWING_PRODUCT_REF (v1.3) is the product
+  // on screen; with none on screen it is dropped, never sent to the database.
+  const cardIdsOf = (ids: readonly string[]) =>
+    ids.flatMap((id) => (id !== VIEWING_PRODUCT_REF ? [id] : tc.product ? [tc.product.id] : []));
+  // PB-07: the reply sent when a reply's numbers failed twice: cards of the
+  // viewed product, else of the products the reply named (ids the shop has),
+  // else of the ones the turn looked up. With no card at all, the looked-up
+  // data itself is the text, so the shopper is never told to see a missing card.
+  const numberCardReply = async (replyIds: readonly string[]): Promise<Reply> => {
+    const looked = productIdsInLogs(logs);
+    let products = await deps.store.productCards(ctx.shopId, tc.product ? [tc.product.id] : cardIdsOf(replyIds));
+    if (products.length === 0 && looked.length > 0) products = await deps.store.productCards(ctx.shopId, looked);
+    if (products.length > 0) return { text: NUMBER_CARD_TEXT, products, quickReplies: [] };
+    return { text: dataReplyText(logs, null) ?? FALLBACK_TEXT, products: [], quickReplies: [] };
+  };
+
+  // The shop's catalogue: read at most once per turn, shared by the Jev router
+  // and the quick-reply check.
+  let turnCatalog: CatalogItem[] | null = null;
+  const loadCatalog = async (): Promise<CatalogItem[]> => {
+    if (turnCatalog === null) turnCatalog = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
+    return turnCatalog;
+  };
+  // PB-05: customer quick replies only name what the shop sells (staff_draft is
+  // unchanged). No quick replies, no catalogue read. A failed read must not
+  // lose the reply: filter against an empty catalogue, which keeps only the
+  // replies that name no garment.
+  const customerQuickReplies = async (replies: QuickReply[]): Promise<QuickReply[]> => {
+    if (mode !== "customer" || replies.length === 0) return replies;
+    try {
+      return filterQuickReplies(replies, await loadCatalog());
+    } catch (e) {
+      console.error("engine: catalog read failed, filtering quick replies against an empty catalog", e);
+      turnCatalog ??= [];
+      return filterQuickReplies(replies, []);
+    }
+  };
+
   // Computed once per turn, never per loop: a stable prefix keeps the prompt cache.
   // toolDefinitions(mode) only ADVERTISES tools to the model; the gate is
   // toolsForMode(mode) inside executeTool. The two must match (see tools/index.ts).
@@ -304,6 +388,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const modelCalls: TurnMetrics["modelCalls"] = [];
   const toolMetrics: TurnMetrics["toolCalls"] = [];
   const seen: Array<{ name: string; input: unknown }> = [];
+  // F5/F7: an identical read-only call in this turn gets the first result back.
+  const toolCache = turnToolCache();
   let calls = 0;
   let inputTokens = 0;
   let outputTokens = 0;
@@ -331,6 +417,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   let reply: Reply | null = null;
   let quotedOrderPresented = false;
   let personalReplyNeeded = false;
+  let productMiss = false;
   let productMissedTwice = false;
   let discountRetried = false;
   let discountBlocked = false;
@@ -339,11 +426,25 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // PB-17: the reply still failed the discount or echo check after one retry and
   // the shopper was asking for a discount or a price: the server refuses instead.
   let refusalFallback = false;
+  // PB-07: prices and stock in a model-written reply must be the tools'. One
+  // rewrite; a second mismatch sends the product cards instead and the
+  // conversation stays with the AI (numberBlocked, PR #81 review).
+  let numberCheck: PostcheckLog["numberCheck"];
+  let numberBlocked = false;
+  const shopperText = shopperTurnText(input.history);
+  // PB-04 (F6): an English stock/size word gets one rewrite, then the reply is sent.
+  let vietnamese: PostcheckLog["vietnamese"];
+  const needsVietnameseRewrite = (text: string) => mode === "customer" && vietnamese === undefined && findEnglish(text) !== null;
+  const uncheckedNumbers = (text: string) =>
+    mode === "customer" ? findUncheckedNumbers(text, logs, shopperText).map((issue) => issue.raw) : [];
   const previousQuote = tc.previousQuote ?? null;
   let currentQuote: PendingQuote | null = null;
   let orderResult: ToolOutput<"create_draft_order"> | null = null;
   let orderIssue: { code: string; missing?: string[] } | null = null;
   let createAttempted = false;
+  // The create_draft_order RPC ran this turn (it may have committed even if it
+  // then failed): unlike createAttempted, a blocked or requoted call is not it.
+  let orderWritten = false;
 
   // PB-10: Jev routes the turn; orders, unsure turns and Jev failures fall back
   // to the LLM tool loop below.
@@ -352,11 +453,15 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // PB-11: an order in progress (the last turn read back a quote) stays in the
   // tool loop, so "ok" / "đồng ý" is never routed as a greeting or unclear turn.
   const orderInProgress = mode === "customer" && (tc.previousQuote ?? null) !== null;
+  // Router and server-decided paths: read-only tools are answered from the turn's
+  // cache (T7); a hit adds no log but still counts as a call.
   const runTool: ToolRunner = async (name, toolInput) => {
     calls += 1;
     const s0 = now();
-    const run = await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
-    if (run.log) logs.push(run.log);
+    const cached = toolCache.get(name, toolInput);
+    const run = cached ?? await executeTool(name, toolInput, ctx, mode, deps.handlers, deps.db);
+    if (!cached) toolCache.set(name, toolInput, run);
+    if (run.log && !cached) logs.push(run.log);
     toolMetrics.push({ name, startMs: s0 - t0, ms: now() - s0, outcome: toolOutcome(run) });
     seen.push({ name, input: toolInput });
     return run.isError ? { ok: false, output: undefined, code: toolOutcome(run) } : { ok: true, output: run.log?.output };
@@ -399,8 +504,11 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
     // person hands off): "bot ngu vcl, cho gặp nhân viên", "đm 2 tuần chưa tới
     // hàng" must reach the shop. Injection, leak and harmful requests are refused
     // by the AI itself, never handed off (PB-17): most attacks also score harmful.
+    // The reason reads asksForHuman without the word "bot": an insult names the
+    // bot ("Mày ngu như bò, ... con bot kia" is a complaint), a request names a
+    // person ("bot ngu vcl, cho gặp nhân viên" asks for one).
     if (guard.blocked === "abuse") {
-      const reason = asksForHuman(lastText) ? "asked_for_human" : "complaint";
+      const reason = asksForHuman(lastText.replace(/(?<!\p{L})bot(?!\p{L})/giu, " ")) ? "asked_for_human" : "complaint";
       const r = await runTool("handoff_to_staff", { reason });
       return { kind: "handoff", reason, sizeStatus: null, viaTool: r.ok };
     }
@@ -424,7 +532,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   const catalogTurn = isCatalogQuestion(lastText) || isGroupName(lastText);
   if (!routed && catalogTurn && (routed = await guardRefused())) route = { path: "guard" };
   if (!routed && !orderInProgress && deps.store.catalog && catalogTurn && !isComplaint(lastText) && !asksForHuman(lastText)) {
-    const catalog = await deps.store.catalog(ctx.shopId);
+    const catalog = await loadCatalog();
     const listing = groupListing(catalog, lastText);
     const overview = listing || !isCatalogQuestion(lastText) ? null : catalogOverview(catalog);
     if (listing) {
@@ -439,7 +547,7 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   if (deps.jev && orderInProgress && !routed) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
   if (deps.jev && !orderInProgress && !routed) {
     try {
-      const catalog: CatalogItem[] = deps.store.catalog ? await deps.store.catalog(ctx.shopId) : [];
+      const catalog = await loadCatalog();
       const [decision, refused] = await Promise.all([
         decideTurn(deps.jev, { history: input.history, viewing: tc.product, catalog, now }),
         guardRefused(),
@@ -507,7 +615,16 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         sizeStatus = routed.sizeStatus;
         // handoff_to_staff moved the conversation already, unless it failed.
         if (!routed.viaTool) await deps.store.setNeedsHuman(ctx);
-        reply = { text: offerAccepted ? HANDOFF_TEXT : handoffText(handoff, sizeStatus), products: [], quickReplies: [] };
+        // PB-05 AC3: Jev saw the shopper was already asked which product and
+        // still named none the shop has: same text as the tool loop's second miss.
+        productMissedTwice = routed.productMiss === true;
+        reply = {
+          text: offerAccepted
+            ? HANDOFF_TEXT
+            : productMissedTwice ? PRODUCT_NOT_FOUND_HANDOFF_TEXT : handoffText(handoff, sizeStatus),
+          products: [],
+          quickReplies: [],
+        };
         break;
       case "personal":
         personalReplyNeeded = true;
@@ -523,6 +640,17 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
         // more try with the reason added to the task; after that the server's
         // own text (size) or a handoff (discount) is sent.
         const write = routed;
+        // PB-05 AC3: the router's "which product do you mean" question is this
+        // turn's miss; the second one in a row hands off before the reply model
+        // runs (the guard is customer-only).
+        productMiss = mode === "customer" && write.productMiss === true;
+        if (productMiss && tc.previousTurnMissedProduct === true && answersAiMessage(input.history)) {
+          productMissedTwice = true;
+          handoff = "misunderstood_twice";
+          await deps.store.setNeedsHuman(ctx);
+          reply = { text: PRODUCT_NOT_FOUND_HANDOFF_TEXT, products: [], quickReplies: [] };
+          break;
+        }
         const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));
         let task = write.task;
         for (let attempt = 1; ; attempt++) {
@@ -632,13 +760,29 @@ ${missingRetryNote(claims)}`;
             reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
             break;
           }
+          const unchecked = uncheckedNumbers(parsed.reply.text);
+          if (unchecked.length > 0 || numberCheck) numberCheck = { failed: unchecked, retried: numberCheck !== undefined };
+          if (unchecked.length > 0) {
+            if (canRetry) {
+              task = `${write.task}\n${NUMBER_RETRY_NOTE}`;
+              continue;
+            }
+            numberBlocked = true;
+            reply = await numberCardReply(write.productIds);
+            break;
+          }
+          if (canRetry && needsVietnameseRewrite(parsed.reply.text)) {
+            vietnamese = { retried: true };
+            task = `${write.task}\n${VIETNAMESE_RETRY_NOTE}`;
+            continue;
+          }
           finalFirstTokenAt = firstTokenAt;
           // Cards are the server's choice (graded by PB-10), never the model's ids;
           // so are the buttons when the route chose them (PB-31).
           reply = {
             text: parsed.reply.text,
             products: await deps.store.productCards(ctx.shopId, write.productIds),
-            quickReplies: write.quickReplies ?? parsed.reply.quickReplies,
+            quickReplies: write.quickReplies ?? await customerQuickReplies(parsed.reply.quickReplies),
           };
           if (write.offer && mode === "customer") {
             reply = { ...reply, ...withOffer(reply.text) };
@@ -663,7 +807,7 @@ ${missingRetryNote(claims)}`;
         system,
         tools: toolList,
         messages,
-        output_config: { effort: "medium", format: { type: "json_schema", schema: MODEL_REPLY_JSON_SCHEMA } },
+        output_config: { effort: LOOP_EFFORT, format: { type: "json_schema", schema: MODEL_REPLY_JSON_SCHEMA } },
       },
       { onFirstToken: () => (firstTokenAt ??= now()) },
     );
@@ -743,6 +887,31 @@ ${missingRetryNote(claims)}`;
           else refusalFallback = true;
         }
       }
+      // PB-07: only a reply the model wrote is checked; an order summary, a size
+      // fallback, a pairing reply or the PB-17 refusal is written by the server.
+      const serverWrites = orderResult !== null || currentQuote !== null || orderIssue !== null
+        || sizeFallback || pairingState.called || isMatchingQuestion(input.history) || refusalFallback;
+      if (!discountBlocked && modelReply && !serverWrites) {
+        const unchecked = uncheckedNumbers(modelReply.text);
+        const retried = numberCheck !== undefined;
+        if (unchecked.length > 0 || retried) numberCheck = { failed: unchecked, retried };
+        if (unchecked.length > 0 && !retried) {
+          messages.push(
+            { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+            { role: "user", content: NUMBER_RETRY_NOTE },
+          );
+          continue;
+        }
+        numberBlocked = unchecked.length > 0;
+      }
+      if (!discountBlocked && !numberBlocked && modelReply && !serverWrites && needsVietnameseRewrite(modelReply.text)) {
+        vietnamese = { retried: true };
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: VIETNAMESE_RETRY_NOTE },
+        );
+        continue;
+      }
       break;
     }
 
@@ -756,9 +925,12 @@ ${missingRetryNote(claims)}`;
       : null;
     if (correction) handoffCorrected = true;
     // PB-31: a handoff for missing data, an unwritten policy or a size outside
-    // the chart becomes an offer; nothing in this batch runs.
+    // the chart becomes an offer; nothing in this batch runs. A handoff the PB-09
+    // guard refuses (the policy read this turn has text) is not an offer: it runs
+    // and comes back as a tool error, so the model answers from the policy (F3).
     const softHandoff = mode === "customer" && !correction
-      ? uses.find((u) => u.name === "handoff_to_staff" && isOfferReason((u.input as { reason?: unknown } | null)?.reason))
+      ? uses.find((u) => u.name === "handoff_to_staff" && isOfferReason((u.input as { reason?: unknown } | null)?.reason)
+        && !refusedHandoff(u.input, logs, input.history))
       : undefined;
     if (softHandoff) {
       const reason = (softHandoff.input as { reason: OfferReason }).reason;
@@ -775,7 +947,7 @@ ${missingRetryNote(claims)}`;
     calls += uses.length;
 
     const concurrency = uses.some((u) => isWriteTool(u.name)) ? 1 : deps.toolConcurrency;
-    const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number }> => {
+    const runs = await runBatch(uses, concurrency, async (u): Promise<{ run: ToolRun; ms: number; startMs: number; cached?: true }> => {
       const s0 = now();
       if (u === handoffUse && correction) {
         const run: ToolRun = {
@@ -824,7 +996,15 @@ ${missingRetryNote(claims)}`;
             orderIssue = { code: "quote_changed" };
             return { run: blockedOrderRun(u.input, "quote_changed"), ms: now() - s0, startMs: s0 - t0 };
           }
+          // Past every check: the create RPC runs now (R3 sends this turn's reply).
+          orderWritten = true;
         }
+      }
+      // PB-09 (F3, F4): a handoff the shop's own data rules out is refused before
+      // the tool runs; the model gets the reason back and answers instead.
+      if (u.name === "handoff_to_staff" && mode === "customer") {
+        const refused = refusedHandoff(u.input, logs, input.history);
+        if (refused) return { run: refusedHandoffRun(u.input, refused), ms: now() - s0, startMs: s0 - t0 };
       }
       // recommend_size gets the height and weight the shopper actually wrote
       // ("1m65", "58 ký"), parsed deterministically; see measurements.ts.
@@ -835,16 +1015,25 @@ ${missingRetryNote(claims)}`;
         : u.name === "recommend_size"
           ? normalizeSizeInput(toolInput, input.history)
           : toolInput;
+      if (u.name === "search_products") {
+        const refused = shortQueryRun(effectiveInput);
+        if (refused) return { run: refused, ms: now() - s0, startMs: s0 - t0 };
+      }
+      const hit = toolCache.get(u.name, effectiveInput);
+      if (hit) return { run: hit, ms: now() - s0, startMs: s0 - t0, cached: true };
       const run = await executeTool(u.name, effectiveInput, ctx, mode, deps.handlers, deps.db);
+      toolCache.set(u.name, effectiveInput, run);
       return { run, ms: now() - s0, startMs: s0 - t0 };
     });
 
     // runs are in tool_use order.
     uses.forEach((u, i) => {
-      const { run, ms, startMs } = runs[i];
-      if (run.log) logs.push(run.log);
+      const { run, ms, startMs, cached } = runs[i];
       toolMetrics.push({ name: u.name, startMs, ms, outcome: toolOutcome(run) });
       seen.push({ name: u.name, input: u.input });
+      // A cached hit adds no log and changes no state: the first run did both.
+      if (cached) return;
+      if (run.log) logs.push(run.log);
       if (u.name === "recommend_size" && !run.isError) {
         sizeStatus = sizeStatusOf(run.content);
         const out = run.log?.output as { status?: string; nearestSize?: string; offCm?: number; offKg?: number; belowChart?: boolean } | undefined;
@@ -894,9 +1083,15 @@ ${missingRetryNote(claims)}`;
 
   // PB-05: the product name matched nothing last turn (the AI asked one
   // clarifying question) and the shopper's answer matches nothing again. The
-  // engine hands off itself; the model's second guess is not sent.
+  // miss is decided by the search for the shopper's own words (productMissed),
+  // not by the broader queries the model also ran; a router turn logs no
+  // search, so the previous turn's postcheck carries it (store.ts). The engine
+  // hands off itself; the model's second guess is not sent.
+  productMiss = mode === "customer"
+    ? productMissed(logs, shopperTurnText(input.history), tc.product?.id ?? null)
+    : false;
   productMissedTwice = mode === "customer" && !handoff && !truncated && tc.previousTurnMissedProduct === true
-    && answersAiMessage(input.history) && searchMissed(logs);
+    && answersAiMessage(input.history) && productMiss;
   if (productMissedTwice) handoff = "misunderstood_twice";
   else if (discountBlocked) handoff = "postcheck_failed";
 
@@ -943,14 +1138,17 @@ ${missingRetryNote(claims)}`;
     const text = productMissedTwice
       ? PRODUCT_NOT_FOUND_HANDOFF_TEXT
       : discountBlocked ? DISCOUNT_HANDOFF_TEXT : handoffText(handoff, sizeStatus);
-    const products = (handoff === "postcheck_failed" && tc.product)
-      ? await deps.store.productCards(ctx.shopId, [tc.product.id])
-      : [];
+    const cardIds = handoff === "postcheck_failed" && tc.product ? [tc.product.id] : [];
+    const products = cardIds.length > 0 ? await deps.store.productCards(ctx.shopId, cardIds) : [];
     reply = { text, products, quickReplies: [] };
   } else if (handoff) {
     reply = { text: STAFF_DRAFT_GIVE_UP_TEXT, products: [], quickReplies: [] };
   } else if (refusalFallback) {
     reply = { text: REFUSAL_TEXT, products: [], quickReplies: [] };
+  } else if (numberBlocked) {
+    // PB-07: the numbers the shopper gets come from the database cards, not
+    // the model's text; the conversation stays with the AI.
+    reply = await numberCardReply(modelReply?.productIds ?? []);
   } else if (finalOrderResult?.status === "created") {
     reply = { text: orderCreatedText(), products: [], quickReplies: [] };
   } else if (finalOrderResult?.status === "out_of_stock") {
@@ -1022,12 +1220,8 @@ ${missingRetryNote(claims)}`;
     reply = {
       text: modelReply.text,
       // Cards come from the database for this shop only; foreign ids drop out.
-      products: await deps.store.productCards(
-        ctx.shopId,
-        // VIEWING_PRODUCT_REF is the product on screen; with none on screen it is dropped.
-        modelReply.productIds.flatMap((id) => (id !== VIEWING_PRODUCT_REF ? [id] : tc.product ? [tc.product.id] : [])),
-      ),
-      quickReplies: modelReply.quickReplies,
+      products: await deps.store.productCards(ctx.shopId, cardIdsOf(modelReply.productIds)),
+      quickReplies: await customerQuickReplies(modelReply.quickReplies),
     };
     // PB-31: the model offered staff itself (prompt rule). Recorded so a "yes"
     // next turn hands off; the reason follows what the turn looked up.
@@ -1037,9 +1231,12 @@ ${missingRetryNote(claims)}`;
     }
   }
   } // end of the LLM tool loop path
-  // Auto-resume: if the conversation was in needs_human and the AI produced an
-  // answer without handing off, move the conversation back to ai mode.
-  if (mode === "customer" && tc.conversation?.mode === "needs_human" && handoff === null && !truncated && route.path !== "guard") {
+  // Auto-resume (PB-14 AC2, D2): a conversation in needs_human goes back to the
+  // AI only when this turn answered from shop data without handing off; "ok cảm
+  // ơn" after a complaint stays in the staff queue. A turn the guard refused
+  // never resumes.
+  if (mode === "customer" && tc.conversation?.mode === "needs_human" && handoff === null && !truncated
+    && route.path !== "guard" && !numberBlocked && !discountBlocked && answeredFromData(logs)) {
     await deps.store.setAiMode?.(ctx);
   }
 
@@ -1057,6 +1254,11 @@ ${missingRetryNote(claims)}`;
     stockSizes: sizesInToolOutputs(logs.filter((l) => l.name === "get_stock").map((l) => l.output)),
     categories: () => (deps.store.catalog ? deps.store.catalog(ctx.shopId) : Promise.resolve([])),
   });
+  // PB-07: the shopper's budget or exclusions may have removed every card the
+  // number fallback sent; then the looked-up data is the text, never "see the card below".
+  if (reply.text === NUMBER_CARD_TEXT && reply.products.length === 0) {
+    reply = { ...reply, text: dataReplyText(logs, null) ?? FALLBACK_TEXT };
+  }
   const output = engineOutputSchema.parse({ reply, personalReplyNeeded });
   const latencyMs = now() - t0; // output is ready; the log write is not counted
 
@@ -1087,16 +1289,22 @@ ${missingRetryNote(claims)}`;
     console.error("engine: metrics sink failed", e);
   }
 
-  const turnLogged = (async () => {
+  const turnRow = (async () => {
     try {
-      const [row] = await Promise.all([deps.store.insertTurn({
+      return await deps.store.insertTurn({
         shop_id: ctx.shopId,
         conversation_id: ctx.conversationId,
         mode,
         latency_ms: latencyMs,
         tool_calls: logs as NonNullable<Json>,
-        ...(guardRefusedTurn ? { postcheck: { guardRefused: true } } : {}),
         handoff_reason: handoff,
+        postcheck: {
+          productMiss,
+          ...(guardRefusedTurn ? { guardRefused: true as const } : {}),
+          ...(numberCheck ? { numberCheck } : {}),
+          ...(vietnamese ? { vietnamese } : {}),
+          ...(deps.deliveryPending && mode === "customer" ? { pending: true as const } : {}),
+        } satisfies PostcheckLog,
         handoff_offer: handoff ? null : (offerMade as OfferReason | null),
         input_tokens: inputTokens,
         output_tokens: outputTokens,
@@ -1104,15 +1312,17 @@ ${missingRetryNote(claims)}`;
         model_calls: modelCalls.length,
         model: deps.modelName,
         prompt_version: PROMPT_VERSION,
-      }), sinkDone]);
-      return row;
+      });
     } catch (e) {
       console.error("engine: failed to write ai_turns", e);
       return null;
     }
   })();
+  const turnLogged = Promise.all([turnRow, sinkDone]).then(([row]) => row);
 
-  if (quotedOrderPresented && await turnLogged === null) {
+  // The summary is only confirmable once its quote is logged; the metrics sink
+  // (turnLogged) is not waited for.
+  if (quotedOrderPresented && await turnRow === null) {
     return {
       output: engineOutputSchema.parse({
         reply: { text: "Mình chưa lưu được báo giá lúc này. Bạn thử lại giúp mình nhé.", products: [], quickReplies: [] },
@@ -1120,7 +1330,9 @@ ${missingRetryNote(claims)}`;
       }),
       handoffReason: handoff,
       turnLogged,
+      turnRow,
+      orderWritten,
     };
   }
-  return { output, handoffReason: handoff, turnLogged };
+  return { output, handoffReason: handoff, turnLogged, turnRow, orderWritten };
 }
