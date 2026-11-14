@@ -55,8 +55,8 @@ describe("pickResults", () => {
 describe("scoreFloor", () => {
   it("uses the calibrated reranker floors (2026-11-13, CALIBRATION in the PB-34 spec)", () => {
     expect(scoreFloor("description", true)).toBe(0.47);
-    expect(scoreFloor("photo", true)).toBe(0.65);
-    expect(SCORE_FLOORS.reranked).toEqual({ description: 0.47, photo: 0.65 });
+    expect(scoreFloor("photo", true)).toBe(0.5);
+    expect(SCORE_FLOORS.reranked).toEqual({ description: 0.47, photo: 0.5 });
   });
 
   it("uses PB-30's cosine photo floor and trusts no cosine description score", () => {

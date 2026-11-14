@@ -12,12 +12,13 @@ import type { SemanticHit } from "./semantic-search";
 //   products scored 0.577-0.766 for their product (top-1 8/10, top-2 10/10);
 //   5 off-catalog queries topped at 0.453 and 3 fashion items the shop doesn't
 //   sell at 0.423. Floor = max off-catalog + 0.02 (plan Task 8 Step 5).
-// - reranked.photo: PB-30's PHOTO_SIMILAR_MIN.reranked ("similar", never exact).
+// - reranked.photo: PB-30's PHOTO_SIMILAR_MIN.reranked ("similar", never exact),
+//   0.5 since 2026-11-14 (was 0.65).
 // - cosine.photo: PB-30's cosine floor (a guess, not re-measured).
 // - cosine.description: never calibrated, so null: the route answers
 //   "unavailable" and the page keeps its instant filter (AC4).
 export const SCORE_FLOORS = {
-  reranked: { description: 0.47, photo: 0.65 },
+  reranked: { description: 0.47, photo: 0.5 },
   cosine: { description: null, photo: 0.55 },
 } as const;
 
