@@ -7,10 +7,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { Icon } from "@/components/ui/icon";
 import { TextArea } from "@/components/ui/text-area";
-import { hasBlank, type PolicyKind } from "@/contract";
+import { hasBlank, type MissingItemProposal, type PolicyKind } from "@/contract";
 import { POLICY_KINDS, POLICY_LABELS } from "@/lib/shop-data-validation";
 import { INITIAL_FORM_STATE, type FormAction, type FormState } from "../products/form-state";
 import {
+  analyzeMissingItemsAction,
   approveLearned,
   approveTopic,
   changeLearningMode,
@@ -306,5 +307,99 @@ export function RequestCard({ gap, canEdit }: { gap: GapView; canEdit: boolean }
       </div>
       {state.error && <ErrorMessage>{state.error}</ErrorMessage>}
     </form>
+  );
+}
+
+const formatPrice = (price: number) => `${new Intl.NumberFormat("vi-VN").format(price)}đ`;
+
+function MissingItemCard({ group, canEdit }: { group: MissingItemProposal; canEdit: boolean }) {
+  const [state, formAction, pending] = useActionState(dismissQuestions, INITIAL_FORM_STATE);
+  return (
+    <form action={formAction} className="ui-card flex flex-col gap-3 p-4">
+      <input type="hidden" name="gapIds" value={group.questionIds.join(",")} />
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <h3 className="font-semibold text-[#1c1a17]">{group.item}</h3>
+        <span className="rounded-full bg-[#f4f1ea] px-2.5 py-0.5 text-xs font-medium text-[#57534e]">
+          {group.conversationCount} khách hỏi
+        </span>
+      </div>
+      <ul className="space-y-1 text-sm text-[#57534e]">
+        {group.sampleQuestions.map((q, i) => (
+          <li key={i}>“{q}”</li>
+        ))}
+      </ul>
+      <div className="rounded-lg bg-[#faf8f4] p-3">
+        <p className="text-xs font-medium text-[#706d67]">Món gần giống trong shop</p>
+        {group.closestProducts.length === 0 ? (
+          <p className="mt-1 text-sm text-[#706d67]">Không có món gần giống</p>
+        ) : (
+          <ul className="mt-1.5 space-y-1 text-sm text-[#1c1a17]">
+            {group.closestProducts.map((p) => (
+              <li key={p.productId} className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-medium">{p.name}</span>
+                <span className="text-xs text-[#706d67]">
+                  {formatPrice(p.price)} · {p.stock > 0 ? `Còn ${p.stock}` : "Hết hàng"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {canEdit && (
+        <div className="flex items-center justify-end gap-2">
+          <Button type="submit" variant="secondary" loading={pending} loadingText="Đang lưu…">
+            Đã xem
+          </Button>
+        </div>
+      )}
+      {state.error && <ErrorMessage>{state.error}</ErrorMessage>}
+    </form>
+  );
+}
+
+/**
+ * PB-36: "Khách tìm món shop chưa có" section on /admin/ai-da-hoc.
+ * Both owner and staff can view and run "Phân tích"; only owner sees "Đã xem".
+ */
+export function MissingItemsSection({ requests, canEdit }: { requests: GapView[]; canEdit: boolean }) {
+  const [items, setItems] = useState<MissingItemProposal[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function handleAnalyze() {
+    setError(null);
+    startTransition(async () => {
+      const res = await analyzeMissingItemsAction();
+      if (res.ok) setItems(res.items);
+      else setError(res.error);
+    });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold text-[#1c1a17]">Khách tìm món shop chưa có</h2>
+          <p className="text-sm text-[#706d67]">Trong 7 ngày gần nhất. Chỉ để xem.</p>
+        </div>
+        {requests.length > 0 && (
+          <Button type="button" onClick={handleAnalyze} loading={pending} loadingText="Đang phân tích…">
+            Phân tích
+          </Button>
+        )}
+      </div>
+      {error && <ErrorMessage>{error}</ErrorMessage>}
+      {requests.length === 0 ? (
+        <EmptyState title="Chưa có món nào khách tìm mà shop chưa có" />
+      ) : items === null ? (
+        requests.map((gap) => <RequestCard key={gap.id} gap={gap} canEdit={canEdit} />)
+      ) : items.length === 0 ? (
+        <EmptyState title="Chưa có món nào được từ 2 khách trở lên hỏi" />
+      ) : (
+        items.map((group) => (
+          <MissingItemCard key={group.questionIds.join(",")} group={group} canEdit={canEdit} />
+        ))
+      )}
+    </div>
   );
 }

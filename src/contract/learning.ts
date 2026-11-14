@@ -65,11 +65,30 @@ export const gapTopicProposalSchema = z.object({
 export type GapReason = z.infer<typeof gapReasonSchema>;
 export type GapQuestion = z.infer<typeof gapQuestionSchema>;
 export type PolicySnapshot = z.infer<typeof policySnapshotSchema>;
+export const closestProductSchema = z.object({
+  productId: idSchema,
+  name: z.string().min(1),
+  price: z.number().nonnegative(),
+  stock: z.int().nonnegative(),
+});
+
+// PB-36: a group of requests for an item the shop doesn't sell, paired with up to
+// 3 closest catalog products (price & stock from the DB, never the model).
+export const missingItemProposalSchema = z.object({
+  item: z.string().min(1).max(80),
+  questionIds: z.array(idSchema).min(2),
+  conversationCount: z.int().min(2),
+  sampleQuestions: z.array(z.string()).min(1).max(3),
+  closestProducts: z.array(closestProductSchema).max(3),
+});
+
 export type LearnInput = z.infer<typeof learnInputSchema>;
 export type ReviewReason = z.infer<typeof reviewReasonSchema>;
 export type SkipReason = z.infer<typeof skipReasonSchema>;
 export type LearnResult = z.infer<typeof learnResultSchema>;
 export type GapTopicProposal = z.infer<typeof gapTopicProposalSchema>;
+export type ClosestProduct = z.infer<typeof closestProductSchema>;
+export type MissingItemProposal = z.infer<typeof missingItemProposalSchema>;
 
 // True while the text still holds a [...] blank: PB-35a keeps "Duyệt" disabled.
 export function hasBlank(text: string): boolean {

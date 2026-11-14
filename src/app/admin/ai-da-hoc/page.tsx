@@ -3,7 +3,7 @@ import { connection } from "next/server";
 import { EmptyState } from "@/components/ui/empty-state";
 import { requireStaff } from "@/lib/auth";
 import { getLearningPage } from "./data";
-import { LearnedCard, ModeSwitch, PendingCard, QuestionList, RequestCard } from "./learning-ui";
+import { LearnedCard, MissingItemsSection, ModeSwitch, PendingCard, QuestionList } from "./learning-ui";
 
 const TABS = [
   { id: "pending", label: "Chờ duyệt" },
@@ -90,16 +90,7 @@ export default async function LearningPage({ searchParams }: PageProps<"/admin/a
 
       {tab === "open" && <QuestionList questions={data.questions} canEdit={canEdit} />}
 
-      {tab === "requests" && (
-        <div className="flex flex-col gap-3">
-          <p className="text-sm text-[#706d67]">Khách tìm món shop chưa có, trong 7 ngày gần nhất. Chỉ để xem.</p>
-          {data.requests.length === 0 ? (
-            <EmptyState title="Chưa có món nào khách tìm mà shop chưa có" />
-          ) : (
-            data.requests.map((gap) => <RequestCard key={gap.id} gap={gap} canEdit={canEdit} />)
-          )}
-        </div>
-      )}
+      {tab === "requests" && <MissingItemsSection requests={data.requests} canEdit={canEdit} />}
     </>
   );
 }

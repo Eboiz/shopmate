@@ -2,11 +2,12 @@
 
 import { refresh } from "next/cache";
 import { z } from "zod";
-import { idSchema, policyKindSchema, type PolicyKind } from "@/contract";
+import { idSchema, policyKindSchema, type ClosestProduct, type MissingItemProposal, type PolicyKind } from "@/contract";
 import { requireStaff, type StaffProfile } from "@/lib/auth";
 import { NOT_ALLOWED, NOT_FOUND, SAVE_FAILED } from "@/lib/catalog-write-errors";
 import { createDefaultModel } from "@/lib/engine/anthropic-model";
-import { analyzeGaps } from "@/lib/learning";
+import { searchProducts } from "@/lib/engine/tools/search-products";
+import { analyzeGaps, analyzeMissingItems } from "@/lib/learning";
 import * as decide from "@/lib/learning/decide";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -149,5 +150,69 @@ export async function draftTopics(): Promise<DraftResult> {
   } catch (error) {
     console.error(error);
     return { ok: false, error: DRAFT_FAILED };
+  }
+}
+
+export type MissingItemsResult =
+  | { ok: true; items: MissingItemProposal[] }
+  | { ok: false; error: string };
+
+/**
+ * PB-36: groups open `product_not_found` requests from the last 7 days by item
+ * and pairs each group with up to 3 closest products from the shop's catalog.
+ * Accessible to both owner and staff (read-only insight).
+ */
+export async function analyzeMissingItemsAction(): Promise<MissingItemsResult> {
+  try {
+    const { shopId } = await requireStaff();
+    const db = await createClient();
+    const { data, error } = await db
+      .from("data_gaps")
+      .select("id, conversation_id, reason, question")
+      .eq("shop_id", shopId)
+      .eq("status", "open")
+      .eq("reason", "product_not_found")
+      .gte("created_at", gapWindowStart())
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(`data_gaps: ${error.message}`);
+    if (data.length === 0) return { ok: true, items: [] };
+
+    const searchCatalog = async (query: string) => {
+      const res = await searchProducts(
+        { query, limit: 3 },
+        { shopId, conversationId: null },
+        db,
+      );
+      if (res.products.length === 0) return { match: res.match, products: [] as ClosestProduct[] };
+      const ids = res.products.map((p) => p.productId);
+      const { data: variants, error: varErr } = await db
+        .from("variants")
+        .select("product_id, stock")
+        .eq("shop_id", shopId)
+        .in("product_id", ids);
+      if (varErr) throw new Error(`variants: ${varErr.message}`);
+      const stockByProduct = new Map<string, number>();
+      for (const v of variants ?? []) {
+        stockByProduct.set(v.product_id, (stockByProduct.get(v.product_id) ?? 0) + Math.max(0, v.stock));
+      }
+      return {
+        match: res.match,
+        products: res.products.map((p) => ({
+          productId: p.productId,
+          name: p.name,
+          price: p.price,
+          stock: stockByProduct.get(p.productId) ?? 0,
+        })),
+      };
+    };
+
+    const items = await analyzeMissingItems(
+      data.map((g) => ({ id: g.id, conversationId: g.conversation_id, reason: g.reason, question: g.question })),
+      { model: createDefaultModel(), searchCatalog },
+    );
+    return { ok: true, items };
+  } catch (error) {
+    console.error(error);
+    return { ok: false, error: "Chưa phân tích được, thử lại" };
   }
 }
