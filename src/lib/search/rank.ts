@@ -17,7 +17,7 @@ import type { SemanticHit } from "./semantic-search";
 // - cosine.description: never calibrated, so null: the route answers
 //   "unavailable" and the page keeps its instant filter (AC4).
 export const SCORE_FLOORS = {
-  reranked: { description: 0.47, photo: 0.65 },
+  reranked: { description: 0.47, photo: 0.3 },
   cosine: { description: null, photo: 0.55 },
 } as const;
 
