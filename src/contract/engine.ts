@@ -5,6 +5,8 @@ import { quickReplySchema, replySchema } from "./reply";
 export const historyMessageSchema = z.object({
   sender: messageSenderSchema,
   text: z.string(),
+  // PB-30: the shopper's photos sent with this message (chat-photos bucket paths).
+  photoPaths: z.array(z.string().min(1)).max(4).optional(),
 });
 
 const shared = {

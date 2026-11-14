@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryMessage } from "@/contract";
-import { toModelMessages } from "./messages";
+import { EARLIER_PHOTO_MARK, latestShopperPhotoPaths, PHOTO_ONLY_TEXT, toModelMessages } from "./messages";
 
 const m = (sender: HistoryMessage["sender"], text: string): HistoryMessage => ({ sender, text });
 
@@ -37,5 +37,40 @@ describe("toModelMessages", () => {
     for (const history of [[m("shopper", "a"), m("ai", "b")], [m("system", "x")], [m("shopper", "  ")]]) {
       expect(() => toModelMessages(history)).toThrow(expect.objectContaining({ code: "last_message_not_from_shopper" }));
     }
+  });
+});
+
+describe("PB-30 photos", () => {
+  const photo = (n: number) => ({ base64: `b${n}`, mediaType: "image/jpeg" as const });
+  const p = (text: string, photoPaths: string[]): HistoryMessage => ({ sender: "shopper", text, photoPaths });
+
+  it("puts image blocks before the text of the last user turn only", () => {
+    const out = toModelMessages([m("shopper", "chào"), m("ai", "Dạ"), p("mẫu này còn không?", ["s/c/1.jpg"])], [photo(1)]);
+    expect(out[0]).toEqual({ role: "user", content: "chào" });
+    expect(out[2]).toEqual({
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "b1" } },
+        { type: "text", text: "mẫu này còn không?" },
+      ],
+    });
+  });
+
+  it("a photo-only turn is not dropped: its text says so", () => {
+    const out = toModelMessages([p("", ["s/c/1.jpg"])], [photo(1)]);
+    expect(out).toEqual([{ role: "user", content: [expect.objectContaining({ type: "image" }), { type: "text", text: PHOTO_ONLY_TEXT }] }]);
+    expect(toModelMessages([p("", ["s/c/1.jpg"])])).toEqual([{ role: "user", content: PHOTO_ONLY_TEXT }]);
+  });
+
+  it("an earlier photo message gets a mark instead of its photo", () => {
+    const out = toModelMessages([p("", ["s/c/1.jpg"]), m("ai", "Dạ shop có mẫu này"), m("shopper", "size M còn không?")]);
+    expect(out[0]).toEqual({ role: "user", content: EARLIER_PHOTO_MARK });
+    expect(out[2]).toEqual({ role: "user", content: "size M còn không?" });
+  });
+
+  it("latestShopperPhotoPaths: the photos of the merged last burst, at most 4, none after an AI reply", () => {
+    const burst = [p("", ["a"]), m("ai", "x"), p("", ["b", "c"]), p("và mẫu này", ["d", "e", "f"])];
+    expect(latestShopperPhotoPaths(burst)).toEqual(["b", "c", "d", "e"]);
+    expect(latestShopperPhotoPaths([p("", ["a"]), m("ai", "x"), m("shopper", "còn không?")])).toEqual([]);
   });
 });

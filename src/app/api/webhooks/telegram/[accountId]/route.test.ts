@@ -97,7 +97,9 @@ describe("POST /api/webhooks/telegram/[accountId]", () => {
     await post(update({ photo: [{ file_id: "s" }, { file_id: "l" }] }, 1002));
     await runAfter();
     expect(texts).toEqual([["123:bot", "42", expect.stringContaining("Mây Boutique")]]);
-    expect(received.map((r) => r[1])).toEqual([{ externalId: "42", messageId: "1002", imageUrls: ["tg-file:l"] }]);
+    expect(received.map((r) => r[1])).toEqual([
+      { externalId: "42", messageId: "1002", text: "", photos: [expect.any(Function)] },
+    ]);
   });
 
   it("acknowledges updates it doesn't use (edits, groups) with 200 and does nothing", async () => {

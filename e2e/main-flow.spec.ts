@@ -77,7 +77,7 @@ test("shopper asks for a size, orders in the chat, staff confirm, stock goes dow
   const send = async (text: string) => {
     const before = await aiLabels.count();
     await chat.getByRole("textbox", { name: "Tin nhắn" }).fill(text);
-    await chat.getByRole("button", { name: "Gửi" }).click();
+    await chat.getByRole("button", { name: "Gửi", exact: true }).click();
     await expect(aiLabels).toHaveCount(before + 1, { timeout: 60_000 });
     return aiLabels.last().locator("xpath=following-sibling::div[1]").innerText();
   };

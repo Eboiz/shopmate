@@ -6,6 +6,7 @@ import {
   type EngineInput,
   type EngineOutput,
   type HandoffReason,
+  type PhotoInput,
   type Reply,
   type ToolCallLog,
   type ToolContext,
@@ -20,9 +21,9 @@ import { DISCOUNT_HANDOFF_TEXT, DISCOUNT_RETRY_NOTE, findUnbackedDiscount, polic
 import { ECHO_RETRY_NOTE, echoedShopperAmounts, REFUSAL_TEXT, shopperAsksForOffer } from "./refusal-guard";
 import { executeTool, type ToolRun } from "./execute-tool";
 import { refusedHandoff, type RefusedHandoff } from "./handoff-guard";
-import { toModelMessages } from "./messages";
+import { latestShopperPhotoPaths, toModelMessages } from "./messages";
 import { countDuplicateCalls, toolOutcome, type TurnDetail, type TurnMetrics } from "./metrics";
-import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
+import { FALLBACK_TEXT, FORMAT_RETRY_NOTE, MODEL_REPLY_JSON_SCHEMA, parseModelReply } from "./model-reply";
 import { asksForHuman, handoffCorrection, OFFER_DECLINED_TEXT, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_REASONS, offerAnswer, offerReply, offersStaff, sizeOfferText, type OfferReason } from "./handoff-offer";
 import { checkDescriptionCovers, checkPolicyCovers, decideTurn, jevFromEnv, type CatalogItem, type JevClient } from "./jev";
 import { checkShopperMessage, GUARD_REFUSAL_TEXT, type GuardResult } from "./input-guard";
@@ -409,7 +410,20 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // toolsForMode(mode) inside executeTool. The two must match (see tools/index.ts).
   const system = buildSystemPrompt({ mode, product: tc.product });
   const toolList = toolDefinitions(mode);
-  const messages = toModelMessages(input.history);
+  // PB-30: the photos of the shopper's latest turn, read once: Claude sees them
+  // and search_products can search by them (ctx.photos). A photo that can't be
+  // read is left out; the turn still runs on the text.
+  const photoPaths = mode === "customer" ? latestShopperPhotoPaths(input.history) : [];
+  let photos: PhotoInput[] = [];
+  if (photoPaths.length > 0 && deps.store.loadPhotos) {
+    try {
+      photos = await deps.store.loadPhotos(ctx.shopId, photoPaths);
+    } catch (e) {
+      console.error("engine: shopper photos could not be loaded", e);
+    }
+  }
+  if (photos.length > 0) ctx = { ...ctx, photos };
+  const messages = toModelMessages(input.history, photos);
   const detail: TurnDetail = { system: system.map((b) => b.text).join("\n\n"), calls: [] };
 
   const logs: ToolCallLog[] = [];
@@ -432,6 +446,8 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   // it was for, and whether the model already got its one retry.
   let sizeAdvice: { advice: SizeAdvice; productId: string } | null = null;
   let sizeRetried = false;
+  // The tool loop's final reply was plain text once and was sent back (FORMAT_RETRY_NOTE).
+  let formatRetried = false;
   let sizeFallback = false;
   // #9: recommend_size was refused for missing measurements (what is missing),
   // and the reply then failed the "no size without measurements" check twice.
@@ -577,7 +593,9 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
   }
 
   if (deps.jev && orderInProgress && !routed) route = { path: "llm_loop", fallbackReason: "order_in_progress" };
-  if (deps.jev && !orderInProgress && !routed) {
+  // PB-30: Jev reads text only; a turn with photos goes to the tool loop.
+  if (deps.jev && !orderInProgress && !routed && photoPaths.length > 0) route = { path: "llm_loop", fallbackReason: "photo" };
+  if (deps.jev && !orderInProgress && !routed && photoPaths.length === 0) {
     try {
       const catalog = await loadCatalog();
       const [decision, refused] = await Promise.all([
@@ -628,9 +646,10 @@ export async function runEngine(rawInput: EngineInput, partialDeps: Partial<Engi
 
   // PB-45: without Jev (or when it failed) a size the product or the shop doesn't
   // sell is still answered by the server, not by the tool loop. routeTurn does
-  // the same check with Jev's product.
+  // the same check with Jev's product. Not on a photo turn (PB-30): the size may
+  // be about the pictured item, which only the model can find.
   const jevSkipped = !deps.jev || route.fallbackReason === "jev_error";
-  if (!routed && jevSkipped && !orderInProgress && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
+  if (!routed && jevSkipped && !orderInProgress && photoPaths.length === 0 && deps.store.catalog && sizesNamedIn(lastText).length > 0 && !asksForHuman(lastText)) {
     const catalog = await deps.store.catalog(ctx.shopId);
     const product = catalog.find((p) => p.id === tc.product?.id) ?? productCoveringMessage(lastText, catalog);
     routed = await unsoldSizeTurn(
@@ -870,6 +889,17 @@ ${missingRetryNote(claims)}`;
     if (res.stop_reason !== "tool_use") {
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const parsed = parseModelReply(text);
+      // An answer written as plain text instead of the JSON object: ask once
+      // for the same answer as JSON; still unreadable, FALLBACK_TEXT is sent.
+      if (!parsed.ok && !formatRetried && text.trim() !== "") {
+        formatRetried = true;
+        console.warn(`engine: final reply is not the JSON object (${text.length} chars), asking once more`);
+        messages.push(
+          { role: "assistant", content: res.content as Anthropic.ContentBlockParam[] },
+          { role: "user", content: FORMAT_RETRY_NOTE },
+        );
+        continue;
+      }
       // sizeAdvice is set inside a callback; TS can't see it.
       const advice = (sizeAdvice as { advice: SizeAdvice } | null)?.advice;
       const otherSizes = () => sizesInToolOutputs(logs.filter((l) => l.name !== "recommend_size").map((l) => l.output));

@@ -1,4 +1,5 @@
-import { quickReplySchema, toolCallLogSchema, type ConversationMode, type HandoffReason, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { quickReplySchema, toolCallLogSchema, type ConversationMode, type HandoffReason, type PhotoInput, type ProductCard, type TablesInsert, type ToolContext } from "@/contract";
+import { loadPhotos } from "@/lib/chat/photo-store";
 import type { Gap } from "./data-gap";
 import type { CatalogItem } from "./jev";
 import { activeProductFacts, withFacts } from "./learned-facts";
@@ -65,6 +66,8 @@ export type EngineStore = {
   // router (product choice, size/color matching). Optional: without it the router
   // only knows the product on screen.
   catalog?(shopId: string): Promise<CatalogItem[]>;
+  // PB-30: the shopper's photos (chat-photos paths of this shop) as base64.
+  loadPhotos?(shopId: string, paths: string[]): Promise<PhotoInput[]>;
   // PB-31 AC12: up to 3 names of products the shop declared pairings for, as the
   // buttons under "phối cùng sản phẩm nào?". Only names that fit a quick reply.
   pairedProductNames?(shopId: string): Promise<string[]>;
@@ -230,6 +233,7 @@ export function createSupabaseStore(db: Db): EngineStore {
 
     setNeedsHuman: (ctx) => setNeedsHuman(db, ctx),
     setAiMode: (ctx, lastMessageAt) => setAiMode(db, ctx, lastMessageAt),
+    loadPhotos: (shopId, paths) => loadPhotos(db, shopId, paths),
     async resumeAiIfLatest(ctx, messageId) {
       if (ctx.conversationId === null) return false;
       const { data, error } = await db.rpc("engine_resume_ai", {

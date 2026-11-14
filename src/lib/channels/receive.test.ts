@@ -62,7 +62,12 @@ function query(table: string) {
 }
 const defaults = (table: string): Row => (table === "conversations" ? { mode: "ai" } : {});
 
-vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ from: query }) }));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({
+    from: query,
+    storage: { from: () => ({ remove: async (paths: string[]) => (removed.push(paths), { data: [], error: null }) }) },
+  }),
+}));
 
 const sent: { conversationId: string; reply: Reply; from: string }[] = [];
 let sendResult: (from: string) => { ok: true; messageId: string } | { ok: false; messageId: null; error: string };
@@ -95,10 +100,24 @@ const marks = () => markTurn.mock.calls.map((c) => [c[1], c[2], c[3]]);
 
 // PB-17: the limit itself is tested in src/lib/guard/rate-limit.test.ts; here only
 // that receive.ts asks it, and stops before the AI when it says no.
+// PB-30: photo storage is tested in src/lib/chat/photo-store.test.ts; here a
+// photo of 0 bytes stands for one that is not an accepted photo.
+const stored: string[] = [];
+const removed: string[][] = [];
+vi.mock("@/lib/chat/photo-store", () => ({
+  PHOTO_BUCKET: "chat-photos",
+  storeShopperPhoto: async (_db: unknown, a: { shopId: string; conversationId: string; bytes: Uint8Array }) => {
+    if (a.bytes.length === 0) return null;
+    const path = `${a.shopId}/${a.conversationId}/p${stored.length + 1}.jpg`;
+    stored.push(path);
+    return path;
+  },
+}));
+
 const rateLimited = vi.fn<(target: { shopId: string; conversationId: string }) => Promise<boolean>>();
 vi.mock("@/lib/guard/rate-limit", () => ({ replyIfRateLimited: (target: { shopId: string; conversationId: string }) => rateLimited(target) }));
 
-const { receiveChannelMessage, HANDOFF_TEXT, PHOTO_HANDOFF_TEXT } = await import("./receive");
+const { receiveChannelMessage, HANDOFF_TEXT, PHOTO_HANDOFF_TEXT, PHOTO_NOT_KEPT_TEXT } = await import("./receive");
 
 const account = { id: "acc-a", shopId: "shop-a", channel: "messenger" as const };
 const answer: Reply = { text: "Dạ size M vừa bạn ạ", products: [], quickReplies: ["Size M màu Be"] };
@@ -110,6 +129,8 @@ beforeEach(() => {
   tables = {};
   nextId = 1;
   sent.length = 0;
+  stored.length = 0;
+  removed.length = 0;
   sendResult = () => ({ ok: true, messageId: "m" });
   engine.mockReset().mockResolvedValue({ reply: answer, personalReplyNeeded: false });
   orderWritten = false;
@@ -244,13 +265,64 @@ describe("receiveChannelMessage", () => {
     expect(sent).toEqual([]);
   });
 
-  it("hands a photo to staff, keeping its link for the inbox, without calling the AI", async () => {
-    const photo = { externalId: "psid-1", messageId: "mid-1", imageUrls: ["https://x/1.jpg"] };
-    expect(await receiveChannelMessage(account, photo)).toBe("handed_off");
-    expect(shopperMessages()).toMatchObject([{ text: "[Khách gửi ảnh] https://x/1.jpg" }]);
+  const jpeg = () => vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 1]));
+  const notAPhoto = () => vi.fn(async () => new Uint8Array(0));
+
+  it("stores a photo message with its paths and sends text and photoPaths in history to the engine", async () => {
+    const photo = { externalId: "psid-1", messageId: "mid-1", text: "", photos: [jpeg()] };
+    expect(await receiveChannelMessage(account, photo)).toBe("answered");
+    const path = `shop-a/${conversation().id}/p1.jpg`;
+    expect(shopperMessages()).toMatchObject([{ text: "", photo_paths: [path] }]);
+    const [input] = engine.mock.calls[0] as unknown as [{ history: unknown[] }];
+    expect(input.history).toEqual([{ sender: "shopper", text: "", photoPaths: [path] }]);
+  });
+
+  it("photo plus text is one message row and one rate-limit count", async () => {
+    await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "mẫu này còn không?", photos: [jpeg(), jpeg()] });
+    expect(shopperMessages()).toHaveLength(1);
+    expect(shopperMessages()[0].photo_paths).toHaveLength(2);
+    expect(rateLimited).toHaveBeenCalledTimes(1);
+  });
+
+  it("duplicate channel message never loads its photos", async () => {
+    await receiveChannelMessage(account, text("mid-1"));
+    const source = jpeg();
+    expect(await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "", photos: [source] })).toBe("duplicate");
+    expect(source).not.toHaveBeenCalled();
+  });
+
+  it("a photo that fails to load or check is skipped; with no text and no valid photo the conversation goes to staff", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const failing = vi.fn(async (): Promise<Uint8Array> => Promise.reject(new Error("timeout")));
+    expect(await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "", photos: [failing, notAPhoto()] })).toBe("handed_off");
+    // Staff still see that a photo came, not an empty message.
+    expect(shopperMessages()).toMatchObject([{ text: PHOTO_NOT_KEPT_TEXT, photo_paths: [] }]);
     expect(engine).not.toHaveBeenCalled();
     expect(conversation().mode).toBe("needs_human");
     expect(sent.map((s) => [s.reply.text, s.from])).toEqual([[PHOTO_HANDOFF_TEXT, "system"]]);
+    warn.mockRestore();
+  });
+
+  it("a photo the channel only names (WhatsApp media id) is stored as a note for staff, and the conversation goes to staff", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const unavailable = async (): Promise<Uint8Array> => Promise.reject(new Error("not downloaded"));
+    expect(
+      await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "", photos: [unavailable], photoRefs: ["whatsapp-media:M1"] }),
+    ).toBe("handed_off");
+    expect(shopperMessages()).toMatchObject([{ text: `${PHOTO_NOT_KEPT_TEXT} whatsapp-media:M1`, photo_paths: [] }]);
+    expect(sent.map((s) => [s.reply.text, s.from])).toEqual([[PHOTO_HANDOFF_TEXT, "system"]]);
+    warn.mockRestore();
+  });
+
+  it("a bad photo with text: the text still reaches the AI", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "váy này còn không?", photos: [notAPhoto()] })).toBe("answered");
+    warn.mockRestore();
+  });
+
+  it("keeps at most 4 photos of one message", async () => {
+    await receiveChannelMessage(account, { externalId: "psid-1", messageId: "mid-1", text: "", photos: [1, 2, 3, 4, 5].map(() => jpeg()) });
+    expect(shopperMessages()[0].photo_paths).toHaveLength(4);
   });
 
   it("sends the engine's closing reply as a system message when the engine handed off in this turn", async () => {
@@ -295,7 +367,7 @@ describe("receiveChannelMessage", () => {
 
   it("does not hand a photo to staff when the shopper is over the rate limit", async () => {
     rateLimited.mockResolvedValue(true);
-    const photo = { externalId: "psid-1", messageId: "mid-1", imageUrls: ["https://x/1.jpg"] };
+    const photo = { externalId: "psid-1", messageId: "mid-1", text: "", photos: [vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 1]))] };
     expect(await receiveChannelMessage(account, photo)).toBe("rate_limited");
     expect(conversation().mode).toBe("ai");
   });
@@ -345,6 +417,13 @@ describe("receiveChannelMessage on web chat (PB-04)", () => {
     expect(engine).toHaveBeenCalledOnce();
     expect(await receiveChannelMessage(web, webText("c-2"))).toBe("answered");
     expect(shopperMessages()).toHaveLength(2);
+  });
+
+  it("a retried web message with a photo removes the photo it uploaded again", async () => {
+    const photo = () => ({ ...webText("c-1"), photos: [vi.fn(async () => new Uint8Array([0xff, 0xd8, 0xff, 1]))] });
+    await receiveChannelMessage(web, photo());
+    expect(await receiveChannelMessage(web, photo())).toBe("duplicate");
+    expect(removed).toEqual([[stored[1]]]);
   });
 
   it("stores but does not answer once staff took over", async () => {

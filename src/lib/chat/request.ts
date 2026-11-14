@@ -14,7 +14,8 @@ export const chatPostSchema = z.object({
   text: z
     .string({ error: "Tin nhắn không hợp lệ." })
     .trim()
-    .min(1, { error: "Vui lòng nhập tin nhắn." })
+    // May be empty when a photo is sent (PB-30); the route checks that one of
+    // the two is there.
     .max(MAX_MESSAGE_LENGTH, { error: `Tin nhắn tối đa ${MAX_MESSAGE_LENGTH} ký tự.` }),
   productId: idSchema.nullable().optional(),
   // A random id per message from the browser, reused when it retries the send.
@@ -25,6 +26,7 @@ export type ChatPost = z.infer<typeof chatPostSchema>;
 
 export const chatErrors = {
   shopNotFound: "Không tìm thấy cửa hàng.",
+  emptyMessage: "Vui lòng nhập tin nhắn.",
   invalidBody: "Tin nhắn không hợp lệ. Vui lòng thử lại.",
   productNotFound: "Sản phẩm này không còn trong cửa hàng. Vui lòng bỏ chọn và hỏi lại.",
   sendFailed: "Không gửi được tin nhắn. Vui lòng thử lại.",

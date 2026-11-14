@@ -669,6 +669,54 @@ describe("PB-45: sizes the shop doesn't sell, and every color in stock", () => {
   });
 });
 
+describe("runEngine with a shopper photo (PB-30)", () => {
+  const PATH = `${SHOP}/${CONV}/p1.jpg`;
+  const photo = { base64: "aGVsbG8=", mediaType: "image/jpeg" as const };
+
+  it("skips Jev, shows the photo to the model and gives search_products the photo in ctx", async () => {
+    const jev = jevSaying({});
+    const { store, handlers, model, metrics, run } = setup(jev, [
+      toolCalls(toolUse("search_products", { query: "váy suông màu be", photo: 1 })),
+      finalJson({ text: "Dạ đây là Váy suông linen ạ", productIds: [VAY], quickReplies: [] }),
+    ]);
+    const loadPhotos = vi.fn(async () => [photo]);
+    Object.assign(store, { loadPhotos });
+    await run(input("", { history: [{ sender: "shopper", text: "", photoPaths: [PATH] }] }));
+
+    // Only the input guard (PB-17) asks Jev; the router never sees a photo turn.
+    expect(jev.decide.mock.calls.filter(([r]) => "intent" in (r as JevRequest).questions)).toHaveLength(0);
+    expect(metrics[0].route).toEqual({ path: "llm_loop", fallbackReason: "photo" });
+    expect(loadPhotos).toHaveBeenCalledWith(SHOP, [PATH]);
+    const last = model.calls[0].messages.at(-1)!;
+    expect(last.content).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: photo.base64 } },
+      { type: "text", text: "(Khách gửi ảnh, không kèm lời nhắn)" },
+    ]);
+    const [, ctx] = handlers.search_products.mock.calls[0] as unknown as [unknown, { photos?: unknown[] }];
+    expect(ctx.photos).toEqual([photo]);
+  });
+
+  it("without Jev, a size asked about a photo goes to the model, not the size guard of the product on screen", async () => {
+    const { store, model, metrics, run } = setup(null, [
+      toolCalls(toolUse("search_products", { query: "áo sơ mi trắng", photo: 1 })),
+      finalJson({ text: "Dạ mẫu trong ảnh giống Áo sơ mi trắng, còn size XL ạ", productIds: [], quickReplies: [] }),
+    ]);
+    Object.assign(store, { loadPhotos: vi.fn(async () => [photo]) });
+    await run(input("size XL có không?", { history: [{ sender: "shopper", text: "size XL có không?", photoPaths: [PATH] }] }));
+    expect(metrics[0].route).not.toEqual({ path: "size_guard" });
+    expect(model.calls.length).toBeGreaterThan(0);
+  });
+
+  it("a photo that can't be loaded: the turn still runs on the text, without images", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { store, model, run } = setup(null, [finalJson({ text: "Dạ bạn gửi lại ảnh giúp mình nhé", productIds: [], quickReplies: [] })]);
+    Object.assign(store, { loadPhotos: vi.fn(async () => Promise.reject(new Error("gone"))) });
+    await run(input("mẫu này còn không?", { history: [{ sender: "shopper", text: "mẫu này còn không?", photoPaths: [PATH] }] }));
+    expect(model.calls[0].messages.at(-1)!.content).toBe("mẫu này còn không?");
+    error.mockRestore();
+  });
+});
+
 describe("runEngine input guard (one Jev call on the shopper's message)", () => {
   const flagged = (category: string, score = 0.95) => jevSaying({ [category]: { type: "noul", noul: score } });
   const quoteContext = {

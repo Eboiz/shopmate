@@ -47,11 +47,13 @@ test.describe("with the local database", () => {
     expect(await conversationOf("telegram", String(chat))).toBeNull();
   });
 
-  test("a photo goes to staff with a notice", async ({ request }) => {
+  // PB-30: the server downloads the photo; one it can't keep (here: getFile is
+  // refused) is stored as a note, never the Telegram file id (A10).
+  test("a photo that can't be downloaded goes to staff with a notice", async ({ request }) => {
     const chat = fakeChatId();
     await postTelegram(request, accountId, telegramUpdate(chat, { photo: [{ file_id: "small" }, { file_id: "large" }] }));
     const conversation = await waitForConversation("telegram", String(chat), (c) => c.mode === "needs_human");
-    expect(conversation.messages[0]).toEqual({ sender: "shopper", text: "[Khách gửi ảnh] tg-file:large" });
+    expect(conversation.messages[0]).toEqual({ sender: "shopper", text: "[Khách gửi ảnh, không lưu được ảnh]" });
   });
 
   test("stickers, edits, group chats and other bots store nothing", async ({ request }) => {

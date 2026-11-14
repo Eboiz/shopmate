@@ -21,7 +21,7 @@ import {
   type EngineDeps,
   type EngineResult,
 } from "./engine";
-import { FALLBACK_TEXT, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
+import { FALLBACK_TEXT, FORMAT_RETRY_NOTE, MODEL_REPLY_JSON_SCHEMA } from "./model-reply";
 import { OFFER_DECLINED_TEXT, OFFER_NO, OFFER_QUESTION, OFFER_QUICK_REPLIES, OFFER_YES } from "./handoff-offer";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
 import { POLICY_HAS_TEXT_ERROR } from "./handoff-guard";
@@ -2375,6 +2375,31 @@ describe("runEngine", () => {
       expect(JSON.stringify(system)).not.toContain(foreign);
     });
   });
+
+describe("final reply that is not the JSON object (gateway ignores output_config.format)", () => {
+  const plain = (text: string): ScriptedResponse => ({ stop_reason: "end_turn", content: [{ type: "text", text, citations: null }] });
+
+  it("asks once more for JSON and sends that answer", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { model, run } = setup([plain("Dạ shop có Đầm hoa nhí cổ vuông ạ."), reply("Dạ shop có Đầm hoa nhí cổ vuông ạ.", [], ["Xem bảng size"])]);
+    const result = await run(customerInput());
+    expect(result.output.reply.text).toBe("Dạ shop có Đầm hoa nhí cổ vuông ạ.");
+    // Not a garment name: #81's filterQuickReplies drops one the catalog lacks.
+    expect(result.output.reply.quickReplies).toEqual(["Xem bảng size"]);
+    expect(model.calls).toHaveLength(2);
+    expect(model.calls[1].messages.at(-1)).toEqual({ role: "user", content: FORMAT_RETRY_NOTE });
+    warn.mockRestore();
+  });
+
+  it("only once: still plain text sends FALLBACK_TEXT", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { model, run } = setup([plain("một"), plain("hai")]);
+    const result = await run(customerInput());
+    expect(result.output.reply.text).toBe(FALLBACK_TEXT);
+    expect(model.calls).toHaveLength(2);
+    warn.mockRestore();
+  });
+});
 });
 
 // Keep the ToolName import honest: every tool the fake handlers cover is a contract tool.

@@ -59,7 +59,7 @@ test("ask about a product, get a reply, keep the chat after a reload, see a staf
   // The first GET can be slow on `next dev` (the route compiles on first use).
   await expect(chat.getByText("Xin chào! Mình giúp gì cho bạn?")).toBeVisible({ timeout: 20_000 });
   await chat.getByRole("textbox", { name: "Tin nhắn" }).fill(question);
-  await chat.getByRole("button", { name: "Gửi" }).click();
+  await chat.getByRole("button", { name: "Gửi", exact: true }).click();
   await expect(chat.getByRole("status")).toContainText("Shop đang trả lời");
   await expect(chat.getByText(question)).toBeVisible();
   // A reply from the shop (AI answer or the handoff notice), then the indicator goes.

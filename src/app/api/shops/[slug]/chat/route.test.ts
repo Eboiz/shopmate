@@ -227,3 +227,52 @@ describe("POST /api/shops/[slug]/chat", () => {
     expect(response.cookies.get("shopmate_shopper")?.value).toMatch(ISSUED);
   });
 });
+
+describe("POST /api/shops/[slug]/chat with a photo (PB-30)", () => {
+  const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, ...new Array(60).fill(1)]);
+  const form = (fields: Record<string, string>, photo?: { bytes: Uint8Array; type: string }) => {
+    const data = new FormData();
+    for (const [k, v] of Object.entries(fields)) data.set(k, v);
+    if (photo) {
+      data.set("photo", new File([photo.bytes as BlobPart], "p.jpg", { type: photo.type }));
+    }
+    return POST(new NextRequest("https://shop.test/api/shops/may-boutique/chat", { method: "POST", body: data }), ctx());
+  };
+
+  it("a photo only is accepted and passed as one photo source", async () => {
+    const response = await form({ text: "", clientMessageId: "c-9" }, { bytes: JPEG, type: "image/jpeg" });
+    expect(response.status).toBe(200);
+    const incoming = receive.mock.calls[0][1] as { text: string; productId: null; photos: (() => Promise<Uint8Array>)[] };
+    expect(incoming).toMatchObject({ text: "", messageId: "c-9", productId: null });
+    expect(incoming.photos).toHaveLength(1);
+    expect(await incoming.photos[0]()).toEqual(JPEG);
+  });
+
+  it("a photo plus text is one message", async () => {
+    await form({ text: "mẫu này còn size M không?", productId: PRODUCT, clientMessageId: "c-10" }, { bytes: JPEG, type: "image/jpeg" });
+    expect(receive).toHaveBeenCalledOnce();
+    expect(receive.mock.calls[0][1]).toMatchObject({ text: "mẫu này còn size M không?", productId: PRODUCT });
+  });
+
+  it("refuses a GIF (by its bytes, whatever its declared type) with the type error", async () => {
+    const response = await form({ clientMessageId: "c-11" }, { bytes: new TextEncoder().encode("GIF89a......."), type: "image/jpeg" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Chỉ gửi được ảnh JPEG, PNG hoặc WebP." });
+    expect(receive).not.toHaveBeenCalled();
+  });
+
+  it("refuses a photo over 5 MB with the size error, before reading it", async () => {
+    const big = new Uint8Array(5 * 1024 * 1024 + 1);
+    big.set(JPEG);
+    const response = await form({ clientMessageId: "c-12" }, { bytes: big, type: "image/jpeg" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Ảnh tối đa 5 MB." });
+    expect(receive).not.toHaveBeenCalled();
+  });
+
+  it("no text and no photo is the empty-message error", async () => {
+    const response = await form({ text: "  ", clientMessageId: "c-13" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "Vui lòng nhập tin nhắn." });
+  });
+});

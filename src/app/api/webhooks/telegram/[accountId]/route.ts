@@ -1,4 +1,5 @@
 import { after, type NextRequest } from "next/server";
+import { telegramPhoto } from "@/lib/channels/photo-download";
 import { receiveChannelMessage } from "@/lib/channels/receive";
 import {
   parseTelegramUpdate,
@@ -69,7 +70,9 @@ async function handle(account: Account, event: TelegramEvent) {
       {
         externalId: event.chatId,
         messageId: event.updateId,
-        ...(event.type === "text" ? { text: event.text } : { imageUrls: [`tg-file:${event.fileId}`] }),
+        ...(event.type === "text"
+          ? { text: event.text }
+          : { text: event.caption, photos: [telegramPhoto(account.access_token, event.fileId)] }),
       },
       () => sendTelegramTyping(account.access_token, event.chatId),
     );
