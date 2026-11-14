@@ -95,7 +95,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   // The message being sent, shown straight away: POST only answers once the
   // whole AI turn is done, which can take several seconds. knownIds are the
   // messages already on screen, so the stored copy can replace this one.
-  const [outgoing, setOutgoing] = useState<{ text: string; knownIds: Set<string> } | null>(null);
+  // The message being sent, shown at once: its text and the preview of its photo.
+  const [outgoing, setOutgoing] = useState<{ text: string; photoUrl: string | null; knownIds: Set<string> } | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   // Whether new content should pull the log down: true while the shopper is
   // at (or near) the bottom, false once they scroll up to read older messages.
@@ -413,6 +414,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
   }
 
   async function addPhoto(file: File) {
+    // The photo being sent is shown in its bubble until the send ends; keep it.
+    if (sending) return;
     setPhotoError("");
     const prepared = await preparePhoto(file);
     if (!prepared.ok) {
@@ -451,9 +454,10 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       : crypto.randomUUID();
     pendingSend.current = { text: message, productId, photo: attached, clientMessageId };
     previousReplies.current = new Set(messages.filter((item) => item.sender !== "shopper").map((item) => item.id));
-    setOutgoing({ text: message, knownIds: new Set(messages.map((item) => item.id)) });
+    setOutgoing({ text: message, photoUrl: attached ? photo?.url ?? null : null, knownIds: new Set(messages.map((item) => item.id)) });
     setDraft("");
     let responseError = "";
+    let sent = false;
     try {
       let response: Response;
       if (attached) {
@@ -482,7 +486,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
         cartMessageRef.current = null;
         cart.clear();
       }
-      if (attached) removePhoto();
+      sent = true;
       // Only an `ai` conversation answers; with staff the poll shows the wait.
       if (mode === "ai") setAwaitingReply(true);
       await refresh();
@@ -494,6 +498,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
       await refresh();
     } finally {
       setOutgoing(null);
+      // Only now: the sending bubble showed the photo from this preview URL.
+      if (sent && attached) removePhoto();
       setSending(false);
       // Tapping Gửi or a suggestion moved focus off the field; put it back so
       // the next message can be typed straight away.
@@ -937,7 +943,15 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
                 {showOutgoing && outgoing && (
                   <div className="ml-8">
                     <p className="mb-1 text-xs text-[#706d67]">{senderLabel.shopper} · Đang gửi…</p>
-                    <div className="break-words rounded-xl rounded-br-sm bg-[#171717] p-3 text-sm leading-6 text-white opacity-80">{outgoing.text}</div>
+                    {outgoing.photoUrl && (
+                      <div className="mb-1 flex justify-end">
+                        {/* eslint-disable-next-line @next/next/no-img-element -- a local blob: URL */}
+                        <img src={outgoing.photoUrl} alt="Ảnh đang gửi" className="max-h-60 max-w-[240px] rounded-xl object-cover opacity-80" />
+                      </div>
+                    )}
+                    {outgoing.text && (
+                      <div className="break-words rounded-xl rounded-br-sm bg-[#171717] p-3 text-sm leading-6 text-white opacity-80">{outgoing.text}</div>
+                    )}
                   </div>
                 )}
               </div>
@@ -968,7 +982,8 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
             {error && <ErrorMessage className="mb-2">{error}</ErrorMessage>}
             {sendError && <ErrorMessage className="mb-2">{sendError}</ErrorMessage>}
             {photoError && <ErrorMessage className="mb-2">{photoError}</ErrorMessage>}
-            {photo && (
+            {/* While sending, the photo is in the sending bubble, not here. */}
+            {photo && !sending && (
               <div className="mb-2 flex items-center gap-2">
                 {/* eslint-disable-next-line @next/next/no-img-element -- a local blob: URL */}
                 <img src={photo.url} alt="Ảnh sắp gửi" className="size-16 rounded-lg object-cover" />
