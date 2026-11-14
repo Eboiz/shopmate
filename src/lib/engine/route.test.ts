@@ -102,7 +102,7 @@ describe("routeTurn", () => {
     expect(runTool).toHaveBeenCalledWith("get_stock", { productId: VAY, size: "M", color: "Be" });
     expect(out).toMatchObject({
       kind: "write",
-      facts: { available: true, price: 389000, inStock: [{ size: "M", color: "Be", stock: 7 }] },
+      facts: { conHang: true, price: 389000, bienTheConHang: [{ size: "M", color: "Be", tonKho: 7 }] },
       productIds: [VAY],
     });
   });
@@ -116,7 +116,7 @@ describe("routeTurn", () => {
     });
     const out = await run({ history: said("màu be size M còn không") });
     expect(runTool.mock.calls.map((c) => c[1])).toEqual([{ productId: VAY, size: "M", color: "Be" }, { productId: VAY }]);
-    expect(out).toMatchObject({ kind: "write", facts: { available: false, otherOptionsInStock: [{ size: "L", color: "Trắng", stock: 3 }] } });
+    expect(out).toMatchObject({ kind: "write", facts: { conHang: false, bienTheKhacConHang: [{ size: "L", color: "Trắng", tonKho: 3 }] } });
   });
 
   it("uses the product Jev picked from the catalog over the one on screen", async () => {
@@ -131,8 +131,19 @@ describe("routeTurn", () => {
     expect(first.runTool).not.toHaveBeenCalled();
     const second = setup();
     const out = await second.run({ viewing: null, decision: decision({ product: { kind: "none" }, askedToClarify: 0.9 }) });
-    expect(out).toEqual({ kind: "handoff", reason: "misunderstood_twice", sizeStatus: null, viaTool: true });
+    expect(out).toEqual({ kind: "handoff", reason: "misunderstood_twice", sizeStatus: null, viaTool: true, productMiss: true });
     expect(second.runTool).toHaveBeenCalledWith("handoff_to_staff", { reason: "misunderstood_twice" });
+  });
+
+  it("no-product clarifying write carries productMiss", async () => {
+    const { run } = setup();
+    const out = await run({ viewing: null, decision: decision({ product: { kind: "none" } }) });
+    expect(out).toMatchObject({ kind: "write", productIds: [], productMiss: true });
+    // The other no-product outcomes are not a search miss.
+    const pairing = await setup().run({ viewing: null, decision: decision({ intent: "pairing", product: { kind: "none" } }) });
+    expect(pairing).toEqual({ kind: "fixed", reply: { text: ASK_PAIRING_PRODUCT_TEXT, products: [], quickReplies: [] } });
+    const handoff = await setup().run({ viewing: null, decision: decision({ product: { kind: "none" }, askedToClarify: 0.9 }) });
+    expect(handoff).toMatchObject({ kind: "handoff", reason: "misunderstood_twice" });
   });
 
   it("size: asks only for what is missing, without a tool", async () => {
@@ -169,7 +180,7 @@ describe("routeTurn", () => {
     expect(out).toMatchObject({
       kind: "write",
       sizeAdvice: { size: "M" },
-      facts: { size: "M", price: 289000, inStock: [{ size: "M", color: "Trắng", stock: 4 }] },
+      facts: { size: "M", price: 289000, bienTheConHang: [{ size: "M", color: "Trắng", tonKho: 4 }] },
       productIds: [VAY],
     });
     expect((out as { task: string }).task).toContain("giá");
@@ -292,6 +303,14 @@ describe("routeTurn", () => {
     expect((out as { task: string }).task).toContain("Từ chối");
   });
 
+  it("discount ask that reads like an order is refused by the router, not sent to the loop", async () => {
+    const { run, runTool } = setup({ get_policy: { ok: true, output: { kind: "khuyen_mai", content: null } } });
+    const out = await run({ decision: decision({ intent: "order", confidence: 0.4, discountTrick: 0.99 }) });
+    expect(runTool.mock.calls.map((c) => c[0])).toEqual(["get_policy"]);
+    expect(out).toMatchObject({ kind: "write", facts: { promotion: null }, productIds: [] });
+    expect((out as { task: string }).task).toContain("Từ chối");
+  });
+
   it("complaint and asking for a person still hand off at once; staff gets personal", async () => {
     expect(await setup().run({ decision: decision({ intent: "complaint" }) })).toMatchObject({ kind: "handoff", reason: "complaint" });
     expect(await setup().run({ decision: decision({ intent: "human" }) })).toMatchObject({ kind: "handoff", reason: "asked_for_human" });
@@ -406,7 +425,7 @@ describe("routeTurn", () => {
       const out = await run({ history: said("mình cao 160cm nặng 50kg", "màu trắng size M còn không?") });
       expect(out).toMatchObject({
         kind: "write",
-        facts: { available: false, otherOptionsInStock: [{ size: "M", color: "Xanh rêu", stock: 5 }] },
+        facts: { conHang: false, bienTheKhacConHang: [{ size: "M", color: "Xanh rêu", tonKho: 5 }] },
         quickReplies: ["Size M Xanh rêu"],
       });
     });
@@ -458,10 +477,10 @@ describe("routeTurn", () => {
       kind: "write",
       quickReplies: ["Áo khoác", "Váy & đầm", STAFF_BUTTON],
     });
-    expect(await setup().run({ decision: decision({ intent: "unclear", askedToClarify: 0.8 }) })).toMatchObject({
-      kind: "handoff",
-      reason: "misunderstood_twice",
-    });
+    const twice = await setup().run({ decision: decision({ intent: "unclear", askedToClarify: 0.8 }) });
+    expect(twice).toMatchObject({ kind: "handoff", reason: "misunderstood_twice" });
+    // Gibberish twice is not a product miss: the generic handoff text stays.
+    expect(twice).not.toHaveProperty("productMiss");
     expect(await setup().run({ mode: "staff_draft", decision: decision({ intent: "unclear", askedToClarify: 0.8 }) })).toMatchObject({
       kind: "write",
     });
@@ -567,9 +586,9 @@ describe("routeTurn", () => {
       expect(await run({ catalog: shop, history: yes, decision: decision({ intent: "greeting" }) })).toEqual({ kind: "fallback", reason: "order" });
       expect(await run({ catalog: shop, history: said("Thảo 0912345678, Q1"), decision: decision({ intent: "order", product: blazer }) }))
         .toEqual({ kind: "fallback", reason: "order" });
-      // an order with a discount demand ("lấy 2 cái, bớt 50k"): the tool loop refuses it
+      // an order with a discount demand ("lấy 2 cái, bớt 50k"): the router refuses it (PB-09 AC3, F4)
       expect(await run({ catalog: shop, history: said("lấy 2 cái đen size S, bớt 50k nha"), decision: decision({ intent: "order", product: blazer, discountTrick: 0.9 }) }))
-        .toEqual({ kind: "fallback", reason: "order" });
+        .toMatchObject({ kind: "write", productIds: [], task: expect.stringContaining("Từ chối") });
       // no product known: the tool loop asks which one
       expect(await run({ viewing: null, history: said("lấy 1 cái"), decision: decision({ intent: "order", product: { kind: "none" } }) }))
         .toEqual({ kind: "fallback", reason: "order" });
@@ -737,7 +756,7 @@ describe("PB-45: sizes the shop doesn't sell, and every color in stock", () => {
       expect(runTool.mock.calls).toEqual([["get_stock", { productId: BLAZER, size: "S" }]]);
       expect(out).toMatchObject({
         kind: "write",
-        facts: { inStock: [{ size: "S", color: "Be", stock: 5 }, { size: "S", color: "Đen", stock: 8 }], colorsInStock: ["Be", "Đen"] },
+        facts: { bienTheConHang: [{ size: "S", color: "Be", tonKho: 5 }, { size: "S", color: "Đen", tonKho: 8 }], mauConHang: ["Be", "Đen"] },
         mustMention: ["Be", "Đen"],
         productIds: [BLAZER],
       });
