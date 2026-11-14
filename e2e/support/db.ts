@@ -31,8 +31,13 @@ export type StoredConversation = {
   messages: { sender: string; text: string }[];
 };
 
+// External-chat channels reachable through a webhook. Messenger and Telegram each
+// have their own webhook; Instagram (PB-23) and WhatsApp (PB-27) ride the shared
+// Meta webhook. "web" is deliberately excluded: it has no external chat id.
+type Channel = "messenger" | "telegram" | "instagram" | "whatsapp";
+
 // The shopper's conversation, or null when nothing was stored for them.
-export async function conversationOf(channel: "messenger" | "telegram", externalId: string): Promise<StoredConversation | null> {
+export async function conversationOf(channel: Channel, externalId: string): Promise<StoredConversation | null> {
   const { data, error } = await client()
     .from("shoppers")
     .select("shop_id, conversations(id, mode, messages(sender, text, created_at))")
@@ -50,7 +55,7 @@ export async function conversationOf(channel: "messenger" | "telegram", external
 // Webhooks answer 200 first and work in after(): wait until the shopper's
 // conversation reaches the expected state.
 export async function waitForConversation(
-  channel: "messenger" | "telegram",
+  channel: Channel,
   externalId: string,
   done: (c: StoredConversation) => boolean,
 ) {
@@ -127,7 +132,7 @@ export async function removeChannelAccount(accountId: string, shopId: string) {
 
 // The same external chat id can belong to two shops (one shopper each). The
 // single-row conversationOf() would error here, so read every shop's rows.
-export async function conversationsForExternalId(channel: "messenger" | "telegram", externalId: string) {
+export async function conversationsForExternalId(channel: Channel, externalId: string) {
   const { data, error } = await client()
     .from("shoppers")
     .select("shop_id, conversations(id, mode, messages(sender, text, created_at))")
