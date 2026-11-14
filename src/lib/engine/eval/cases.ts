@@ -143,6 +143,22 @@ export const evalCases: EvalCase[] = [
     handoff: "misunderstood_twice",
   },
   {
+    id: "product-not-found-twice-broadened",
+    description: "PB-05 AC3, second miss with the model's broadened search: still hands off to staff.",
+    shouldHandOff: true,
+    history: [
+      { sender: "shopper", text: UNKNOWN_ASK },
+      { sender: "ai", text: "Dạ shop chưa tìm thấy túi xách da. Bạn tìm túi kiểu nào, màu gì ạ?" },
+      { sender: "shopper", text: "loại túi xách da màu đen ấy" },
+    ],
+    previousTurn: [{ name: "search_products", input: { query: "túi xách da", limit: 5 }, output: { match: "none", products: [] } }],
+    expected: [
+      { tool: "search_products", required: true },
+      { tool: "handoff_to_staff", args: { reason: "misunderstood_twice" }, required: false },
+    ],
+    handoff: "misunderstood_twice",
+  },
+  {
     id: "size-advice",
     description: "Height and weight go to recommend_size as whole numbers.",
     shouldHandOff: false,

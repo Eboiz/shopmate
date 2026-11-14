@@ -131,7 +131,7 @@ describe("ruleSupported negation", () => {
 describe("mentionsProductData", () => {
   it.each(["Mẫu này còn 3 cái.", "Còn size S.", "1m60 50kg mặc size M.", "Váy hoa giá 350k.", "Váy hoa chất voan, màu đỏ.", "Áo này form rộng."])(
     "finds %s",
-    (rule) => expect(mentionsProductData(rule)).toBe(true),
+    (rule) => expect(mentionsProductData(rule, "policy")).toBe(true),
   );
   it.each([
     "Shop cho đổi size trong 7 ngày.",
@@ -145,7 +145,28 @@ describe("mentionsProductData", () => {
     "Shop giảm giá 50k cho đơn đầu.",
     "Đơn trên 10kg tính thêm phí ship.",
     "Nội thành quận 1 giao trong ngày.",
-  ])("leaves %s alone", (rule) => expect(mentionsProductData(rule)).toBe(false));
+  ])("leaves %s alone", (rule) => expect(mentionsProductData(rule, "policy")).toBe(false));
+});
+
+describe("mentionsProductData by target (review 14/11)", () => {
+  it.each(["Váy này vải linen.", "Áo khoác dài 70cm.", "Quần jean co giãn 4 chiều.", "Áo thun giặt tay nước lạnh.", "Váy hoa chất voan."])(
+    "a product detail %s stops a policy only",
+    (rule) => {
+      expect(mentionsProductData(rule, "policy")).toBe(true);
+      expect(mentionsProductData(rule, "product")).toBe(false);
+    },
+  );
+  it.each(["Mẫu này còn 3 cái.", "1m60 50kg mặc size M.", "Váy hoa giá 350k.", "Váy hoa 350k.", "Áo thun 199.000đ.", "Đầm maxi 1 triệu 2."])(
+    "stock, size or a price %s stops both targets",
+    (rule) => {
+      expect(mentionsProductData(rule, "policy")).toBe(true);
+      expect(mentionsProductData(rule, "product")).toBe(true);
+    },
+  );
+  it.each(["Áo giảm giá 50k cho khách mới.", "Váy đồng giá 99k.", "Áo sale 50k.", "Đơn từ 500k được freeship.", "Ship nội thành 30k.", "Vài ngày là tới."])(
+    "leaves %s to the amount and offer checks",
+    (rule) => expect(mentionsProductData(rule, "product")).toBe(false),
+  );
 });
 
 describe("mentionsAmount", () => {
@@ -171,7 +192,7 @@ describe("Codex review 14/11", () => {
   });
   it.each(["Còn hàng.", "50kg mặc vừa.", "Size 3XL mặc vừa.", "Size XXXL mặc vừa.", "Chất liệu cotton.", "Màu xanh.", "Size\tM mặc vừa.", "Váy  hoa giá 350k."])(
     "finds product data in %s",
-    (rule) => expect(mentionsProductData(rule)).toBe(true),
+    (rule) => expect(mentionsProductData(rule, "policy")).toBe(true),
   );
   it.each([
     "Quận này giao trong ngày.",
@@ -183,7 +204,7 @@ describe("Codex review 14/11", () => {
     "Áo giảm giá 50k cho khách mới.",
     "Váy đồng giá 99k.",
     "Shop đổi trả khi lỗi chất liệu.",
-  ])("leaves the policy %s alone", (rule) => expect(mentionsProductData(rule)).toBe(false));
+  ])("leaves the policy %s alone", (rule) => expect(mentionsProductData(rule, "policy")).toBe(false));
   it("finds money written in words", () => {
     expect(mentionsAmount("Phí ship ba mươi nghìn đồng.")).toBe(true);
     expect(mentionsAmount("Phí ship hai chục ngàn.")).toBe(true);

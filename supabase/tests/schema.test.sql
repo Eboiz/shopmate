@@ -14,7 +14,9 @@ select set_eq(
         -- PB-04: web chat limit per client IP and shop (server only).
         'web_chat_hits',
         -- PB-35a: questions the AI couldn't answer, and what it learned.
-        'data_gaps', 'learned_facts'],
+        'data_gaps', 'learned_facts',
+        -- PB-11 follow-up: confirmed quotes replaced by a re-quote (server only).
+        'superseded_quotes'],
   'the contract has exactly these tables'
 );
 

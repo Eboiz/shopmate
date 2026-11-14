@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { productCardSchema } from "@/contract";
 import type { Json } from "@/contract/database.types";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseStore } from "./store";
+import { createSupabaseStore, markTurn } from "./store";
 import { FX, seedTwoShops } from "./test/two-shops";
 
 const db = createAdminClient();
@@ -17,7 +17,7 @@ describe("createSupabaseStore", () => {
       expect(
         await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: FX.a.vay01 }),
       ).toEqual({
-        conversation: { shopId: FX.a.shop, mode: "ai" },
+        conversation: { shopId: FX.a.shop, mode: "ai", lastMessageAt: expect.any(String) },
         // PB-31: the description comes along for the tool-loop prompt (the fixture has none)
         product: { id: FX.a.vay01, name: "Váy suông linen", description: null },
         previousTurnMissedProduct: false,
@@ -39,7 +39,7 @@ describe("createSupabaseStore", () => {
       });
       try {
         const own = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
-        expect(own.previousQuote).toEqual({ items, quote });
+        expect(own.previousQuote).toEqual({ items, quote, quoteId: id });
         const other = await store.loadTurnContext({ conversationId: FX.b.conversation, shopId: null, productId: null });
         expect(other.previousQuote).toBeNull();
       } finally {
@@ -47,9 +47,32 @@ describe("createSupabaseStore", () => {
       }
     });
 
+    it("drops the previous quote when this turn already wrote an order with it", async () => {
+      const items = [{ variantId: FX.a.vay01MBe, quantity: 1 }];
+      const quote = { lines: [{
+        variantId: FX.a.vay01MBe, productId: FX.a.vay01, name: "Váy suông linen",
+        size: "M", color: "be", quantity: 1, unitPrice: 350000, lineTotal: 350000,
+      }], total: 350000 };
+      const id = await store.insertTurn({
+        shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1,
+        tool_calls: [
+          { name: "quote_order", input: { items }, output: quote },
+          { name: "create_draft_order", input: { items, customerName: "Thảo", customerPhone: "0912345678", customerAddress: "Q1" },
+            output: { status: "created", orderId: FX.a.vay01, total: 350000 } },
+        ],
+      });
+      try {
+        // The quote was used: a late replay must not mint a new key from this row.
+        const used = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
+        expect(used.previousQuote).toBeNull();
+      } finally {
+        await db.from("ai_turns").delete().eq("id", id);
+      }
+    });
+
     it("says whether the conversation's latest AI turn searched and found nothing (PB-05)", async () => {
-      const turn = (tool_calls: Json[], handoff_reason: "misunderstood_twice" | null = null) =>
-        store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls, handoff_reason });
+      const turn = (tool_calls: Json[], handoff_reason: "misunderstood_twice" | null = null, postcheck?: Json) =>
+        store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls, handoff_reason, postcheck });
       const missed = () =>
         store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null }).then((tc) => tc.previousTurnMissedProduct);
       const emptySearch = { name: "search_products", input: { query: "áo khoác da", limit: 5 }, output: { products: [] } };
@@ -65,6 +88,54 @@ describe("createSupabaseStore", () => {
       expect(await missed()).toBe(false);
       await turn([]);
       expect(await missed()).toBe(false);
+      // postcheck.productMiss wins over the tool_calls shape: a router clarifying
+      // turn logs no search but missed; a logged false overrides an empty search.
+      await turn([], null, { productMiss: true });
+      expect(await missed()).toBe(true);
+      await turn([emptySearch], null, { productMiss: false });
+      expect(await missed()).toBe(false);
+    });
+
+    it("skips pending and superseded turns (R3): the last turn the shopper saw decides", async () => {
+      const ids: string[] = [];
+      const turn = async (fields: { handoff_offer?: "size_out_of_range" | null; postcheck?: Json }) => {
+        const id = await store.insertTurn({ shop_id: FX.a.shop, conversation_id: FX.a.conversation, mode: "customer", latency_ms: 1, tool_calls: [], ...fields });
+        ids.push(id);
+        return id;
+      };
+      const offer = () =>
+        store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null }).then((tc) => tc.previousHandoffOffer);
+      const postcheck = async (id: string) => (await db.from("ai_turns").select("postcheck").eq("id", id).single()).data?.postcheck;
+      try {
+        // A delivered turn (no pending flag) with an offer the shopper saw.
+        await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false } });
+        expect(await offer()).toBe("size_out_of_range");
+        // A newer channel turn, still pending: its state is not read yet.
+        const late = await turn({ handoff_offer: null, postcheck: { productMiss: false, numberCheck: { failed: [], retried: true }, pending: true } });
+        expect(await offer()).toBe("size_out_of_range");
+        // Delivered: it decides now, and the mark keeps the other fields.
+        await markTurn(db, FX.a.shop, late, "delivered");
+        expect(await offer()).toBeNull();
+        expect(await postcheck(late)).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
+        // A pending turn with an offer that is then superseded never decides.
+        const unseen = await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false, pending: true } });
+        await markTurn(db, FX.a.shop, unseen, "superseded");
+        expect(await offer()).toBeNull();
+        expect(await postcheck(unseen)).toEqual({ productMiss: false, superseded: true });
+        // More skipped rows than any fixed window still leave the delivered turn readable.
+        await turn({ handoff_offer: "size_out_of_range", postcheck: { productMiss: false } });
+        for (let i = 0; i < 6; i++) await turn({ handoff_offer: null, postcheck: { productMiss: false, pending: true } });
+        expect(await offer()).toBe("size_out_of_range");
+        // Another shop's id is never marked.
+        const other = await store.insertTurn({ shop_id: FX.b.shop, conversation_id: FX.b.conversation, mode: "customer", latency_ms: 1, tool_calls: [], postcheck: { pending: true } });
+        ids.push(other);
+        const error = vi.spyOn(console, "error").mockImplementation(() => {});
+        await markTurn(db, FX.a.shop, other, "delivered");
+        error.mockRestore();
+        expect(await postcheck(other)).toEqual({ pending: true });
+      } finally {
+        await db.from("ai_turns").delete().in("id", ids);
+      }
     });
 
     it("returns nulls for an unknown conversation", async () => {
@@ -78,7 +149,7 @@ describe("createSupabaseStore", () => {
       await db.from("conversations").update({ mode: "staff" }).eq("id", FX.a.conversation);
       try {
         const tc = await store.loadTurnContext({ conversationId: FX.a.conversation, shopId: null, productId: null });
-        expect(tc.conversation).toEqual({ shopId: FX.a.shop, mode: "staff" });
+        expect(tc.conversation).toEqual({ shopId: FX.a.shop, mode: "staff", lastMessageAt: expect.any(String) });
       } finally {
         await db.from("conversations").update({ mode: "ai" }).eq("id", FX.a.conversation);
       }

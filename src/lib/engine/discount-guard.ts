@@ -70,7 +70,8 @@ function negated(clause: string, at: number, length: number): boolean {
 
 // An offer made in one clause. sentenceNumbers: every number of its sentence,
 // which holds the offer's conditions ("Đơn từ 500k, shop miễn phí ship").
-type Offer = { clause: string; kinds: string[]; numbers: string[]; sentenceNumbers: string[] };
+// sentence: the whole sentence (folded), for the condition markers below.
+type Offer = { clause: string; kinds: string[]; numbers: string[]; sentenceNumbers: string[]; sentence: string };
 
 // The offers a text makes, clause by clause.
 // - reply (strict, fails closed): an offer word with a number, percent or amount
@@ -99,7 +100,7 @@ function offersIn(text: string, strict: boolean, deferToStaff = true): Offer[] {
           return [];
         }
         if (deferToStaff && numbers.length === 0 && DEFERS_TO_STAFF.test(clause)) return [];
-        return [{ clause, kinds: [...new Set(matches.map((m) => m.kind))], numbers, sentenceNumbers }];
+        return [{ clause, kinds: [...new Set(matches.map((m) => m.kind))], numbers, sentenceNumbers, sentence }];
       });
     });
 }
@@ -109,6 +110,47 @@ function offersIn(text: string, strict: boolean, deferToStaff = true): Offer[] {
 // A rule has no staff to defer to: "Nhân viên tặng quà" is an offer.
 export function mentionsOffer(text: string): boolean {
   return offersIn(text, true, false).length > 0;
+}
+
+// Condition markers per sentence (folded text): who the offer is for, and the
+// comparator before an amount. Kinds and numbers alone miss a widened condition
+// ("đơn đầu tiên" -> "mọi đơn hàng") or an inverted one ("từ 500.000đ" ->
+// "dưới 500.000đ").
+const FIRST_SCOPE = /\bdau tien\b|\blan dau\b|\blan mua dau\b|\bmua lan dau\b|\bkhach moi\b|\bdon dau\b/;
+const ALL_SCOPE = /\bmoi (don|khach)\b|\btat ca\b|\btoan bo\b|\bbat ky\b|\b(?:cac )?(?:don|lan) sau\b/;
+const MIN_MARKER = /\b(tu|tren|toi thieu|it nhat)\s+\d/;
+const MAX_MARKER = /\b(duoi|toi da|khong qua|nho hon|chua toi|khong toi|it hon)\s+\d|\d\s*(?:d|dong|k|vnd)?\s+tro xuong\b/;
+
+// The reply sentence keeps the policy sentence's conditions; fails closed like
+// the rest of the guard: an unmatched stricter marker flags the offer.
+// A clause that states the offer does NOT apply ("đơn dưới 500.000đ tính phí
+// bình thường", "các đơn sau áp dụng giá niêm yết") explains the policy's limit;
+// its markers are not a new promise.
+// A clause counts as "no offer" only when, with its negated offer phrases
+// ("không có giảm giá") blanked out, no offer word is left: "không còn áp dụng
+// giá niêm yết nên cũng được giảm 10%" still promises a cut and stays checked.
+const NO_OFFER = /\b(?:tinh phi|phi binh thuong|gia niem yet|nguyen gia|(?:khong|ko|chua)\s+(?:con\s+)?ap dung)\b/;
+const NEGATED_OFFER = /\b(?:khong|ko|chua)\s+(?:(?:duoc|co|con|he|ap dung)\s+)*(?:giam(?:\s+gia)?|mien phi|uu dai|khuyen mai)\b/g;
+const statesNoOffer = (clause: string) => {
+  const rest = clause.replace(NEGATED_OFFER, " ");
+  return (rest !== clause || NO_OFFER.test(clause))
+    && !Object.values(OFFER_KINDS).some((re) => new RegExp(re.source).test(rest));
+};
+
+function conditionsKept(fullReplySentence: string, backerSentence: string): boolean {
+  const replySentence = fullReplySentence.split(CLAUSE_BREAK).filter((c) => !statesNoOffer(c ?? "")).join(", ");
+  // "every order" cannot be backed by a first-order-only policy offer...
+  if (ALL_SCOPE.test(replySentence) && FIRST_SCOPE.test(backerSentence)) return false;
+  // ...nor by dropping the "first order" condition entirely.
+  if (FIRST_SCOPE.test(backerSentence) && !FIRST_SCOPE.test(replySentence)) return false;
+  // "under 500.000đ" is not the policy's "from 500.000đ", nor the reverse.
+  const replyMin = MIN_MARKER.test(replySentence);
+  const replyMax = MAX_MARKER.test(replySentence);
+  // A reply naming both ("từ 500k ..., dưới 500k cũng ...") still adds the
+  // opposite side, so it is flagged too.
+  if (replyMax && MIN_MARKER.test(backerSentence) && !MAX_MARKER.test(backerSentence)) return false;
+  if (replyMin && MAX_MARKER.test(backerSentence) && !MIN_MARKER.test(backerSentence)) return false;
+  return true;
 }
 
 // The first clause of the reply (folded) that offers a discount, gift or free
@@ -123,7 +165,12 @@ export function findUnbackedDiscount(reply: string, policyTexts: string[]): stri
   const backing = policyTexts.flatMap((t) => offersIn(t, false));
   for (const offer of offersIn(reply, true)) {
     const backers = offer.kinds.map((k) =>
-      backing.filter((b) => b.kinds.includes(k) && b.sentenceNumbers.every((n) => offer.sentenceNumbers.includes(n))),
+      backing.filter(
+        (b) =>
+          b.kinds.includes(k) &&
+          b.sentenceNumbers.every((n) => offer.sentenceNumbers.includes(n)) &&
+          conditionsKept(offer.sentence, b.sentence),
+      ),
     );
     const allowed = new Set(backers.flat().flatMap((b) => b.sentenceNumbers));
     // Sentence level: a changed condition may sit in the next clause

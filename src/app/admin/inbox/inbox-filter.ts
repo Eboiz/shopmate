@@ -9,10 +9,22 @@ export const channelLabels: Record<Channel, string> = {
   whatsapp: "WhatsApp",
 };
 
+// Placeholder names some channels fill in for a shopper who gave none. They
+// say nothing about who is writing, so they count as no name at all.
+// Compared after foldSearch (case and diacritics dropped, trimmed).
+export const GENERIC_CUSTOMER_NAMES = ["khach hang", "khach", "customer", "guest"];
+
+// True when the shopper gave no name we can show: empty, or only a placeholder.
+export function isUnnamed(displayName: string | null | undefined) {
+  const folded = foldSearch(displayName ?? "").replace(/\s+/g, " ");
+  return !folded || GENERIC_CUSTOMER_NAMES.includes(folded);
+}
+
 // A shopper who never gave a name still needs a label staff can tell apart
 // from the next one: "Khách Messenger #3F2A" instead of a row of "Khách hàng".
 export function customerLabel(displayName: string | null | undefined, channel: Channel, conversationId: string) {
-  return displayName?.trim() || `Khách ${channelLabels[channel]} #${conversationId.slice(0, 4).toUpperCase()}`;
+  if (displayName && !isUnnamed(displayName)) return displayName.trim();
+  return `Khách ${channelLabels[channel]} #${conversationId.slice(0, 4).toUpperCase()}`;
 }
 
 export type ModeFilter = "all" | ConversationMode;

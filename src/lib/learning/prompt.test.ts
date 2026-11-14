@@ -17,6 +17,7 @@ describe("learning prompt", () => {
 
   it("marks a policy the shop has not written", () => {
     const msg = buildLearnUserMessage({
+      target: "policy",
       question: "Kiểm hàng được không?",
       staffReply: "Dạ có ạ",
       policies: [

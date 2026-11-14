@@ -67,6 +67,9 @@ export async function learnFromStaffMessage(db: Db, msg: StaffMessage, learn: Le
     const kinds = [...new Set([...policies.data.map((p) => p.kind), ...facts.data.flatMap((f) => (f.policy_kind ? [f.policy_kind] : []))])];
 
     const result = await learn({
+      // A question about a product learns that product's details; any other a
+      // policy, which may hold no product details (PB-35b checks).
+      target: gap.product_id ? "product" : "policy",
       question: gap.question,
       staffReply: msg.text,
       shopperName,

@@ -24,6 +24,7 @@ const POLICIES: LearnInput["policies"] = [
 ];
 
 const pair = (question: string, staffReply: string, shopperName?: string): LearnInput => ({
+  target: "policy",
   question,
   staffReply,
   policies: POLICIES,

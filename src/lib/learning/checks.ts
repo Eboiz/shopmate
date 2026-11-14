@@ -1,6 +1,6 @@
 // PB-35b: the checks code makes on what the model proposes to learn. The model
 // only proposes; these decide. Pure: no IO.
-import { hasBlank } from "@/contract";
+import { hasBlank, type LearnTarget } from "@/contract";
 import { mentionsOffer } from "@/lib/engine/discount-guard";
 import { fold } from "@/lib/engine/text";
 
@@ -136,16 +136,19 @@ export function ruleSupported(rule: string, evidence: string, staffReply: string
 }
 
 // Facts only the catalog tools may state (prompt: price, stock and size come
-// from tools): stock, a size or a body measurement, a product's price or
-// details. Matched on folded text with comparable numbers, so the words are
-// picked to avoid their unaccented twins ("đảm bảo", "đẹp", "chất lượng",
-// "quận"). A general policy ("đổi size trong 7 ngày", "hết hàng thì hoàn tiền",
-// "còn nguyên form", "đơn trên 20kg", "ship có giá 30k") doesn't match; its
-// amounts are left to mentionsAmount.
+// from tools): stock, a size or a body measurement, a product's price. Matched
+// on folded text with comparable numbers, so the words are picked to avoid
+// their unaccented twins ("đảm bảo", "đẹp", "chất lượng", "quận"). A general
+// policy ("đổi size trong 7 ngày", "hết hàng thì hoàn tiền", "còn nguyên form",
+// "đơn trên 20kg", "ship có giá 30k") doesn't match; its amounts are left to
+// mentionsAmount.
 const SIZE = "(?:\\d?x{0,3}l|xs|s|m|\\d{1,2})";
 const COLOR = "(?:den|trang|do|xanh|vang|hong|tim|nau|be|kem|xam)";
 const PRODUCT = "(?:ao|vay|dam(?! bao)|quan|chan vay|set|giay|tui|mau|san pham)";
-const PRODUCT_DATA = new RegExp(
+// A word between a product and its price that makes the amount an offer or a
+// threshold: "áo giảm giá 50k", "váy đồng giá 99k", "áo sale 50k", "đơn từ 500k".
+const NOT_PRICE = "(?:giam|dong|sale|tang|tu|tren|duoi|qua|freeship|ship)";
+const PRODUCT_FACTS = new RegExp(
   [
     // Stock: "còn hàng", "còn 3 cái", "chỉ còn 1", "còn size S", "hết màu đen".
     "\\bcon hang\\b",
@@ -161,24 +164,41 @@ const PRODUCT_DATA = new RegExp(
     "(?<!(?:tren|duoi|qua|toi da|hon) )\\b\\d{2,3} ?(?:kg|ky|ki|can)\\b",
     "\\b(?:cao|eo|nguc|mong) \\d{2,3}\\b",
     "\\bvong [1-3] \\d{2,3}\\b",
-    // A product's price: "váy hoa giá 350k", "giá bán 199000"; not "áo giảm
-    // giá 50k" or "đồng giá" (offers, checked as such).
+    // A product's price: "váy hoa giá 350k", "giá bán 199000", and without the
+    // word "giá": "váy hoa 350k", "áo thun 199.000đ"; not "áo giảm giá 50k" or
+    // "đồng giá" (offers, checked as such).
     `\\b${PRODUCT}\\b(?: \\S+){0,3} (?:co )?(?<!giam |dong )gia (?:la |chi |con |ban |goc |sale )?\\d`,
     "\\bgia (?:ban|goc|niem yet) \\d",
-    // A product's details: "váy hoa chất voan", "chất liệu cotton", "màu xanh",
-    // "áo này form rộng".
+    `\\b${PRODUCT}\\b(?: (?!${NOT_PRICE}\\b)\\S+){0,3} (?:\\d{4,}|\\d+ ?(?:d|dong|vnd|nghin|ngan|trieu|tr))\\b`,
+  ].join("|"),
+);
+
+// A product's details, which a product's own entry may learn (#86) but a shop
+// policy never holds: "váy hoa chất voan", "chất liệu cotton", "vải linen",
+// "màu xanh", "áo này form rộng", "áo khoác dài 70cm", "co giãn 4 chiều",
+// "giặt tay".
+const PRODUCT_DETAILS = new RegExp(
+  [
     "(?<!loi )\\bchat lieu\\b",
     `\\bmau ${COLOR}\\b`,
     `\\b(?:ao|vay|dam(?! bao)|mau|san pham) (?:nay|do|kia)\\b`,
     `\\b${PRODUCT}\\b(?: \\S+){0,3} (?:chat(?! luong)(?: vai)?|lam bang|form (?:rong|om|suong|chuan|nho|to)|dang (?:rong|om|suong|ngan|dai))\\b`,
+    "\\bvai (?:linen|lanh|cotton|kate|kaki|jean|denim|thun|lua|voan|chiffon|nhung|len|tuyet mua|lon|dui|poly|polyester|spandex|umi|tencel|cat han|day)\\b",
+    "\\b(?:dai|rong|ngang|ong|vai|tay) \\d{1,3} ?cm\\b",
+    "\\bco gian\\b",
+    "\\bcach giat\\b",
+    "\\bgiat (?:tay|may|kho|bang)\\b",
   ].join("|"),
 );
 
 // Folded, comparable numbers, single spaces: "Size\tM" is "size m".
 const flat = (text: string) => prepare(text).replace(/\s+/g, " ");
 
-export function mentionsProductData(rule: string): boolean {
-  return PRODUCT_DATA.test(flat(rule));
+// Stock, a size or measurement and a product's price are always the catalog's;
+// a product's details only stop a rule learned for a policy (target "policy").
+export function mentionsProductData(rule: string, target: LearnTarget): boolean {
+  const text = flat(rule);
+  return PRODUCT_FACTS.test(text) || (target === "policy" && PRODUCT_DETAILS.test(text));
 }
 
 // A money amount: "30k", "25.000đ", "20 nghìn", "ba mươi nghìn đồng", "1 triệu",

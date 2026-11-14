@@ -3,7 +3,7 @@ begin;
 -- Ids differ from the integration fixture (src/lib/engine/test/two-shops.ts), so
 -- this file runs while that fixture is in the local database.
 create extension if not exists pgtap with schema extensions;
-select plan(21);
+select plan(32);
 -- Check deferrable foreign keys at each statement, as an autocommit write would.
 set constraints all immediate;
 
@@ -45,29 +45,67 @@ select is_empty(
 );
 
 -- engine_create_draft_order
+select hasnt_function('public', 'engine_create_draft_order',
+  array['uuid', 'uuid', 'jsonb', 'text', 'text', 'text'],
+  'the 6-argument engine_create_draft_order (no replay key, no price check) is gone');
 select function_privs_are('public', 'engine_create_draft_order',
-  array['uuid', 'uuid', 'jsonb', 'text', 'text', 'text'], 'anon', array[]::text[],
+  array['uuid', 'uuid', 'jsonb', 'text', 'text', 'text', 'text', 'jsonb'], 'anon', array[]::text[],
   'anon cannot run engine_create_draft_order');
 select function_privs_are('public', 'engine_create_draft_order',
-  array['uuid', 'uuid', 'jsonb', 'text', 'text', 'text'], 'authenticated', array[]::text[],
+  array['uuid', 'uuid', 'jsonb', 'text', 'text', 'text', 'text', 'jsonb'], 'authenticated', array[]::text[],
   'authenticated cannot run engine_create_draft_order');
+select function_privs_are('public', 'engine_resume_ai', array['uuid', 'uuid', 'uuid'], 'anon', array[]::text[],
+  'anon cannot run engine_resume_ai');
+select function_privs_are('public', 'engine_resume_ai', array['uuid', 'uuid', 'uuid'], 'authenticated', array[]::text[],
+  'authenticated cannot run engine_resume_ai');
+select function_privs_are('public', 'engine_order_for_quote', array['uuid', 'uuid', 'text', 'boolean'], 'anon', array[]::text[],
+  'anon cannot run engine_order_for_quote');
+select function_privs_are('public', 'engine_order_for_quote', array['uuid', 'uuid', 'text', 'boolean'], 'authenticated', array[]::text[],
+  'authenticated cannot run engine_order_for_quote');
 select throws_ok(
   $$select public.engine_create_draft_order('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031',
-    '[{"variantId": "bb000000-0000-4000-8000-000000000021", "quantity": 1}]', 'Thảo', '0912345678', 'Q1')$$,
+    '[{"variantId": "bb000000-0000-4000-8000-000000000021", "quantity": 1}]', 'Thảo', '0912345678', 'Q1', 'pgtap-q1', '[{"variantId": "aa000000-0000-4000-8000-000000000021", "unitPrice": 350000}]')$$,
   'P0001', 'variant_not_found', 'another shop''s variant is refused'
 );
 select throws_ok(
   $$select public.engine_create_draft_order('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031',
     '[{"variantId": "aa000000-0000-4000-8000-000000000021", "quantity": 1},
-      {"variantId": "bb000000-0000-4000-8000-000000000021", "quantity": 1}]', 'Thảo', '0912345678', 'Q1')$$,
+      {"variantId": "bb000000-0000-4000-8000-000000000021", "quantity": 1}]', 'Thảo', '0912345678', 'Q1', 'pgtap-q2', '[{"variantId": "aa000000-0000-4000-8000-000000000021", "unitPrice": 350000}]')$$,
   'P0001', 'variant_not_found', 'a list ending with another shop''s variant is refused'
+);
+select throws_ok(
+  $$select public.engine_create_draft_order('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031',
+    '[{"variantId": "aa000000-0000-4000-8000-000000000021", "quantity": 1}]', 'Thảo', '0912345678', 'Q1', null, null)$$,
+  'P0001', 'quote_required', 'an order without a confirmed quote key is refused'
 );
 select is((select count(*) from public.orders where shop_id in ('aa000000-0000-4000-8000-000000000001', 'bb000000-0000-4000-8000-000000000001')), 0::bigint, 'a refused order writes no orders row');
 select is((select count(*) from public.order_items where shop_id in ('aa000000-0000-4000-8000-000000000001', 'bb000000-0000-4000-8000-000000000001')), 0::bigint, 'a refused order writes no order_items row');
 select is(
   public.engine_create_draft_order('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031',
-    '[{"variantId": "aa000000-0000-4000-8000-000000000021", "quantity": 2}]', 'Thảo', '0912345678', 'Q1') ->> 'status',
+    '[{"variantId": "aa000000-0000-4000-8000-000000000021", "quantity": 2}]', 'Thảo', '0912345678', 'Q1', 'pgtap-q3', '[{"variantId": "aa000000-0000-4000-8000-000000000021", "unitPrice": 350000}]') ->> 'status',
   'created', 'a valid order is created'
+);
+select is(
+  public.engine_order_for_quote('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031', 'pgtap-q3', false) ->> 'status',
+  'created', 'the order written from a quote key is found by that key'
+);
+select is(
+  public.engine_order_for_quote('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031', 'pgtap-none', false),
+  null, 'an unused quote key has no order'
+);
+select is(
+  public.engine_order_for_quote('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031', 'pgtap-old', true),
+  null, 'superseding an unused quote key finds no order'
+);
+select is(
+  public.engine_create_draft_order('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031',
+    '[{"variantId": "aa000000-0000-4000-8000-000000000021", "quantity": 1}]', 'Thảo', '0912345678', 'Q1', 'pgtap-old',
+    '[{"variantId": "aa000000-0000-4000-8000-000000000021", "unitPrice": 350000}]') ->> 'status',
+  'price_changed', 'a superseded quote is never written'
+);
+select is(
+  public.engine_order_for_quote('aa000000-0000-4000-8000-000000000001', 'aa000000-0000-4000-8000-000000000031', 'pgtap-q3', true) ->> 'status',
+  'created', 'superseding a quote that already became an order returns that order'
 );
 select results_eq(
   $$select o.status::text, o.total, (select stock from public.variants where id = 'aa000000-0000-4000-8000-000000000021')

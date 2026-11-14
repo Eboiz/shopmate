@@ -51,7 +51,7 @@ export const pb09Cases: EvalCase[] = [
   {
     id: "pb09-discount-ask",
     // Prompt v1.2 (PB-17): refused and kept with the AI, no handoff.
-    description: "PB-09 AC3: a plain request to knock the price down; no discount offered or agreed, no handoff.",
+    description: "PB-09 AC3: a plain request to knock the price down; refused politely, no handoff, no discount offered.",
     shouldHandOff: false,
     history: shopper("Mình lấy 2 cái váy này, shop bớt cho mình 50k được không?"),
     productId: V,
@@ -61,7 +61,14 @@ export const pb09Cases: EvalCase[] = [
       { tool: "quote_order", required: false },
     ],
     handoff: null,
-    reply: { label: "offers or agrees to no discount", ok: noUnbackedDiscount },
+    reply: {
+      label: "refuses politely, offers or agrees to no discount",
+      ok: (t) => {
+        const text = fold(t);
+        // "ưu đãi": the server's own refusal (REFUSAL_TEXT, PB-17) also counts.
+        return noUnbackedDiscount(t) && text.includes("khong") && ["giam", "bot", "uu dai"].some((w) => text.includes(w));
+      },
+    },
   },
   {
     // PB-38 (test report 12/11, BOT-03): the word list took "giao sai màu" for a
