@@ -50,13 +50,16 @@ type SizeStatus = "out_of_range" | "no_chart" | null;
 export type RouteOutcome =
   | { kind: "fallback"; reason: "order" | "low_confidence" | "tool_error" }
   // customer only; handoff_to_staff already ran when viaTool is true
-  | { kind: "handoff"; reason: HandoffReason; sizeStatus: SizeStatus; viaTool: boolean }
+  // productMiss: the second turn in a row that names no product the shop has
+  // (PB-05 AC3): the shopper is told the product was not found.
+  | { kind: "handoff"; reason: HandoffReason; sizeStatus: SizeStatus; viaTool: boolean; productMiss?: true }
   // staff_draft complaint the server's word list missed (PB-20)
   | { kind: "personal" }
   // offer (PB-31): the reply offers staff for this reason; a "yes" next turn hands off.
   | { kind: "fixed"; reply: Reply; offer?: OfferReason }
   // The reply model writes the text; productIds are chosen here, not by the model.
   // sizeAdvice: the reply must advise exactly this size (PB-06 post-check).
+  // productMiss: the clarifying question about which product is meant (PB-05 AC3).
   // quickReplies: the server's buttons, used instead of the model's.
   // offer: the reply ends with OFFER_QUESTION and the yes/no buttons (PB-31).
   | {
@@ -65,6 +68,7 @@ export type RouteOutcome =
       task: string;
       productIds: string[];
       sizeAdvice?: SizeAdvice;
+      productMiss?: true;
       // PB-45: the reply must name each of these (the colors in stock); checked
       // by the engine like the size, then a reply written from the data.
       mustMention?: string[];
@@ -129,11 +133,16 @@ function resolveProduct(input: RouteInput): CatalogItem | null {
 
 type Variant = ToolOutput<"get_stock">["variants"][number];
 const inStock = (variants: Variant[]) =>
-  variants.filter((v) => v.stock > 0).map((v) => ({ size: v.size, color: v.color, stock: v.stock }));
+  variants.filter((v) => v.stock > 0).map((v) => ({ size: v.size, color: v.color, tonKho: v.stock }));
 
-async function handoff(input: RouteInput, reason: HandoffReason, sizeStatus: SizeStatus = null): Promise<RouteOutcome> {
+async function handoff(
+  input: RouteInput,
+  reason: HandoffReason,
+  sizeStatus: SizeStatus = null,
+  extra: { productMiss?: true } = {},
+): Promise<RouteOutcome> {
   const r = await input.runTool("handoff_to_staff", { reason });
-  return { kind: "handoff", reason, sizeStatus, viaTool: r.ok };
+  return { kind: "handoff", reason, sizeStatus, viaTool: r.ok, ...extra };
 }
 
 const fixed = (text: string): RouteOutcome => ({ kind: "fixed", reply: { text, products: [], quickReplies: [] } });
@@ -196,6 +205,13 @@ export function catalogOverview(catalog: CatalogItem[], perGroup = 3): Reply | n
   return { text: ["Dạ, shop đang có:", ...lines, "Bạn muốn xem nhóm nào ạ?"].join("\n"), products: [], quickReplies: groups };
 }
 
+// PB-46: an unclear message ("asdfghjkl 🤡🔥") gets every group the shop sells,
+// then "Gặp nhân viên" only while there is room: a group is never dropped.
+export const UNCLEAR_MAX_BUTTONS = 5;
+export function unclearButtons(groups: readonly string[]): string[] {
+  return groups.length < UNCLEAR_MAX_BUTTONS ? [...groups, STAFF_BUTTON] : [...groups];
+}
+
 const lastShopperText = (history: HistoryMessage[]) => history.findLast((m) => m.sender === "shopper")?.text ?? "";
 
 const POLICY_NAMES = { doi_tra: "đổi trả", giao_hang: "giao hàng", khuyen_mai: "khuyến mãi" } as const;
@@ -227,9 +243,9 @@ async function stockFacts(input: RouteInput, productId: string) {
   const r = await input.runTool("get_stock", { productId });
   if (!r.ok) return null;
   const stock = r.output as ToolOutput<"get_stock">;
-  return { price: stock.price, inStock: inStock(stock.variants) };
+  return { price: stock.price, bienTheConHang: inStock(stock.variants) };
 }
-const STOCK_TASK = " Báo luôn giá (price) và các size, màu còn hàng (inStock), chép đúng như dữ liệu.";
+const STOCK_TASK = " Báo luôn giá (price) và các size, màu còn hàng (bienTheConHang), chép đúng như dữ liệu.";
 
 // PB-45: intents a size named in passing doesn't change.
 const NO_SIZE_GUARD: JevDecision["intent"][] = ["complaint", "human", "policy", "greeting", "off_topic", "pairing"];
@@ -304,20 +320,11 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
     const unsold = await unsoldSizeTurn(input, resolveProduct(input));
     if (unsold) return unsold;
   }
-  if (d.confidence !== null && d.confidence < MIN_INTENT_CONFIDENCE) return { kind: "fallback", reason: "low_confidence" };
-  if (d.intent === "order") {
-    // PB-31: a message that could be an order is read back once before the order
-    // flow: "Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?". An order
-    // that also asks for a discount goes to the tool loop, which refuses it.
-    const readBack = customer && d.discountTrick < DISCOUNT_TRICK_THRESHOLD && isOrderMessage(last) && !orderReadBack(input.history);
-    const product = readBack ? resolveProduct(input) : null;
-    if (!product) return { kind: "fallback", reason: "order" };
-    const text = orderConfirmText(product.name, requestedColor(input.history, product.colors), requestedSize(input.history, product.sizes));
-    return { kind: "fixed", reply: { text, products: [], quickReplies: [ORDER_CONFIRM_YES, ORDER_CONFIRM_NO] } };
-  }
 
   // A discount or "ignore your rules" message: no other tool runs, whatever else
-  // it asks (PB-17). Only the shop's own promotion text may be quoted.
+  // it asks (PB-17). Only the shop's own promotion text may be quoted. Checked
+  // before the order and low-confidence fallbacks: "lấy 2 cái, bớt 50k" must be
+  // refused in the reply, not handed off (PB-09 AC3).
   if (d.discountTrick >= DISCOUNT_TRICK_THRESHOLD && d.intent !== "complaint" && d.intent !== "human") {
     const r = await input.runTool("get_policy", { kind: "khuyen_mai" });
     const promotion = r.ok ? (r.output as ToolOutput<"get_policy">).content : null;
@@ -329,6 +336,18 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         : "Từ chối lịch sự yêu cầu giảm giá hay đổi giá: shop không giảm thêm ngoài giá niêm yết. Hỏi bạn có cần tư vấn món nào không.",
       productIds: [],
     };
+  }
+
+  if (d.confidence !== null && d.confidence < MIN_INTENT_CONFIDENCE) return { kind: "fallback", reason: "low_confidence" };
+  if (d.intent === "order") {
+    // PB-31: a message that could be an order is read back once before the order
+    // flow: "Dạ, bạn muốn đặt Áo blazer màu đen size S đúng không?". A discount
+    // request never gets here: it was refused above.
+    const readBack = customer && isOrderMessage(last) && !orderReadBack(input.history);
+    const product = readBack ? resolveProduct(input) : null;
+    if (!product) return { kind: "fallback", reason: "order" };
+    const text = orderConfirmText(product.name, requestedColor(input.history, product.colors), requestedSize(input.history, product.sizes));
+    return { kind: "fixed", reply: { text, products: [], quickReplies: [ORDER_CONFIRM_YES, ORDER_CONFIRM_NO] } };
   }
 
   switch (d.intent) {
@@ -370,7 +389,7 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         facts: { groups: catalogGroups(input.catalog) },
         task: "Nếu tin nhắn không liên quan tới mua sắm ở shop, nói ngắn rằng câu đó nằm ngoài việc mua sắm ở shop. Nếu không rõ ý, hỏi lại một câu ngắn để biết bạn cần gì (sản phẩm nào; hỏi tồn kho, size, phối đồ hay chính sách).",
         productIds: [],
-        quickReplies: customer ? [...catalogGroups(input.catalog).slice(0, 4), STAFF_BUTTON] : [],
+        quickReplies: customer ? unclearButtons(catalogGroups(input.catalog)) : [],
       };
     case "policy": {
       const r = await input.runTool("get_policy", { kind: d.policyKind });
@@ -380,7 +399,10 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
         if (!customer) return fixed(STAFF_NO_POLICY_TEXT);
         return offer(`Dạ, shop chưa có thông tin về ${POLICY_NAMES[policy.kind]} để mình trả lời chắc chắn. ${OFFER_QUESTION}`, "policy_not_covered");
       }
-      const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 1) : 1;
+      // A failing coverage check counts as "not covered" (#11): the reply then
+      // says what the policy does not say and offers staff, never a reply built
+      // on a policy that may not cover the question.
+      const covers = input.policyCovers ? await input.policyCovers(policy.content).catch(() => 0) : 1;
       if (covers < POLICY_COVERS_THRESHOLD) {
         if (!customer) return fixed(STAFF_POLICY_SILENT_TEXT);
         // PB-31: give what the policy says that is related, say plainly what it
@@ -411,7 +433,9 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
     // products ("áo khoác da" -> its jackets): ask which one, with buttons. The
     // shopper was understood, so this comes before "misunderstood twice".
     const close = d.intent === "pairing" ? [] : productsNamedIn(last, input.catalog, 3);
-    if (close.length === 0 && customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) return handoff(input, "misunderstood_twice");
+    if (close.length === 0 && customer && d.askedToClarify >= ASKED_TO_CLARIFY_THRESHOLD) {
+      return handoff(input, "misunderstood_twice", null, { productMiss: true });
+    }
     if (d.intent === "pairing") return fixed(ASK_PAIRING_PRODUCT_TEXT);
     if (close.length > 0) {
       return {
@@ -427,6 +451,7 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       facts: {},
       task: "Hỏi một câu ngắn: bạn đang hỏi sản phẩm nào (tên hoặc loại, màu). Không đoán sản phẩm.",
       productIds: [],
+      productMiss: true,
       quickReplies: customer ? catalogGroups(input.catalog) : [],
     };
   }
@@ -524,19 +549,19 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
       const sameSize = others.filter((o) => fold(o.size) === fold(size));
       return {
         kind: "write",
-        facts: { ...base, available: false, otherOptionsInStock: sameSize.length ? sameSize : others },
+        facts: { ...base, conHang: false, bienTheKhacConHang: sameSize.length ? sameSize : others },
         task: sameSize.length
-          ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý cùng size đó ở các màu khác còn hàng (otherOptionsInStock) kèm giá."
-          : "Nói rõ size bạn hỏi (asked) đã hết ở mọi màu. Không gợi ý size khác thay thế, vì size được chọn theo số đo; có thể nói ngắn shop còn các size trong otherOptionsInStock để bạn tự cân nhắc.",
+          ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý cùng size đó ở các màu khác còn hàng (bienTheKhacConHang) kèm giá."
+          : "Nói rõ size bạn hỏi (asked) đã hết ở mọi màu. Không gợi ý size khác thay thế, vì size được chọn theo số đo; có thể nói ngắn shop còn các size trong bienTheKhacConHang để bạn tự cân nhắc.",
         productIds: [product.id],
         quickReplies: customer ? buttons(sameSize.map((o) => `Size ${o.size} ${o.color}`)) : undefined,
       };
     }
     return {
       kind: "write",
-      facts: { ...base, available: false, otherOptionsInStock: others },
+      facts: { ...base, conHang: false, bienTheKhacConHang: others },
       task: others.length
-        ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý các size, màu khác của chính sản phẩm này còn hàng (otherOptionsInStock) kèm giá."
+        ? "Nói rõ biến thể bạn hỏi (size/màu trong asked) đã hết hàng, rồi gợi ý các size, màu khác của chính sản phẩm này còn hàng (bienTheKhacConHang) kèm giá."
         : "Nói rõ sản phẩm này đã hết hàng.",
       productIds: others.length ? [product.id] : [],
     };
@@ -545,20 +570,20 @@ export async function routeTurn(input: RouteInput): Promise<RouteOutcome> {
     const colors = [...new Set(matching.map((v) => v.color))];
     return {
       kind: "write",
-      facts: { ...base, available: true, inStock: matching, colorsInStock: colors },
-      task: `Liệt kê đủ mọi màu còn hàng (colorsInStock)${size ? ` ở size ${size}` : ""}, mỗi màu kèm size và số lượng còn trong inStock, và giá. Không bỏ màu nào, kể cả màu bạn đã hỏi trước đó. Hỏi bạn muốn lấy màu nào.`,
+      facts: { ...base, conHang: true, bienTheConHang: matching, mauConHang: colors },
+      task: `Liệt kê đủ mọi màu còn hàng (mauConHang)${size ? ` ở size ${size}` : ""}, mỗi màu kèm size và số lượng còn trong bienTheConHang, và giá. Không bỏ màu nào, kể cả màu bạn đã hỏi trước đó. Hỏi bạn muốn lấy màu nào.`,
       productIds: [product.id],
       mustMention: colors,
     };
   }
   return {
     kind: "write",
-    facts: { ...base, available: matching.length > 0, inStock: matching },
+    facts: { ...base, conHang: matching.length > 0, bienTheConHang: matching },
     task:
       size || color
         ? "Nói còn hàng biến thể bạn hỏi (size/màu trong asked), số lượng còn và giá."
         : matching.length
-          ? "Báo các size và màu còn hàng (inStock) và giá; hỏi bạn muốn size, màu nào."
+          ? "Báo các size và màu còn hàng (bienTheConHang) và giá; hỏi bạn muốn size, màu nào."
           : "Nói rõ sản phẩm này đã hết hàng.",
     productIds: matching.length ? [product.id] : [],
   };

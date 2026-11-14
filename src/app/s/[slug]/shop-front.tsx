@@ -527,7 +527,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
   return (
     <>
-      <main ref={mainRef} className="flex-1">
+      <main ref={mainRef} className={`flex-1 ${detailProductId ? "" : "shop-has-bar"}`}>
         {detailProductId ? detailProduct ? (
           <ProductDetailView
             key={detailProduct.id}
@@ -559,7 +559,7 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
           search={search}
           onSearch={searchProducts}
         />
-        <ShopHero shopName={shopName} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
+        <ShopHero shopName={shopName} bannerUrl={catalog.shop.bannerUrl} featured={featured} onAsk={askText} onAskAbout={(product) => askAbout(product)} />
 
         <section id="san-pham" aria-labelledby="san-pham-title" className="mx-auto max-w-[1400px] scroll-mt-24 px-4 py-14 sm:px-6 sm:py-20 lg:px-10">
           <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -633,12 +633,12 @@ export function ShopFront({ slug, previewCatalog, detailProductId }: Props) {
 
         {groupLinks.length > 1 && <GroupTiles groups={groupLinks} onChoose={showGroup} onAsk={askText} />}
         <SizeBand chart={sizeChart} onAsk={askText} />
-        <ShopFooter shopName={shopName} groups={groupLinks} policyItems={policyItems} onChoose={showGroup} onAsk={askText} />
+        <ShopFooter shopName={shopName} contact={catalog.shop.contact} groups={groupLinks} policyItems={policyItems} onChoose={showGroup} onAsk={askText} />
         </>}
       </main>
 
       {!detailProductId && (
-        <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
+        <div className="shop-bar fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#e3dfd8] bg-white/95 p-3 backdrop-blur-xl sm:hidden">
           <button ref={mobileChatRef} type="button" onClick={() => setOpen(true)} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap bg-[#171717] px-3 text-xs font-extrabold uppercase tracking-[.06em] text-white"><span aria-hidden="true" className="size-[7px] rounded-full bg-[#4cc47a]" />Chat với shop</button>
           <button type="button" onClick={openCart} aria-label={`Giỏ đặt hàng, ${itemCount} món`} className="inline-flex min-h-12 items-center justify-center gap-2 whitespace-nowrap border-[1.5px] border-[#171717] px-3 text-sm font-extrabold tabular-nums"><Icon name="cart" className="size-5" />{itemCount}</button>
         </div>

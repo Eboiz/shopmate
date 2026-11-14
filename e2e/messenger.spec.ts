@@ -119,11 +119,15 @@ test.describe("with the local database", () => {
     expect(await conversationOf("messenger", psid)).toBeNull();
   });
 
-  test("signed but malformed bodies get 400, objects of no channel 404", async ({ request }) => {
+  test("signed but malformed bodies get 400; instagram deliveries answer 200, unknown objects 404", async ({ request }) => {
     const broken = "{not json";
     expect((await postMessenger(request, broken, signMessenger(broken))).status()).toBe(400);
-    // "instagram" is a channel since PB-23; "user" (profile changes) is not.
-    const user = JSON.stringify({ object: "user", entry: [] });
-    expect((await postMessenger(request, user, signMessenger(user))).status()).toBe(404);
+    // PB-23 added an object=instagram handler: a well-formed instagram body is
+    // acknowledged 200 ("EVENT_RECEIVED"), even with no events in it.
+    const instagram = JSON.stringify({ object: "instagram", entry: [] });
+    expect((await postMessenger(request, instagram, signMessenger(instagram))).status()).toBe(200);
+    // A genuinely unknown object still has no handler: 404.
+    const unknown = JSON.stringify({ object: "graph_user", entry: [] });
+    expect((await postMessenger(request, unknown, signMessenger(unknown))).status()).toBe(404);
   });
 });

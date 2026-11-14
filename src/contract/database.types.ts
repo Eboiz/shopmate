@@ -73,14 +73,14 @@ isOneToOne: false
                   ]
                 },"conversations": {
                   Row: {
-                    "created_at": string,"id": string,"last_message_at": string,"mode": Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
+                    "created_at": string,"id": string,"last_message_at": string,"latest_shopper_message_at": string | null,"latest_shopper_message_id": string | null,"mode": Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
+                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"latest_shopper_message_at"?: string | null,"latest_shopper_message_id"?: string | null,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id": string,"shopper_id": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id"?: string,"shopper_id"?: string
+                    "created_at"?: string,"id"?: string,"last_message_at"?: string,"latest_shopper_message_at"?: string | null,"latest_shopper_message_id"?: string | null,"mode"?: Database["public"]['Enums']["conversation_mode"],"shop_id"?: string,"shopper_id"?: string
                   }
                   Relationships: [
                     {
@@ -145,14 +145,14 @@ isOneToOne: false
                   ]
                 },"orders": {
                   Row: {
-                    "cancelled_at": string | null,"cancelled_by": string | null,"confirmed_at": string | null,"confirmed_by": string | null,"conversation_id": string,"created_at": string,"customer_address": string,"customer_name": string,"customer_phone": string,"id": string,"shop_id": string,"status": Database["public"]['Enums']["order_status"],"total": number
+                    "cancelled_at": string | null,"cancelled_by": string | null,"confirmed_at": string | null,"confirmed_by": string | null,"conversation_id": string,"created_at": string,"customer_address": string,"customer_name": string,"customer_phone": string,"id": string,"quote_key": string | null,"shop_id": string,"status": Database["public"]['Enums']["order_status"],"total": number
                   }
                   ComputedFields: never
                   Insert: {
-                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id": string,"created_at"?: string,"customer_address": string,"customer_name": string,"customer_phone": string,"id"?: string,"shop_id": string,"status"?: Database["public"]['Enums']["order_status"],"total": number
+                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id": string,"created_at"?: string,"customer_address": string,"customer_name": string,"customer_phone": string,"id"?: string,"quote_key"?: string | null,"shop_id": string,"status"?: Database["public"]['Enums']["order_status"],"total": number
                   }
                   Update: {
-                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id"?: string,"created_at"?: string,"customer_address"?: string,"customer_name"?: string,"customer_phone"?: string,"id"?: string,"shop_id"?: string,"status"?: Database["public"]['Enums']["order_status"],"total"?: number
+                    "cancelled_at"?: string | null,"cancelled_by"?: string | null,"confirmed_at"?: string | null,"confirmed_by"?: string | null,"conversation_id"?: string,"created_at"?: string,"customer_address"?: string,"customer_name"?: string,"customer_phone"?: string,"id"?: string,"quote_key"?: string | null,"shop_id"?: string,"status"?: Database["public"]['Enums']["order_status"],"total"?: number
                   }
                   Relationships: [
                     {
@@ -215,6 +215,32 @@ isOneToOne: false
                   Relationships: [
                     {
       foreignKeyName: "policies_shop_id_fkey"
+      columns: ["shop_id"]
+isOneToOne: false
+      referencedRelation: "shops"
+      referencedColumns: ["id"]
+    }
+                  ]
+                },"product_images": {
+                  Row: {
+                    "created_at": string,"id": string,"position": number,"product_id": string,"shop_id": string,"url": string
+                  }
+                  ComputedFields: never
+                  Insert: {
+                    "created_at"?: string,"id"?: string,"position": number,"product_id": string,"shop_id": string,"url": string
+                  }
+                  Update: {
+                    "created_at"?: string,"id"?: string,"position"?: number,"product_id"?: string,"shop_id"?: string,"url"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "product_images_product_id_shop_id_fkey"
+      columns: ["product_id","shop_id"]
+isOneToOne: false
+      referencedRelation: "products"
+      referencedColumns: ["id","shop_id"]
+    },{
+      foreignKeyName: "product_images_shop_id_fkey"
       columns: ["shop_id"]
 isOneToOne: false
       referencedRelation: "shops"
@@ -289,14 +315,14 @@ isOneToOne: false
                   ]
                 },"shops": {
                   Row: {
-                    "created_at": string,"id": string,"name": string,"slug": string
+                    "address": string | null,"banner_url": string | null,"created_at": string,"fanpage_url": string | null,"id": string,"name": string,"phone": string | null,"slug": string
                   }
                   ComputedFields: never
                   Insert: {
-                    "created_at"?: string,"id"?: string,"name": string,"slug": string
+                    "address"?: string | null,"banner_url"?: string | null,"created_at"?: string,"fanpage_url"?: string | null,"id"?: string,"name": string,"phone"?: string | null,"slug": string
                   }
                   Update: {
-                    "created_at"?: string,"id"?: string,"name"?: string,"slug"?: string
+                    "address"?: string | null,"banner_url"?: string | null,"created_at"?: string,"fanpage_url"?: string | null,"id"?: string,"name"?: string,"phone"?: string | null,"slug"?: string
                   }
                   Relationships: [
                     
@@ -371,7 +397,13 @@ isOneToOne: false
 { Args: { "p_decision": Database["public"]['Enums']["order_status"],"p_order_id": string }; Returns: Json
                            },
 "engine_create_draft_order":
-{ Args: { "p_conversation_id": string,"p_customer_address": string,"p_customer_name": string,"p_customer_phone": string,"p_items": Json,"p_shop_id": string }; Returns: Json
+{ Args: { "p_conversation_id": string,"p_customer_address": string,"p_customer_name": string,"p_customer_phone": string,"p_expected_prices": Json,"p_items": Json,"p_quote_key": string,"p_shop_id": string }; Returns: Json
+                           },
+"engine_resume_ai":
+{ Args: { "p_conversation_id": string,"p_message_id": string,"p_shop_id": string }; Returns: boolean
+                           },
+"engine_order_for_quote":
+{ Args: { "p_conversation_id": string,"p_quote_key": string,"p_shop_id": string,"p_supersede": boolean }; Returns: Json
                            },
 "engine_search_products":
 { Args: { "p_limit": number,"p_query": string,"p_shop_id": string }; Returns: {
@@ -395,6 +427,9 @@ isOneToOne: false
 { Args: { "p_channel"?: Database["public"]['Enums']["channel"],"p_query"?: string }; Returns: {
               "ai": number,"needs_human": number,"staff": number,"total": number
             }[]
+                           },
+"save_product_images":
+{ Args: { "p_product_id": string,"p_urls": Json }; Returns: number
                            },
 "save_size_chart":
 { Args: { "p_product_id": string,"p_rows": Json }; Returns: number

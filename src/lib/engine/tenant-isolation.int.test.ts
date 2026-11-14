@@ -17,7 +17,14 @@ async function modeOf(id: string) {
   const { data } = await db.from("conversations").select("mode").eq("id", id).single();
   return data?.mode;
 }
-const run = (name: ToolName, input: unknown, ctx = ctxA) => executeTool(name, input, ctx, "customer", toolHandlers, db);
+const run = (name: ToolName, input: unknown, ctx: Parameters<typeof executeTool>[2] = ctxA) =>
+  executeTool(name, input, ctx, "customer", toolHandlers, db);
+// create_draft_order needs a confirmed quote (key + prices) to reach the RPC's
+// shop checks at all; without one it stops at quote_required.
+const confirmed = <C extends { shopId: string; conversationId: string | null }>(ctx: C, variantId: string) => ({
+  ...ctx,
+  order: { quoteKey: `tenant-${variantId}`, expectedPrices: [{ variantId, unitPrice: 350000 }] },
+});
 const errorOf = (content: string) => JSON.parse(content).error;
 
 describe("shop A's tools never reach shop B", () => {
@@ -35,7 +42,7 @@ describe("shop A's tools never reach shop B", () => {
       create_draft_order: await run("create_draft_order", {
         items: [{ variantId: FX.b.vay01MBe, quantity: 1 }],
         ...customer,
-      }),
+      }, confirmed(ctxA, FX.b.vay01MBe)),
       handoff_to_staff: await run("handoff_to_staff", { reason: "complaint" }),
     } satisfies Record<ToolName, unknown>;
 
@@ -74,7 +81,7 @@ describe("shop A's tools never reach shop B", () => {
       const r = await run(
         "create_draft_order",
         { items: [{ variantId: FX.a.vay01MBe, quantity: 1 }], ...customer },
-        skewed,
+        confirmed(skewed, FX.a.vay01MBe),
       );
       expect(r.isError).toBe(true);
       expect(r.content).not.toContain('"created"');

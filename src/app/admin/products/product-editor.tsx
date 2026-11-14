@@ -14,11 +14,15 @@ import { compareSizes } from "@/lib/size-order";
 import { LOW_STOCK, summarizeStock } from "@/lib/stock";
 import { foldSearch } from "../inbox/inbox-filter";
 import { INITIAL_FORM_STATE, type FormAction } from "./form-state";
+import { ProductGallery } from "./product-gallery-editor";
 
 type ProductListProps = {
   products: CatalogProduct[];
   canEdit: boolean;
   saveProduct: FormAction;
+  // PB-32: the photo list of each product; uploads go to the shop's folder.
+  shopId: string;
+  saveProductImages: FormAction;
   // From the URL (?q=…&stock=low), so the dashboard can link to the low-stock list.
   initialQuery: string;
   initialLowOnly: boolean;
@@ -27,7 +31,7 @@ type ProductListProps = {
 // The products tab: one folded card per product, so 60 products fit on a few
 // screens. Filtering hides cards instead of unmounting them, so an edit the
 // owner has not saved yet survives typing in the search box.
-export function ProductList({ products, canEdit, saveProduct, initialQuery, initialLowOnly }: ProductListProps) {
+export function ProductList({ products, canEdit, saveProduct, shopId, saveProductImages, initialQuery, initialLowOnly }: ProductListProps) {
   const [query, setQuery] = useState(initialQuery);
   const [lowOnly, setLowOnly] = useState(initialLowOnly);
   const searchId = useId();
@@ -94,7 +98,7 @@ export function ProductList({ products, canEdit, saveProduct, initialQuery, init
       <ul className="flex flex-col gap-2" aria-label="Danh sách sản phẩm">
         {products.map((product) => (
           <li key={product.id} hidden={!visible.has(product.id)}>
-            <ProductCard product={product} canEdit={canEdit} saveProduct={saveProduct} />
+            <ProductCard product={product} canEdit={canEdit} saveProduct={saveProduct} shopId={shopId} saveProductImages={saveProductImages} />
           </li>
         ))}
       </ul>
@@ -102,15 +106,18 @@ export function ProductList({ products, canEdit, saveProduct, initialQuery, init
   );
 }
 
-function ProductCard({ product, canEdit, saveProduct }: { product: CatalogProduct; canEdit: boolean; saveProduct: FormAction }) {
+type ProductCardProps = Pick<ProductListProps, "canEdit" | "saveProduct" | "shopId" | "saveProductImages"> & { product: CatalogProduct };
+
+function ProductCard({ product, canEdit, saveProduct, shopId, saveProductImages }: ProductCardProps) {
   const stock = summarizeStock(product.variants);
+  const cardPhoto = product.images[0] ?? product.imageUrl;
 
   return (
     <details className="ui-card group overflow-hidden">
       <summary className="flex min-h-16 cursor-pointer list-none items-center gap-3 px-4 py-3 hover:bg-[#faf8f5] sm:px-5 [&::-webkit-details-marker]:hidden">
         <span className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-[#efebe4]">
-          {product.imageUrl ? (
-            <Image src={product.imageUrl} alt="" fill sizes="48px" className="object-cover" />
+          {cardPhoto ? (
+            <Image src={cardPhoto} alt="" fill sizes="48px" className="object-cover" />
           ) : (
             <Icon name="hanger" className="absolute inset-0 m-auto size-5 text-[#706d67]" />
           )}
@@ -132,12 +139,13 @@ function ProductCard({ product, canEdit, saveProduct }: { product: CatalogProduc
         ) : null}
         <Icon name="chevron" className="size-4 shrink-0 text-[#706d67] transition-transform group-open:rotate-180" />
       </summary>
-      <div className="border-t border-[#e3dfd8] px-4 py-4 sm:px-5">
+      <div className="flex flex-col gap-4 border-t border-[#e3dfd8] px-4 py-4 sm:px-5">
         {canEdit ? (
           <ProductForm product={product} saveProduct={saveProduct} />
         ) : (
           <StockGrid variants={product.variants} productName={product.name} />
         )}
+        <ProductGallery product={product} shopId={shopId} canEdit={canEdit} saveProductImages={saveProductImages} />
       </div>
     </details>
   );

@@ -2,11 +2,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { EngineInput } from "@/contract";
 import { DISCOUNT_HANDOFF_TEXT } from "./discount-guard";
-import { HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
+import { HANDOFF_TEXT, PRODUCT_NOT_FOUND_HANDOFF_TEXT, runEngine, type EngineDeps } from "./engine";
 import { FALLBACK_TEXT } from "./model-reply";
 import { OFFER_QUESTION, OFFER_QUICK_REPLIES } from "./handoff-offer";
 import { ORDER_CONFIRM_NO, ORDER_CONFIRM_YES, orderConfirmText } from "./order-flow";
 import type { JevClient, JevResponse } from "./jev";
+import { NUMBER_CARD_TEXT, NUMBER_RETRY_NOTE } from "./number-check";
+import { VIETNAMESE_RETRY_NOTE } from "./vietnamese-guard";
 import type { TurnMetrics } from "./metrics";
 import { PROMPT_VERSION } from "./prompt";
 import type { EngineStore, TurnContext } from "./store";
@@ -106,6 +108,15 @@ describe("runEngine with Jev routing", () => {
     expect(metrics[0].route).toMatchObject({ path: "router", intent: "stock", product: "viewing", jevModel: "typesafe/jev-1.13" });
   });
 
+  it("router write: a quick reply promising a discount is dropped (PB-07 guards apply to quick replies)", async () => {
+    const { run } = setup(jevSaying({}), [
+      finalJson({ text: "Dạ còn ạ", productIds: [], quickReplies: ["Giảm 50% nhé", "Xem váy"] }),
+    ]);
+    const result = await run(input("váy này còn không"));
+    expect(result.output.reply.text).toBe("Dạ còn ạ");
+    expect(result.output.reply.quickReplies).toEqual(["Xem váy"]);
+  });
+
   it("complaint: hands off without any model call", async () => {
     const { model, handlers, store, metrics, run } = setup(jevSaying({ intent: { type: "choice", choice: "complaint", confidence: 0.99 } }), []);
     const result = await run(input("đồ giao bị rách"));
@@ -186,6 +197,42 @@ describe("runEngine with Jev routing", () => {
     expect(store.setNeedsHuman).toHaveBeenCalled();
   });
 
+  it("router write with a wrong stock number is rewritten (PB-07)", async () => {
+    const { model, store, run } = setup(jevSaying({}), [
+      reply("Dạ size M màu be còn 3 cái, giá 389.000đ ạ"),
+      reply("Dạ size M màu be còn 7 cái, giá 389.000đ ạ"),
+    ]);
+    const result = await run(input("size M màu be còn không?"));
+    expect(model.calls).toHaveLength(2);
+    expect(JSON.stringify(model.calls[1].system)).toContain(NUMBER_RETRY_NOTE);
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toContain("còn 7 cái");
+    await result.turnLogged;
+    expect(store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: false, numberCheck: { failed: [], retried: true } });
+  });
+
+  it("router write with an English word is rewritten once (F6)", async () => {
+    const { model, run } = setup(jevSaying({}), [
+      reply("Dạ size M màu be stock 7 ạ"),
+      reply("Dạ size M màu be còn 7 cái ạ"),
+    ]);
+    const result = await run(input("size M màu be còn không?"));
+    expect(model.calls).toHaveLength(2);
+    expect((model.calls[1].system as Array<{ text: string }>).map((b) => b.text).join("\n")).toContain(VIETNAMESE_RETRY_NOTE);
+    expect(result.output.reply.text).toBe("Dạ size M màu be còn 7 cái ạ");
+  });
+
+  it("router write with a wrong price twice sends the card and stays with the AI (PB-07)", async () => {
+    const { store, run } = setup(jevSaying({}), [reply("Dạ váy giá 350k ạ"), reply("Dạ váy giá 350k ạ")]);
+    const result = await run(input("váy này giá bao nhiêu?"));
+    expect(result.handoffReason).toBeNull();
+    expect(result.output.reply.text).toBe(NUMBER_CARD_TEXT);
+    expect(result.output.reply.products.map((p) => p.productId)).toEqual([VAY]);
+    expect(store.setNeedsHuman).not.toHaveBeenCalled();
+    await result.turnLogged;
+    expect(store.insertTurn.mock.calls[0][0].handoff_reason).toBeNull();
+  });
+
   it("an unreadable reply is asked for once more, then falls back", async () => {
     const greeting = () => jevSaying({ intent: { type: "choice", choice: "greeting", confidence: 0.99 } });
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -241,7 +288,13 @@ describe("runEngine with Jev routing", () => {
 
     it("BOT-05: after a handback, 'phí ship bao nhiêu?' reads giao_hang although Jev picked doi_tra", async () => {
       const policies = { doi_tra: "Đổi trong 7 ngày", giao_hang: "Phí ship đồng giá 30.000đ cho mọi đơn." };
-      const s = setup(jevSaying({ intent: { type: "choice", choice: "policy", confidence: 0.9 }, policy_kind: { type: "choice", choice: "doi_tra" } }), [
+      // policy_answers: the shipping text answers the question (a failing
+      // coverage check would count as "not covered", #11).
+      const s = setup(jevSaying({
+        intent: { type: "choice", choice: "policy", confidence: 0.9 },
+        policy_kind: { type: "choice", choice: "doi_tra" },
+        policy_answers: { type: "noul", noul: 0.9 },
+      }), [
         reply("Dạ, hiện shop chưa có thông tin về phí giao hàng ạ. Về đổi trả, shop hỗ trợ đổi trong 7 ngày."),
         reply("Dạ, shop chưa có thông tin phí ship ạ."),
       ]);
@@ -259,6 +312,22 @@ describe("runEngine with Jev routing", () => {
       // wrong twice: the shop's shipping text, as written
       expect(result.output.reply.text).toContain("30.000đ");
       expect(result.output.reply.text).not.toContain("7 ngày");
+    });
+
+    it("a promised update on a policy that doesn't cover the question keeps the route's staff offer", async () => {
+      // Codex 14/11: the PB-39 fallback used to drop the router's policy_not_covered offer.
+      const s = setup(jevSaying({
+        intent: { type: "choice", choice: "policy", confidence: 0.9 },
+        policy_kind: { type: "choice", choice: "giao_hang" },
+        policy_answers: { type: "noul", noul: 0.1 },
+      }), [reply("Dạ để mình kiểm tra và cập nhật cho bạn nhé"), reply("Dạ mình xem lại rồi báo bạn sau nhé")]);
+      s.handlers.get_policy.mockResolvedValue({ kind: "giao_hang", content: "Phí ship đồng giá 30.000đ cho mọi đơn." } as never);
+      const result = await s.run(input("chủ nhật shop có giao không?"));
+      expect(result.handoffReason).toBeNull();
+      expect(result.output.reply.text).toContain("30.000đ");
+      expect(result.output.reply.quickReplies).toEqual(OFFER_QUICK_REPLIES);
+      await result.turnLogged;
+      expect(s.store.insertTurn.mock.calls[0][0].handoff_offer).toBe("policy_not_covered");
     });
 
     it("a promised update with nothing looked up: one retry, then the staff offer (not_covered_by_data)", async () => {
@@ -323,7 +392,8 @@ describe("runEngine with Jev routing", () => {
     });
 
     it("(d) 'mặc không vừa thì đổi được không' is answered from doi_tra even when Jev says product_detail", async () => {
-      const { handlers, run } = setup(intent("product_detail"), [reply("Dạ, shop đổi size trong 7 ngày ạ.")]);
+      // Jev says the policy answers it (a failing coverage check now counts as not covered, #11).
+      const { handlers, run } = setup(intent("product_detail", { policy_answers: { type: "noul", noul: 0.9 } }), [reply("Dạ, shop đổi size trong 7 ngày ạ.")]);
       handlers.get_policy.mockResolvedValue({ kind: "doi_tra", content: "Đổi size trong 7 ngày" } as never);
       const result = await run(input("Mua về mặc không vừa thì đổi được không shop?"));
       expect(handlers.get_policy).toHaveBeenCalledWith({ kind: "doi_tra" }, expect.anything(), expect.anything());
@@ -368,6 +438,118 @@ describe("runEngine with Jev routing", () => {
     await run(input("ok"));
     expect(jev.decide).not.toHaveBeenCalled();
     expect(metrics[0].route).toEqual({ path: "llm_loop", fallbackReason: "order_in_progress" });
+  });
+
+  describe("product miss decided by the shopper's own search (PB-05 AC3)", () => {
+    // Valid 12-char hex tails ("01".."05"), so get_stock really runs ok on one.
+    const jackets = [1, 2, 3, 4, 5].map((n) => `a0000000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`);
+    const followUp = input("loại áo khoác da màu đen ấy", {
+      history: [
+        { sender: "shopper", text: "Shop có áo khoác da không?" },
+        { sender: "ai", text: "Dạ shop chưa tìm thấy áo khoác da. Bạn tìm áo khoác kiểu nào, màu gì ạ?" },
+        { sender: "shopper", text: "loại áo khoác da màu đen ấy" },
+      ],
+    });
+
+    it("Jev sees the shopper was already asked and still names no product: the not-found text is sent (scenario 1)", async () => {
+      const jev = jevSaying({
+        product: { type: "choice", choice: "none" },
+        asked_to_clarify: { type: "noul", noul: 0.95 },
+      });
+      const { model, store, handlers, run } = setup(jev, []);
+      store.loadTurnContext.mockResolvedValueOnce({ conversation: { shopId: SHOP, mode: "ai" }, product: null } as never);
+      const result = await run(followUp);
+      expect(model.calls).toHaveLength(0);
+      expect(handlers.handoff_to_staff).toHaveBeenCalled();
+      expect(result.handoffReason).toBe("misunderstood_twice");
+      expect(result.output.reply.text).toBe(PRODUCT_NOT_FOUND_HANDOFF_TEXT);
+    });
+
+    it("gibberish twice (intent unclear) keeps the generic handoff text", async () => {
+      const jev = jevSaying({
+        intent: { type: "choice", choice: "unclear", confidence: 0.95 },
+        asked_to_clarify: { type: "noul", noul: 0.95 },
+      });
+      const { run } = setup(jev, []);
+      const result = await run(input("asdkj qwe"));
+      expect(result.handoffReason).toBe("misunderstood_twice");
+      expect(result.output.reply.text).toBe(HANDOFF_TEXT);
+    });
+
+    it("router clarifying turn logs postcheck.productMiss and the next tool-loop miss hands off", async () => {
+      // Turn 1: the router asks which product the shopper means; the row logs the miss.
+      const first = setup(jevSaying({ product: { type: "choice", choice: "none" } }), [
+        finalJson({ text: "Dạ bạn đang hỏi sản phẩm nào ạ?", productIds: [], quickReplies: [] }),
+      ]);
+      const r1 = await first.run(followUp);
+      expect(r1.handoffReason).toBeNull();
+      expect(r1.output.reply.text).toBe("Dạ bạn đang hỏi sản phẩm nào ạ?");
+      await r1.turnLogged;
+      expect(first.store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: true });
+
+      // Turn 2: the context carries the miss read from postcheck, and Jev is
+      // down, so the tool loop runs. The model also searches the broader
+      // "áo khoác" and works on one of its hits: still a miss, so it hands off.
+      const second = setup({ model: "m", decide: vi.fn(async () => Promise.reject(new Error("HTTP 502"))) }, [
+        toolCalls(
+          toolUse("search_products", { query: "áo khoác" }),
+          toolUse("search_products", { query: "áo khoác da" }),
+          toolUse("get_stock", { productId: jackets[0] }),
+        ),
+        finalJson({ text: "Dạ còn nha", productIds: [], quickReplies: [] }),
+      ]);
+      second.store.loadTurnContext.mockResolvedValue({
+        conversation: { shopId: SHOP, mode: "ai" },
+        product: { id: VAY, name: "Váy suông linen" },
+        previousTurnMissedProduct: true,
+      } as never);
+      second.handlers.search_products.mockImplementation((async (...args: unknown[]) => {
+        const query = (args[0] as { query?: string }).query;
+        return query === "áo khoác"
+          ? { match: "close", products: jackets.map((productId) => ({ productId, name: "Áo khoác", category: "áo khoác", price: 389000, imageUrl: null, colors: [], sizes: [] })) }
+          : { match: "none", products: [] };
+      }) as never);
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const r2 = await second.run(followUp);
+      expect(r2.handoffReason).toBe("misunderstood_twice");
+      expect(r2.output.reply.text).toBe(PRODUCT_NOT_FOUND_HANDOFF_TEXT);
+      await r2.turnLogged;
+      expect(second.store.insertTurn.mock.calls[0][0].postcheck).toEqual({ productMiss: true });
+      error.mockRestore();
+    });
+
+    it("router: a second clarifying turn in a row hands off misunderstood_twice before the reply model runs", async () => {
+      const t = setup(jevSaying({ product: { type: "choice", choice: "none" } }), []);
+      t.store.loadTurnContext.mockResolvedValue({
+        conversation: { shopId: SHOP, mode: "ai" },
+        product: null,
+        previousTurnMissedProduct: true,
+      } as never);
+      const r = await t.run(followUp);
+      expect(r.handoffReason).toBe("misunderstood_twice");
+      expect(r.output.reply).toEqual({ text: PRODUCT_NOT_FOUND_HANDOFF_TEXT, products: [], quickReplies: [] });
+      expect(t.store.setNeedsHuman).toHaveBeenCalledTimes(1);
+      expect(t.model.calls).toHaveLength(0);
+      await r.turnLogged;
+      const row = t.store.insertTurn.mock.calls[0][0];
+      expect(row.handoff_reason).toBe("misunderstood_twice");
+      expect(row.postcheck).toEqual({ productMiss: true });
+    });
+
+    it("router: the first clarifying turn (no previous miss) still writes the question", async () => {
+      const t = setup(jevSaying({ product: { type: "choice", choice: "none" } }), [
+        finalJson({ text: "Dạ bạn đang hỏi sản phẩm nào ạ?", productIds: [], quickReplies: [] }),
+      ]);
+      t.store.loadTurnContext.mockResolvedValue({
+        conversation: { shopId: SHOP, mode: "ai" },
+        product: null,
+        previousTurnMissedProduct: false,
+      } as never);
+      const r = await t.run(followUp);
+      expect(r.handoffReason).toBeNull();
+      expect(t.store.setNeedsHuman).not.toHaveBeenCalled();
+      expect(t.model.calls).toHaveLength(1);
+    });
   });
 
   it("PB-31 AC12: 'phối cùng sản phẩm nào?' offers the shop's paired products as buttons, on both paths", async () => {

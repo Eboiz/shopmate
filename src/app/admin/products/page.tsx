@@ -2,18 +2,21 @@ import Link from "next/link";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Icon } from "@/components/ui/icon";
 import { requireStaff } from "@/lib/auth";
-import { getCatalog } from "@/lib/catalog";
+import { getCatalog, getShopProfile } from "@/lib/catalog";
 import { compareSizes } from "@/lib/size-order";
 import {
   addPairing,
   deletePairing,
   saveProduct,
+  saveProductImages,
+  saveShopProfile,
   saveSizeChart,
   updatePolicy,
 } from "./actions";
 import { PairingManager } from "./pairing-manager";
 import { PolicyForm } from "./policy-form";
 import { ProductList } from "./product-editor";
+import { ShopProfileForm } from "./shop-profile-form";
 import { SizeChartCard } from "./size-chart-editor";
 
 const TABS = [
@@ -21,6 +24,7 @@ const TABS = [
   { id: "sizes", label: "Bảng size" },
   { id: "policies", label: "Chính sách" },
   { id: "pairings", label: "Phối đồ" },
+  { id: "shop", label: "Thông tin shop" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -35,14 +39,17 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
   const params = await searchParams;
   const tab = parseTab(params.tab);
   const { shopId, role } = await requireStaff();
-  const { products, policies, pairings } = await getCatalog(shopId);
+  const [{ products, policies, pairings }, profile] = await Promise.all([
+    getCatalog(shopId),
+    tab === "shop" ? getShopProfile(shopId) : null,
+  ]);
   const canEdit = role === "owner";
 
   return (
     <>
       <header className="mb-7">
         <h1 className="ui-page-title">Sản phẩm</h1>
-        <p className="mt-2 text-sm text-[#706d67]">Cập nhật giá, tồn kho, bảng size, chính sách và cách phối đồ.</p>
+        <p className="mt-2 text-sm text-[#706d67]">Cập nhật giá, tồn kho, ảnh, bảng size, chính sách, cách phối đồ và thông tin shop.</p>
       </header>
       <nav aria-label="Loại dữ liệu" className="mb-6 flex gap-2 overflow-x-auto border-b border-[#e3dfd8] pb-2">
         {TABS.map(({ id, label }) => (
@@ -62,7 +69,7 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
         <p className="mb-5 flex items-start gap-3 rounded-lg border border-[#e3dfd8] bg-white p-4 text-sm leading-6">
           <Icon name="store" className="mt-0.5 size-5 shrink-0 text-[#706d67]" />
           <span>
-            <strong className="font-semibold">Bạn đang xem với quyền nhân viên.</strong> Giá, tồn kho, bảng size và chính sách chỉ chủ shop sửa được.
+            <strong className="font-semibold">Bạn đang xem với quyền nhân viên.</strong> Giá, tồn kho, ảnh, bảng size, chính sách và thông tin shop chỉ chủ shop sửa được.
             Khách hỏi gì không có ở đây thì nhắn chủ shop.
           </span>
         </p>
@@ -76,6 +83,8 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
             products={products}
             canEdit={canEdit}
             saveProduct={saveProduct}
+            shopId={shopId}
+            saveProductImages={saveProductImages}
             initialQuery={typeof params.q === "string" ? params.q : ""}
             initialLowOnly={params.stock === "low"}
           />
@@ -120,6 +129,13 @@ export default async function ProductsPage({ searchParams }: PageProps<"/admin/p
           <p className="text-sm text-[#706d67]">
             Để trống nghĩa là shop không có chính sách này: AI sẽ chuyển câu hỏi cho nhân viên.
           </p>
+        </div>
+      )}
+
+      {tab === "shop" && profile && (
+        <div className="flex max-w-2xl flex-col gap-3">
+          <p className="text-sm leading-6 text-[#706d67]">Ảnh bìa hiện ở đầu trang shop; địa chỉ, số điện thoại và fanpage hiện ở cuối trang.</p>
+          <ShopProfileForm profile={profile} shopId={shopId} canEdit={canEdit} saveShopProfile={saveShopProfile} />
         </div>
       )}
 

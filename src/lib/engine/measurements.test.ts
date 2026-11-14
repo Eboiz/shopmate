@@ -5,6 +5,7 @@ import {
   parseHeightCm,
   parseWeightKg,
   shopperMeasurements,
+  shopperTypedNumber,
 } from "./measurements";
 
 describe("parseHeightCm", () => {
@@ -114,6 +115,66 @@ describe("shopperMeasurements", () => {
         { sender: "shopper", text: "à mình cao 1m62 mới đúng" },
       ]),
     ).toEqual({ heightCm: 162, weightKg: 50 });
+  });
+});
+
+describe("shopperTypedNumber", () => {
+  const ask = { sender: "ai" as const, text: "Bạn cho mình biết chiều cao và cân nặng nhé" };
+  const said = (text: string, ...rest: Array<{ sender: "shopper" | "ai"; text: string }>) =>
+    [{ sender: "shopper" as const, text }, ask, ...rest];
+
+  it("accepts the exact number as a standalone token after the last AI message", () => {
+    const history = said("Áo này mặc size nào?", { sender: "shopper", text: "160 ạ" });
+    expect(shopperTypedNumber(history, 160)).toBe(true);
+    expect(shopperTypedNumber(history, "160")).toBe(true);
+    expect(shopperTypedNumber(history, "170")).toBe(false);
+    expect(shopperTypedNumber(history, 16)).toBe(false);
+  });
+
+  it("compares numerically, comma decimals included", () => {
+    expect(shopperTypedNumber(said("x", { sender: "shopper", text: "mình 1,65 thôi" }), "1,65")).toBe(true);
+    expect(shopperTypedNumber(said("x", { sender: "shopper", text: "45" }), "45,0")).toBe(true);
+  });
+
+  it("with no AI message in the history, every shopper message counts", () => {
+    expect(shopperTypedNumber([{ sender: "shopper", text: "50" }], 50)).toBe(true);
+  });
+
+  it("a number typed before the last AI message does not back the echo", () => {
+    const history = said("165 ạ, còn cân nặng thì sao", { sender: "shopper", text: "ok bạn" });
+    expect(shopperTypedNumber(history, 165)).toBe(false);
+  });
+
+  it("a number written as money is not a measurement ('Mẫu 165 giá 58k')", () => {
+    const history = [{ sender: "shopper" as const, text: "Mẫu 165 giá 58k này mình mặc size nào?" }];
+    expect(shopperTypedNumber(history, 58)).toBe(false);
+    expect(shopperTypedNumber([{ sender: "shopper", text: "áo 58.000đ" }], 58)).toBe(false);
+  });
+
+  it("money written with 'đồng' or a thousands separator is not a measurement", () => {
+    const history = [{ sender: "shopper" as const, text: "Mẫu 165 giá 58.000 đồng này mình mặc size nào?" }];
+    expect(shopperTypedNumber(history, 58)).toBe(false);
+    expect(shopperTypedNumber([{ sender: "shopper", text: "áo 58 đồng" }], 58)).toBe(false);
+    expect(shopperTypedNumber([{ sender: "shopper", text: "mình 1,65 thôi" }], "1,65")).toBe(true);
+  });
+
+  it("bare answers to successive AI height/weight questions all count", () => {
+    const history = [
+      { sender: "shopper" as const, text: "Áo này mình mặc size nào?" },
+      { sender: "ai" as const, text: "Bạn cao bao nhiêu ạ?" },
+      { sender: "shopper" as const, text: "160 ạ" },
+      { sender: "ai" as const, text: "Còn cân nặng của bạn thì sao?" },
+      { sender: "shopper" as const, text: "50" },
+    ];
+    expect(shopperTypedNumber(history, 160)).toBe(true);
+    expect(shopperTypedNumber(history, 50)).toBe(true);
+  });
+
+  it("rejects model values that are not plain numbers", () => {
+    const history = said("x", { sender: "shopper", text: "160 ạ" });
+    expect(shopperTypedNumber(history, "1m60")).toBe(false);
+    expect(shopperTypedNumber(history, null)).toBe(false);
+    expect(shopperTypedNumber(history, undefined)).toBe(false);
   });
 });
 

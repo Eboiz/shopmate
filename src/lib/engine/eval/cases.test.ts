@@ -18,6 +18,7 @@ const correctRuns: Record<string, ActualCall[]> = {
   "stock-out-of-stock": [{ name: "get_stock", input: { productId: V } }],
   "product-not-found-clarify": [{ name: "search_products", input: { query: "túi xách da", limit: 5 } }],
   "product-not-found-twice": [{ name: "search_products", input: { query: "túi xách da bò nâu", limit: 5 } }],
+  "product-not-found-twice-broadened": [{ name: "search_products", input: { query: "túi đen", limit: 5 } }],
   "size-units": [{ name: "recommend_size", input: { productId: V, heightCm: 165, weightKg: 55 } }],
   "size-disagree": [{ name: "recommend_size", input: { productId: V, heightCm: 155, weightKg: 52 } }],
   "size-missing-weight": [],
@@ -40,6 +41,7 @@ const correctOutcomes: Record<string, RunOutcome> = {
     replyText: "Dạ shop chưa tìm thấy túi xách da. Bạn tìm túi kiểu nào, màu gì ạ?",
   },
   "product-not-found-twice": { handoffReason: "misunderstood_twice", replyText: "Dạ, mình vẫn chưa tìm thấy..." },
+  "product-not-found-twice-broadened": { handoffReason: "misunderstood_twice", replyText: "Dạ, mình vẫn chưa tìm thấy..." },
   "size-units": { handoffReason: null, replyText: "Dạ với 165cm, 55kg bạn mặc size L nhé." },
   "size-disagree": {
     handoffReason: null,
@@ -62,6 +64,7 @@ const wrongOutcomes: Record<string, RunOutcome> = {
   "stock-out-of-stock": { handoffReason: null, replyText: "Dạ màu be size L hết hàng rồi ạ." },
   "product-not-found-clarify": { handoffReason: "product_not_found", replyText: "Dạ mình chuyển nhân viên nhé?" },
   "product-not-found-twice": { handoffReason: null, replyText: "Bạn nói rõ hơn được không?" },
+  "product-not-found-twice-broadened": { handoffReason: null, replyText: "Dạ shop có 5 mẫu áo khoác, bạn xem nhé?" },
   "size-units": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
   "size-disagree": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
   "size-missing-weight": { handoffReason: null, replyText: "Dạ bạn mặc size M nhé." },
